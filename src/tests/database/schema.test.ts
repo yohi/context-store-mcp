@@ -212,6 +212,18 @@ describe('PostgreSQLスキーマテスト', () => {
 
       expect(result.rows[0].exists).toBe(false);
     });
+
+    it('sync_failuresテーブルが存在すること', async () => {
+      const result = await testPool.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables
+          WHERE table_schema = 'public'
+          AND table_name = 'sync_failures'
+        );
+      `);
+
+      expect(result.rows[0].exists).toBe(false);
+    });
   });
 
   describe('自動整理関連テーブル', () => {

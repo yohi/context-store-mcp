@@ -185,7 +185,7 @@
 
 ## ファイル構成
 
-```
+```plaintext
 context-store-mcp/
 ├── docker/
 │   └── init-scripts/
