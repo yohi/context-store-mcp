@@ -27,8 +27,11 @@ const testPool = new Pool({
  * 本番データベースへの接続を防ぐため、データベース名を検証します
  */
 function validateTestDatabase(databaseName: string): void {
-  const isTestDb = databaseName.includes('test') || databaseName.endsWith('_test');
-  const isProductionDb = databaseName === 'context_store';
+  // 大文字小文字を区別しない比較のため正規化
+  const normalizedName = databaseName.toLowerCase();
+
+  const isTestDb = normalizedName.includes('test') || normalizedName.endsWith('_test');
+  const isProductionDb = normalizedName === 'context_store';
 
   if (isProductionDb) {
     throw new Error(
