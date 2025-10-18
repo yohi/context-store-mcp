@@ -162,12 +162,128 @@
 
 #### 受け入れ基準
 
-1. WHEN 機密情報が保存されるとき THEN Context Store MCPシステム SHALL データを暗号化して保存する
-2. IF 未認証のアクセス試行が検出された場合 THEN Context Store MCPシステム SHALL アクセスを拒否し、セキュリティイベントをログに記録する
-3. WHERE ユーザー固有のデータが保存される場合 THE Context Store MCPシステム SHALL 適切なアクセス制御を実施する
-4. WHEN データの削除が要求されたとき THEN Context Store MCPシステム SHALL 完全な削除を保証し、復元不可能にする
-5. WHILE システムが稼働している間 THE Context Store MCPシステム SHALL 監査ログを維持し、アクセス履歴を追跡可能にする
-6. IF データ漏洩のリスクが検出された場合 THEN Context Store MCPシステム SHALL 管理者に即座に通知する
+1. WHEN 機密情報が保存されるとき THEN Context Store MCPシステム SHALL 以下の暗号化要件に従ってデータを保護する:
+   - **暗号化アルゴリズム:**
+     - 保存時（at-rest）: AES-256-GCM（Galois/Counter Mode）を使用し、データ暗号化キー（DEK）でPostgreSQLおよびNeo4jの全ストレージデータを暗号化
+     - 転送時（in-transit）: TLS 1.3以上でMCPクライアント-サーバー間およびストレージ間通信を暗号化（最低暗号スイート: TLS_AES_256_GCM_SHA384）
+   - **鍵管理ソリューション:**
+     - AWS KMS（Key Management Service）またはHashiCorp Vaultを使用してマスター暗号化キー（CMK/KEK）を管理
+     - データ暗号化キー（DEK）はエンベロープ暗号化パターンで生成・保存（DEKはCMKで暗号化して保存）
+     - キーIDとメタデータをPostgreSQLの`encryption_keys`テーブルで管理
+   - **鍵ローテーション頻度:** マスター暗号化キーは90日ごとに自動ローテーション、データ暗号化キーは365日ごとまたは漏洩検出時に即座にローテーション
+   - **暗号化スコープ:**
+     - **全データ暗号化:** PostgreSQLの`memories`テーブルの全カラム（`content`, `metadata`, `embedding`）およびNeo4jの全ノード/エッジプロパティを暗号化
+     - **機密フィールドの追加保護:** ユーザー識別情報（`user_id`, `project_id`）はカラムレベル暗号化で二重に保護
+   - **受け入れテスト基準:**
+     - ストレージファイルをディスク上で直接読み取り、平文データが存在しないことを確認（サンプルチェック: 100レコード）
+     - 暗号化なしでのデータベース接続試行がデータ読み取りに失敗することを確認
+     - 鍵ローテーション後も既存データが復号化可能であることを確認（100レコードのサンプルテスト）
+
+2. IF 未認証のアクセス試行が検出された場合 THEN Context Store MCPシステム SHALL 以下のアクセス制御とログ記録を実行する:
+   - **認証要件:**
+     - MCPクライアントはOpenID Connect (OIDC) プロトコルで認証（最低実装: Authorization Code Flow with PKCE）
+     - 多要素認証（MFA）を必須とし、TOTP（Time-based One-Time Password）またはWebAuthnをサポート
+     - APIトークンは最小で30分、最大で8時間のTTL（Time To Live）を設定
+   - **アクセス拒否動作:**
+     - 認証失敗時はHTTP 401 Unauthorizedまたはmcp.error.unauthorizedレスポンスを即座に返す
+     - 同一IPアドレスから5分間に10回の認証失敗でそのIPを15分間ブロック（レート制限）
+   - **セキュリティイベントログ:**
+     - 以下の情報をJSON形式でログに記録: タイムスタンプ（ISO8601）、IPアドレス、試行されたユーザーID、失敗理由（invalid_token/expired_token/missing_auth）、リクエストパス
+     - ログは改ざん防止のため、署名付きログストリーム（AWS CloudWatch Logs Insights または Elasticsearch）に送信
+
+3. WHERE ユーザー固有のデータが保存される場合 THE Context Store MCPシステム SHALL 以下のアクセス制御を実施する:
+   - **RBAC（Role-Based Access Control）要件:**
+     - ロール定義: `admin`（全データアクセス）、`user`（自分のデータのみアクセス）、`read_only`（読み取り専用）
+     - ロールは`user_roles`テーブルで管理し、各MCPセッション開始時にロール情報をキャッシュ（TTL: 5分）
+   - **最小権限の原則（Least Privilege）:**
+     - デフォルトロールは`read_only`で、明示的な権限付与がない限り書き込み操作を拒否
+     - 各MCPツール呼び出しで必要な権限を検証（例: `store_memory`は`user`以上、`delete_memory`は`admin`のみ）
+   - **データ分離:**
+     - PostgreSQLクエリに`WHERE user_id = :current_user_id`フィルタを強制適用（Row-Level Security, RLSで実装）
+     - Neo4jクエリに同様のユーザーフィルタをCypherクエリで適用: `MATCH (m:Memory {user_id: $userId})`
+   - **受け入れテスト基準:**
+     - ユーザーAがユーザーBのデータにアクセスを試みた場合、HTTP 403 ForbiddenまたはMCP空結果を返すことを確認（100ケースのテスト）
+     - `admin`ロールのみが全ユーザーデータにアクセス可能であることを確認
+
+4. WHEN データの削除が要求されたとき THEN Context Store MCPシステム SHALL 以下の安全な削除手順を実行する:
+   - **削除手順:**
+     1. **論理削除（Soft Delete）:** `is_deleted = true`フラグを設定し、`deleted_at`タイムスタンプを記録（即座に検索結果から除外）
+     2. **暗号化キー破棄:** 該当記憶のデータ暗号化キー（DEK）をKMS/Vaultから即座に削除（暗号的消去、Cryptographic Erasure）
+     3. **物理削除（Hard Delete）:** 30日後にバックグラウンドジョブで該当レコードをPostgreSQLおよびNeo4jから完全に削除
+     4. **バックアップからの削除:** 削除から90日後にバックアップから該当データを除外（バックアップの再作成または削除マーク）
+   - **復元不可能性の保証:**
+     - データ暗号化キー破棄により、ストレージに残存するデータは復号化不可能
+     - 物理削除後はデータベースの`VACUUM`（PostgreSQL）またはノード削除（Neo4j）で領域を再利用
+   - **証明アーティファクト:**
+     - 削除ログに`deletion_id`（UUID）、削除タイムスタンプ、削除理由、実行ユーザーを記録
+     - 削除完了後に削除証明書（JSON形式）を生成し、監査ログストアに保存: `{"deletion_id": "...", "memory_id": "...", "deleted_at": "...", "verified_at": "...", "status": "irreversible"}`
+   - **受け入れテスト基準:**
+     - 削除後にデータベースクエリで該当記憶が取得できないことを確認
+     - バックアップからのリストアテストで削除済みデータが復元されないことを確認
+     - 鍵破棄後に暗号化データの復号化試行が失敗することを確認
+
+5. WHILE システムが稼働している間 THE Context Store MCPシステム SHALL 以下の監査ログを維持する:
+   - **ログ保持期間:** 365日間（1年間）保持し、コンプライアンス要件に応じて最大7年まで延長可能
+   - **不変ストレージ:**
+     - Write-Once-Read-Many（WORM）ストレージを使用（AWS S3 Object Lock、Azure Immutable Blob Storage、またはBlockchain-based logging）
+     - ログファイルにデジタル署名（HMAC-SHA256）を付与し、改ざん検出を可能にする
+   - **必須ログフィールド:**
+     ```json
+     {
+       "timestamp": "ISO8601 timestamp",
+       "event_type": "memory_created | memory_updated | memory_deleted | memory_searched | auth_success | auth_failed",
+       "user_id": "UUID",
+       "session_id": "UUID",
+       "ip_address": "IPv4/IPv6",
+       "resource_id": "memory_id or tool_name",
+       "action": "具体的な操作内容",
+       "result": "success | failure",
+       "error_code": "エラーの場合のみ",
+       "metadata": {
+         "user_agent": "MCPクライアント情報",
+         "request_id": "リクエストトレースID"
+       }
+     }
+     ```
+   - **検索/クエリSLA:** 過去30日間のログを5秒以内に検索可能（Elasticsearchまたは同等のログ分析基盤で実現）
+   - **アクセス履歴追跡:**
+     - 各記憶（`memory_id`）ごとにアクセス履歴を`access_history`テーブルで管理
+     - 最終アクセス日時（`last_accessed_at`）およびアクセス回数（`access_count`）を記録
+   - **受け入れテスト基準:**
+     - 100件のMCP操作を実行し、全てが監査ログに記録されることを確認（100%記録率）
+     - ログファイルの署名検証が成功することを確認
+     - 30日前のログエントリを5秒以内に検索できることを確認（95パーセンタイル）
+
+6. IF データ漏洩のリスクが検出された場合 THEN Context Store MCPシステム SHALL 以下の通知とアラートを実行する:
+   - **検出条件:**
+     - 異常なデータアクセスパターン（5分間に100件以上の記憶アクセス、または通常の10倍以上のアクセス率）
+     - 未知のIPアドレスからの初回アクセス（GeoIPベースの異常検出）
+     - 大量データエクスポート試行（1セッションで1000件以上の記憶取得）
+     - 認証失敗率の急増（5分間に50回以上の失敗）
+   - **通知チャネルとしきい値:**
+     - **レベル1（警告）:** ログファイルに記録のみ（上記条件の50%達成時）
+     - **レベル2（重要）:** メール通知を管理者チーム（`security@example.com`）に送信（上記条件の75%達成時）
+     - **レベル3（緊急）:** SMSまたはPagerDuty/Opsgenieでオンコール担当者に即座に通知（上記条件の100%達成時）、該当セッションを即座に終了
+   - **自動応答アクション:**
+     - 該当ユーザー/セッションを自動的に一時停止（最大1時間、管理者による手動レビュー後に再開）
+     - IPアドレスを自動的にブロックリストに追加（24時間ブロック）
+     - 全管理者に緊急アラートダッシュボードへのリンクを通知
+   - **通知メッセージフォーマット:**
+     ```
+     件名: [SECURITY ALERT] Potential Data Leakage Detected - Context Store MCP
+     本文:
+     - 検出時刻: <timestamp>
+     - 検出理由: <異常パターンの詳細>
+     - 影響を受けたユーザー: <user_id>
+     - IPアドレス: <ip_address>
+     - アクセスされた記憶数: <count>
+     - 実行されたアクション: <自動応答の詳細>
+     - ダッシュボードURL: <link>
+     ```
+   - **受け入れテスト基準:**
+     - シミュレーションで異常アクセスパターンを生成し、5秒以内にアラートが発火することを確認
+     - 全通知チャネル（メール、SMS、PagerDuty）に通知が届くことを確認（エンドツーエンドテスト）
+     - 自動応答アクションが正しく実行されることを確認（セッション終了、IPブロック）
 
 ### 要件7: パフォーマンスとスケーラビリティ
 **目的:** システム利用者として、高速で安定したパフォーマンスを期待したい。これにより、リアルタイムの対話において遅延なく記憶機能を活用できる。
