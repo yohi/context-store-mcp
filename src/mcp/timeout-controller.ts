@@ -41,11 +41,22 @@ export class TimeoutController {
       let timeoutHandle: NodeJS.Timeout | null = null;
       let isCompleted = false;
 
+      /**
+       * クリーンアップヘルパー - タイムアウトとアクティブタイムアウトのエントリを削除
+       */
+      const cleanup = () => {
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle);
+          this.activeTimeouts.delete(timeoutHandle);
+          timeoutHandle = null;
+        }
+      };
+
       // タイムアウトハンドラー
       timeoutHandle = setTimeout(() => {
         if (!isCompleted) {
           isCompleted = true;
-          this.activeTimeouts.delete(timeoutHandle!);
+          cleanup();
           reject(
             new TimeoutError(`Operation timeout after ${timeoutMs}ms`, {
               timeout: timeoutMs,
@@ -56,28 +67,31 @@ export class TimeoutController {
 
       this.activeTimeouts.add(timeoutHandle);
 
-      // オペレーション実行
-      operation()
-        .then((result) => {
-          if (!isCompleted) {
-            isCompleted = true;
-            if (timeoutHandle) {
-              clearTimeout(timeoutHandle);
-              this.activeTimeouts.delete(timeoutHandle);
+      // オペレーション実行（同期エラーをキャッチ）
+      try {
+        operation()
+          .then((result) => {
+            if (!isCompleted) {
+              isCompleted = true;
+              cleanup();
+              resolve(result);
             }
-            resolve(result);
-          }
-        })
-        .catch((error) => {
-          if (!isCompleted) {
-            isCompleted = true;
-            if (timeoutHandle) {
-              clearTimeout(timeoutHandle);
-              this.activeTimeouts.delete(timeoutHandle);
+          })
+          .catch((error) => {
+            if (!isCompleted) {
+              isCompleted = true;
+              cleanup();
+              reject(error);
             }
-            reject(error);
-          }
-        });
+          });
+      } catch (syncError) {
+        // 同期的にスローされたエラーをキャッチ
+        if (!isCompleted) {
+          isCompleted = true;
+          cleanup();
+          reject(syncError);
+        }
+      }
     });
   }
 

@@ -40,13 +40,15 @@ export class PerformanceMetrics {
   /**
    * オペレーションのレイテンシを記録
    *
+   * NOTE: このメソッドはレイテンシのみを記録します。
+   * スループット計算のためのタイムスタンプは、recordSuccess/recordErrorで記録されます。
+   *
    * @param operationName オペレーション名
    * @param latency レイテンシ（ミリ秒）
    */
   recordLatency(operationName: string, latency: number): void {
     const stats = this.getOrCreateStats(operationName);
     stats.latencies.push(latency);
-    stats.timestamps.push(Date.now());
   }
 
   /**
@@ -164,6 +166,8 @@ export class PerformanceMetrics {
   /**
    * オペレーションのスループットを取得（リクエスト/秒）
    *
+   * NOTE: このメソッドは古いタイムスタンプを自動的に削除してメモリ使用量を削減します。
+   *
    * @param operationName オペレーション名
    * @param windowMs ウィンドウ期間（ミリ秒）デフォルト: 1000ms (1秒)
    * @returns スループット（req/sec）
@@ -177,10 +181,13 @@ export class PerformanceMetrics {
     const now = Date.now();
     const windowStart = now - windowMs;
 
-    // ウィンドウ期間内のタイムスタンプをカウント
-    const requestsInWindow = stats.timestamps.filter(
+    // ウィンドウ期間内のタイムスタンプのみを保持（古いものを削除）
+    stats.timestamps = stats.timestamps.filter(
       (timestamp) => timestamp >= windowStart
-    ).length;
+    );
+
+    // ウィンドウ期間内のリクエスト数を取得
+    const requestsInWindow = stats.timestamps.length;
 
     // req/sec に変換
     return (requestsInWindow / windowMs) * 1000;

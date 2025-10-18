@@ -121,15 +121,17 @@ export class McpError extends Error {
       case ErrorCode.RATE_LIMIT_EXCEEDED:
         return 429; // Too Many Requests
 
-      case ErrorCode.INTERNAL_ERROR:
       case ErrorCode.SERVICE_UNAVAILABLE:
+        return 503; // Service Unavailable
+
+      case ErrorCode.INTERNAL_ERROR:
         return 500; // Internal Server Error
 
       case ErrorCode.TIMEOUT:
         return 504; // Gateway Timeout
 
       case ErrorCode.QUOTA_EXCEEDED:
-        return 507; // Insufficient Storage
+        return 429; // Too Many Requests
 
       default:
         return 500; // Internal Server Error
@@ -159,11 +161,21 @@ export class RateLimitError extends McpError {
 
 /**
  * サービス利用不可エラー
+ *
+ * NOTE: HTTPレスポンスを生成する際は、Retry-Afterヘッダーの追加を推奨
+ * 例: response.setHeader('Retry-After', '60') // 60秒後にリトライ
  */
 export class ServiceUnavailableError extends McpError {
-  constructor(message: string = 'Service unavailable', data?: unknown) {
+  public readonly retryAfter?: number;
+
+  constructor(
+    message: string = 'Service unavailable',
+    data?: unknown,
+    retryAfter?: number
+  ) {
     super(ErrorCode.SERVICE_UNAVAILABLE, message, data);
     this.name = 'ServiceUnavailableError';
+    this.retryAfter = retryAfter;
   }
 }
 
