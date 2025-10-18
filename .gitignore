@@ -37,3 +37,11 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+
+# Docker volumes (persistent data should not be committed)
+docker/volumes/
+
+# Backup files
+*.sql
+*.dump
+backup.*
