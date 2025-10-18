@@ -6,12 +6,20 @@
  */
 
 /**
+ * オペレーション統計設定
+ */
+interface MetricsConfig {
+  maxLatencies: number;
+  maxErrors: number;
+}
+
+/**
  * オペレーション統計
  */
 interface OperationStats {
   successCount: number;
   errorCount: number;
-  latencies: number[];
+  latencies: Array<{ timestamp: number; latency: number }>;
   errors: Array<{ timestamp: number; error: Error }>;
   timestamps: number[];
 }
@@ -35,7 +43,23 @@ export interface ExportedMetrics {
 }
 
 export class PerformanceMetrics {
+  private static readonly DEFAULT_MAX_LATENCIES = 1000;
+  private static readonly DEFAULT_MAX_ERRORS = 100;
+
   private readonly operations: Map<string, OperationStats> = new Map();
+  private readonly config: MetricsConfig;
+
+  /**
+   * コンストラクタ
+   *
+   * @param config メトリクス設定（オプション）
+   */
+  constructor(config?: Partial<MetricsConfig>) {
+    this.config = {
+      maxLatencies: config?.maxLatencies ?? PerformanceMetrics.DEFAULT_MAX_LATENCIES,
+      maxErrors: config?.maxErrors ?? PerformanceMetrics.DEFAULT_MAX_ERRORS,
+    };
+  }
 
   /**
    * オペレーションのレイテンシを記録
@@ -48,7 +72,16 @@ export class PerformanceMetrics {
    */
   recordLatency(operationName: string, latency: number): void {
     const stats = this.getOrCreateStats(operationName);
-    stats.latencies.push(latency);
+    const timestamp = Date.now();
+
+    // タイムスタンプ付きエントリーを追加
+    stats.latencies.push({ timestamp, latency });
+
+    // 最大数を超えた場合、古いエントリーを削除（in-placeで処理）
+    if (stats.latencies.length > this.config.maxLatencies) {
+      const removeCount = stats.latencies.length - this.config.maxLatencies;
+      stats.latencies.splice(0, removeCount);
+    }
   }
 
   /**
@@ -70,9 +103,17 @@ export class PerformanceMetrics {
    */
   recordError(operationName: string, error: Error): void {
     const stats = this.getOrCreateStats(operationName);
+    const timestamp = Date.now();
+
     stats.errorCount++;
-    stats.errors.push({ timestamp: Date.now(), error });
-    stats.timestamps.push(Date.now());
+    stats.errors.push({ timestamp, error });
+    stats.timestamps.push(timestamp);
+
+    // 最大数を超えた場合、古いエントリーを削除（in-placeで処理）
+    if (stats.errors.length > this.config.maxErrors) {
+      const removeCount = stats.errors.length - this.config.maxErrors;
+      stats.errors.splice(0, removeCount);
+    }
   }
 
   /**
@@ -87,7 +128,7 @@ export class PerformanceMetrics {
       return 0;
     }
 
-    const sum = stats.latencies.reduce((acc, val) => acc + val, 0);
+    const sum = stats.latencies.reduce((acc, entry) => acc + entry.latency, 0);
     return sum / stats.latencies.length;
   }
 
@@ -250,9 +291,10 @@ export class PerformanceMetrics {
       return 0;
     }
 
-    const sorted = [...stats.latencies].sort((a, b) => a - b);
+    const latencyValues = stats.latencies.map((entry) => entry.latency);
+    const sorted = [...latencyValues].sort((a, b) => a - b);
     const index = Math.ceil(sorted.length * percentile) - 1;
-    return sorted[Math.max(0, index)];
+    return sorted[Math.max(0, index)] ?? 0;
   }
 
   /**
