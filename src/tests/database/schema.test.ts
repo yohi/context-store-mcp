@@ -13,16 +13,53 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
 
 // テスト用データベース接続設定
+const dbName = process.env.POSTGRES_DB || 'context_store_test';
 const testPool = new Pool({
   host: process.env.POSTGRES_HOST || 'localhost',
   port: parseInt(process.env.POSTGRES_PORT || '5432'),
-  database: process.env.POSTGRES_DB || 'context_store',
+  database: dbName,
   user: process.env.POSTGRES_USER || 'context_store_user',
   password: process.env.POSTGRES_PASSWORD || 'changeme',
 });
 
+/**
+ * テスト用データベースの安全性チェック
+ * 本番データベースへの接続を防ぐため、データベース名を検証します
+ */
+function validateTestDatabase(databaseName: string): void {
+  const isTestDb = databaseName.includes('test') || databaseName.endsWith('_test');
+  const isProductionDb = databaseName === 'context_store';
+
+  if (isProductionDb) {
+    throw new Error(
+      `FATAL: Tests are attempting to connect to production database "${databaseName}". ` +
+      'Tests must use a test-specific database (e.g., "context_store_test"). ' +
+      'Set POSTGRES_DB environment variable to a test database name containing "test".'
+    );
+  }
+
+  if (!isTestDb) {
+    throw new Error(
+      `FATAL: Database name "${databaseName}" does not appear to be a test database. ` +
+      'For safety, test database names must contain "test" or end with "_test". ' +
+      'Set POSTGRES_DB=context_store_test or another test-specific name.'
+    );
+  }
+
+  // CI環境では環境変数が明示的に設定されていることを確認
+  if (process.env.CI && !process.env.POSTGRES_DB) {
+    throw new Error(
+      'FATAL: Running in CI environment without explicit POSTGRES_DB set. ' +
+      'For safety, CI must explicitly set POSTGRES_DB to prevent accidental production database access.'
+    );
+  }
+}
+
 describe('PostgreSQLスキーマテスト', () => {
   beforeAll(async () => {
+    // 破壊的操作の前に必ずテスト用データベースであることを検証
+    validateTestDatabase(dbName);
+
     // テスト用データベースのクリーンアップ
     await testPool.query('DROP SCHEMA IF EXISTS public CASCADE');
     await testPool.query('CREATE SCHEMA public');
