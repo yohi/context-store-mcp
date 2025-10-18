@@ -1,0 +1,56 @@
+{
+  "name": "context-store-mcp",
+  "version": "0.1.0",
+  "description": "AIエージェント向けMCPベース長期記憶システム - セッションを越えて情報を永続保存し、文脈に応じた検索を可能にする",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint . --ext .ts",
+    "lint:fix": "eslint . --ext .ts --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "memory",
+    "ai-agent",
+    "vector-search",
+    "graph-database",
+    "long-term-memory"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.17.10",
+    "@typescript-eslint/eslint-plugin": "^8.20.0",
+    "@typescript-eslint/parser": "^8.20.0",
+    "@vitest/coverage-v8": "^2.1.8",
+    "eslint": "^9.19.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.2.2",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.6",
+    "neo4j-driver": "^5.27.1",
+    "pg": "^8.14.0",
+    "pgvector": "^0.2.1",
+    "redis": "^4.7.0",
+    "winston": "^3.18.3",
+    "zod": "^3.24.1"
+  }
+}
