@@ -16,10 +16,14 @@ import { Pool } from 'pg';
 const dbName = process.env.POSTGRES_DB || 'context_store_test';
 const testPool = new Pool({
   host: process.env.POSTGRES_HOST || 'localhost',
-  port: parseInt(process.env.POSTGRES_PORT || '5432'),
+  port: parseInt(process.env.POSTGRES_PORT || '5432', 10),
   database: dbName,
   user: process.env.POSTGRES_USER || 'context_store_user',
   password: process.env.POSTGRES_PASSWORD || 'changeme',
+  // CI環境でのハングを防ぐためのプール設定
+  max: 5, // 最大接続数
+  idleTimeoutMillis: 30000, // アイドルタイムアウト (30秒)
+  connectionTimeoutMillis: 2000, // 接続タイムアウト (2秒)
 });
 
 /**
@@ -30,7 +34,10 @@ function validateTestDatabase(databaseName: string): void {
   // 大文字小文字を区別しない比較のため正規化
   const normalizedName = databaseName.toLowerCase();
 
-  const isTestDb = normalizedName.includes('test') || normalizedName.endsWith('_test');
+  // より厳密なテストDB検証: 単語境界での"test"、または接頭辞/接尾辞として"test"を含むかチェック
+  // 例: "test_db", "db_test", "my-test-db", "test" は OK
+  // 例: "contest", "latest" などは NG（誤検知を防ぐ）
+  const isTestDb = /\btest\b/i.test(databaseName) || /(^test[_-]|[_-]test$)/i.test(databaseName);
   const isProductionDb = normalizedName === 'context_store';
 
   if (isProductionDb) {
@@ -66,7 +73,7 @@ describe('PostgreSQLスキーマテスト', () => {
     // テスト用データベースのクリーンアップ
     await testPool.query('DROP SCHEMA IF EXISTS public CASCADE');
     await testPool.query('CREATE SCHEMA public');
-    await testPool.query('GRANT ALL ON SCHEMA public TO context_store_user');
+    await testPool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER');
     await testPool.query('GRANT ALL ON SCHEMA public TO public');
   });
 
