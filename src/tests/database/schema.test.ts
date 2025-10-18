@@ -13,20 +13,67 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
 
 // テスト用データベース接続設定
+const dbName = process.env.POSTGRES_DB || 'context_store_test';
 const testPool = new Pool({
   host: process.env.POSTGRES_HOST || 'localhost',
-  port: parseInt(process.env.POSTGRES_PORT || '5432'),
-  database: process.env.POSTGRES_DB || 'context_store',
+  port: parseInt(process.env.POSTGRES_PORT || '5432', 10),
+  database: dbName,
   user: process.env.POSTGRES_USER || 'context_store_user',
   password: process.env.POSTGRES_PASSWORD || 'changeme',
+  // CI環境でのハングを防ぐためのプール設定
+  max: 5, // 最大接続数
+  idleTimeoutMillis: 30000, // アイドルタイムアウト (30秒)
+  connectionTimeoutMillis: 2000, // 接続タイムアウト (2秒)
 });
+
+/**
+ * テスト用データベースの安全性チェック
+ * 本番データベースへの接続を防ぐため、データベース名を検証します
+ */
+function validateTestDatabase(databaseName: string): void {
+  // 大文字小文字を区別しない比較のため正規化
+  const normalizedName = databaseName.toLowerCase();
+
+  // より厳密なテストDB検証: 単語境界での"test"、または接頭辞/接尾辞として"test"を含むかチェック
+  // 例: "test_db", "db_test", "my-test-db", "test" は OK
+  // 例: "contest", "latest" などは NG（誤検知を防ぐ）
+  const isTestDb = /\btest\b/i.test(databaseName) || /(^test[_-]|[_-]test$)/i.test(databaseName);
+  const isProductionDb = normalizedName === 'context_store';
+
+  if (isProductionDb) {
+    throw new Error(
+      `FATAL: Tests are attempting to connect to production database "${databaseName}". ` +
+      'Tests must use a test-specific database (e.g., "context_store_test"). ' +
+      'Set POSTGRES_DB environment variable to a test database name containing "test".'
+    );
+  }
+
+  if (!isTestDb) {
+    throw new Error(
+      `FATAL: Database name "${databaseName}" does not appear to be a test database. ` +
+      'For safety, test database names must contain "test" or end with "_test". ' +
+      'Set POSTGRES_DB=context_store_test or another test-specific name.'
+    );
+  }
+
+  // CI環境では環境変数が明示的に設定されていることを確認
+  if (process.env.CI && !process.env.POSTGRES_DB) {
+    throw new Error(
+      'FATAL: Running in CI environment without explicit POSTGRES_DB set. ' +
+      'For safety, CI must explicitly set POSTGRES_DB to prevent accidental production database access.'
+    );
+  }
+}
 
 describe('PostgreSQLスキーマテスト', () => {
   beforeAll(async () => {
+    // 破壊的操作の前に必ずテスト用データベースであることを検証
+    validateTestDatabase(dbName);
+
     // テスト用データベースのクリーンアップ
     await testPool.query('DROP SCHEMA IF EXISTS public CASCADE');
     await testPool.query('CREATE SCHEMA public');
-    await testPool.query('GRANT ALL ON SCHEMA public TO context_store_user');
+    await testPool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER');
     await testPool.query('GRANT ALL ON SCHEMA public TO public');
   });
 
