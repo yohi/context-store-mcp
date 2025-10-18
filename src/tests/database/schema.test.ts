@@ -16,9 +16,9 @@ import { Pool } from 'pg';
 const testPool = new Pool({
   host: process.env.POSTGRES_HOST || 'localhost',
   port: parseInt(process.env.POSTGRES_PORT || '5432'),
-  database: process.env.POSTGRES_DB || 'context_store_test',
-  user: process.env.POSTGRES_USER || 'postgres',
-  password: process.env.POSTGRES_PASSWORD || 'postgres',
+  database: process.env.POSTGRES_DB || 'context_store',
+  user: process.env.POSTGRES_USER || 'context_store_user',
+  password: process.env.POSTGRES_PASSWORD || 'changeme',
 });
 
 describe('PostgreSQLスキーマテスト', () => {
@@ -26,7 +26,7 @@ describe('PostgreSQLスキーマテスト', () => {
     // テスト用データベースのクリーンアップ
     await testPool.query('DROP SCHEMA IF EXISTS public CASCADE');
     await testPool.query('CREATE SCHEMA public');
-    await testPool.query('GRANT ALL ON SCHEMA public TO postgres');
+    await testPool.query('GRANT ALL ON SCHEMA public TO context_store_user');
     await testPool.query('GRANT ALL ON SCHEMA public TO public');
   });
 
