@@ -3,7 +3,8 @@
  * MCPサーバーのメインエントリーポイント
  */
 
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath } from 'url';
+import { resolve } from 'path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
@@ -28,7 +29,10 @@ export async function main(): Promise<void> {
 }
 
 // 直接実行時のエントリーポイント
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+// Windows互換性のため、import.meta.urlをファイルシステムパスに変換して比較
+const currentFilePath = fileURLToPath(import.meta.url);
+const executedFilePath = process.argv[1] ? resolve(process.argv[1]) : '';
+if (currentFilePath === executedFilePath) {
   main().catch((error) => {
     console.error('Fatal error:', error);
     process.exit(1);
