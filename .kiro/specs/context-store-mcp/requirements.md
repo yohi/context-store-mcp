@@ -269,7 +269,7 @@
      - IPアドレスを自動的にブロックリストに追加（24時間ブロック）
      - 全管理者に緊急アラートダッシュボードへのリンクを通知
    - **通知メッセージフォーマット:**
-     ```
+     ```text
      件名: [SECURITY ALERT] Potential Data Leakage Detected - Context Store MCP
      本文:
      - 検出時刻: <timestamp>
