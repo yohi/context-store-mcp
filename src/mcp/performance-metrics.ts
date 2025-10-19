@@ -45,6 +45,8 @@ export interface ExportedMetrics {
 export class PerformanceMetrics {
   private static readonly DEFAULT_MAX_LATENCIES = 1000;
   private static readonly DEFAULT_MAX_ERRORS = 100;
+  private static readonly MAX_TIMESTAMPS = 10000;
+  private static readonly DEFAULT_THROUGHPUT_WINDOW_MS = 1000;
 
   private readonly operations: Map<string, OperationStats> = new Map();
   private readonly config: MetricsConfig;
@@ -93,6 +95,9 @@ export class PerformanceMetrics {
     const stats = this.getOrCreateStats(operationName);
     stats.successCount++;
     stats.timestamps.push(Date.now());
+
+    // timestampsを積極的にプルーニング
+    this.pruneTimestamps(stats);
   }
 
   /**
@@ -114,6 +119,9 @@ export class PerformanceMetrics {
       const removeCount = stats.errors.length - this.config.maxErrors;
       stats.errors.splice(0, removeCount);
     }
+
+    // timestampsを積極的にプルーニング
+    this.pruneTimestamps(stats);
   }
 
   /**
@@ -295,6 +303,44 @@ export class PerformanceMetrics {
     const sorted = [...latencyValues].sort((a, b) => a - b);
     const index = Math.ceil(sorted.length * percentile) - 1;
     return sorted[Math.max(0, index)] ?? 0;
+  }
+
+  /**
+   * timestampsを積極的にプルーニング
+   *
+   * ウィンドウ期間外の古いタイムスタンプを削除し、
+   * さらに最大数を超えている場合は古いエントリーを削除
+   *
+   * @param stats オペレーション統計
+   */
+  private pruneTimestamps(stats: OperationStats): void {
+    if (stats.timestamps.length === 0) {
+      return;
+    }
+
+    const now = Date.now();
+    const windowStart = now - PerformanceMetrics.DEFAULT_THROUGHPUT_WINDOW_MS;
+
+    // ウィンドウ期間外の古いエントリーを削除
+    const validIndex = stats.timestamps.findIndex(
+      (timestamp) => timestamp >= windowStart
+    );
+
+    if (validIndex > 0) {
+      // 古いエントリーを削除（in-placeで処理）
+      stats.timestamps.splice(0, validIndex);
+    } else if (validIndex === -1) {
+      // すべてのエントリーが古い場合はクリア
+      stats.timestamps.length = 0;
+      return;
+    }
+
+    // 最大数を超えた場合、古いエントリーを削除
+    if (stats.timestamps.length > PerformanceMetrics.MAX_TIMESTAMPS) {
+      const removeCount =
+        stats.timestamps.length - PerformanceMetrics.MAX_TIMESTAMPS;
+      stats.timestamps.splice(0, removeCount);
+    }
   }
 
   /**
