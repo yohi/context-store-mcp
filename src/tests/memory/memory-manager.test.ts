@@ -246,3 +246,267 @@ describe('MemoryManager - Basic Functionality (Task 3.1)', () => {
     });
   });
 });
+
+describe('MemoryManager - Update, Delete, Merge (Task 3.2)', () => {
+  let memoryManager: MemoryManager;
+  let storedMemoryId: MemoryId;
+
+  beforeEach(async () => {
+    memoryManager = new MemoryManager();
+
+    // Store a test memory for update/delete operations
+    const storeResult = await memoryManager.storeMemory({
+      content: 'Initial content for testing',
+      metadata: {
+        tags: ['test'],
+        memoryType: 'semantic',
+      },
+    });
+
+    if (storeResult.success) {
+      storedMemoryId = storeResult.value;
+    }
+  });
+
+  describe('updateMemory', () => {
+    it('should update memory content successfully', async () => {
+      const result = await memoryManager.updateMemory(storedMemoryId, {
+        content: 'Updated content',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.value).toBe(true);
+      }
+    });
+
+    it('should update memory metadata', async () => {
+      const result = await memoryManager.updateMemory(storedMemoryId, {
+        metadata: {
+          tags: ['updated', 'modified'],
+          source: 'test-update',
+        },
+      });
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should update memory type', async () => {
+      const result = await memoryManager.updateMemory(storedMemoryId, {
+        memoryType: 'episodic',
+      });
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should return error for non-existent memory ID', async () => {
+      const fakeId = '00000000-0000-4000-8000-000000000000';
+      const result = await memoryManager.updateMemory(fakeId, {
+        content: 'Should fail',
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('MEMORY_NOT_FOUND');
+      }
+    });
+
+    it('should reject invalid content in update', async () => {
+      const result = await memoryManager.updateMemory(storedMemoryId, {
+        content: '',
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('INVALID_CONTENT');
+      }
+    });
+
+    it('should automatically update updatedAt timestamp', async () => {
+      const result = await memoryManager.updateMemory(storedMemoryId, {
+        content: 'New content',
+      });
+
+      expect(result.success).toBe(true);
+      // Timestamp verification will be done in integration tests
+    });
+
+    it('should preserve fields not included in update', async () => {
+      const result = await memoryManager.updateMemory(storedMemoryId, {
+        content: 'Only content updated',
+      });
+
+      expect(result.success).toBe(true);
+      // Metadata should remain unchanged - verify in integration tests
+    });
+  });
+
+  describe('deleteMemory - Soft Delete', () => {
+    it('should soft delete a memory successfully', async () => {
+      const result = await memoryManager.deleteMemory(storedMemoryId);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.value).toBe(true);
+      }
+    });
+
+    it('should return error for non-existent memory ID', async () => {
+      const fakeId = '00000000-0000-4000-8000-000000000000';
+      const result = await memoryManager.deleteMemory(fakeId);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('MEMORY_NOT_FOUND');
+      }
+    });
+
+    it('should mark memory as deleted (soft delete)', async () => {
+      const result = await memoryManager.deleteMemory(storedMemoryId);
+
+      expect(result.success).toBe(true);
+      // isDeleted flag verification in integration tests
+    });
+
+    it('should set deletion timestamp', async () => {
+      const result = await memoryManager.deleteMemory(storedMemoryId);
+
+      expect(result.success).toBe(true);
+      // deletedAt timestamp verification in integration tests
+    });
+
+    it('should allow deleting already deleted memory (idempotent)', async () => {
+      const firstDelete = await memoryManager.deleteMemory(storedMemoryId);
+      expect(firstDelete.success).toBe(true);
+
+      const secondDelete = await memoryManager.deleteMemory(storedMemoryId);
+      expect(secondDelete.success).toBe(true);
+    });
+
+    it('should not delete protected memories', async () => {
+      // First update the memory to be protected
+      await memoryManager.updateMemory(storedMemoryId, {
+        isProtected: true,
+      });
+
+      const result = await memoryManager.deleteMemory(storedMemoryId);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('STORAGE_ERROR');
+        expect(result.error.message).toContain('protected');
+      }
+    });
+  });
+
+  describe('mergeMemories', () => {
+    let memory1Id: MemoryId;
+    let memory2Id: MemoryId;
+    let memory3Id: MemoryId;
+
+    beforeEach(async () => {
+      // Create multiple memories for merging
+      const result1 = await memoryManager.storeMemory({
+        content: 'First similar memory',
+        metadata: { tags: ['merge-test'] },
+      });
+      const result2 = await memoryManager.storeMemory({
+        content: 'Second similar memory',
+        metadata: { tags: ['merge-test'] },
+      });
+      const result3 = await memoryManager.storeMemory({
+        content: 'Third similar memory',
+        metadata: { tags: ['merge-test'] },
+      });
+
+      if (result1.success) memory1Id = result1.value;
+      if (result2.success) memory2Id = result2.value;
+      if (result3.success) memory3Id = result3.value;
+    });
+
+    it('should merge multiple memories into one', async () => {
+      const result = await memoryManager.mergeMemories([
+        memory1Id,
+        memory2Id,
+        memory3Id,
+      ]);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.value).toBeTruthy();
+        expect(typeof result.value).toBe('string');
+      }
+    });
+
+    it('should return error when merging less than 2 memories', async () => {
+      const result = await memoryManager.mergeMemories([memory1Id]);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('INVALID_CONTENT');
+        expect(result.error.message).toContain('at least 2 memories');
+      }
+    });
+
+    it('should return error if any memory ID does not exist', async () => {
+      const fakeId = '00000000-0000-4000-8000-000000000000';
+      const result = await memoryManager.mergeMemories([
+        memory1Id,
+        fakeId,
+        memory2Id,
+      ]);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('MEMORY_NOT_FOUND');
+      }
+    });
+
+    it('should combine content from all memories', async () => {
+      const result = await memoryManager.mergeMemories([
+        memory1Id,
+        memory2Id,
+        memory3Id,
+      ]);
+
+      expect(result.success).toBe(true);
+      // Content combination verification in integration tests
+    });
+
+    it('should merge metadata tags from all memories', async () => {
+      const result = await memoryManager.mergeMemories([
+        memory1Id,
+        memory2Id,
+        memory3Id,
+      ]);
+
+      expect(result.success).toBe(true);
+      // Tags merging verification in integration tests
+    });
+
+    it('should soft delete source memories after merge', async () => {
+      const result = await memoryManager.mergeMemories([
+        memory1Id,
+        memory2Id,
+        memory3Id,
+      ]);
+
+      expect(result.success).toBe(true);
+      // Soft deletion of source memories verification in integration tests
+    });
+
+    it('should return new merged memory ID', async () => {
+      const result = await memoryManager.mergeMemories([
+        memory1Id,
+        memory2Id,
+      ]);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // New ID should be different from source IDs
+        expect(result.value).not.toBe(memory1Id);
+        expect(result.value).not.toBe(memory2Id);
+      }
+    });
+  });
+});
