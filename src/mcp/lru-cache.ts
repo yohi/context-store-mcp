@@ -6,13 +6,15 @@
  */
 
 /**
- * キャッシュエントリー
+ * 双方向連結リストのノード
  */
-interface CacheEntry<T> {
+interface ListNode<T> {
   key: string;
   value: T;
   timestamp: number;
   accessCount: number;
+  prev: ListNode<T> | null;
+  next: ListNode<T> | null;
 }
 
 /**
@@ -38,8 +40,9 @@ export class LRUCache<T = any> {
   private readonly maxAge?: number;
   private readonly onEvict?: (key: string, value: T) => void;
 
-  private readonly cache: Map<string, CacheEntry<T>> = new Map();
-  private readonly accessOrder: string[] = []; // アクセス順序を追跡（古い順）
+  private readonly cache: Map<string, ListNode<T>> = new Map();
+  private head: ListNode<T> | null = null; // 最も最近使用されたノード
+  private tail: ListNode<T> | null = null; // 最も使用されていないノード
 
   /**
    * コンストラクタ
@@ -63,26 +66,26 @@ export class LRUCache<T = any> {
    * @returns 値（存在しない場合はundefined）
    */
   get(key: string): T | undefined {
-    const entry = this.cache.get(key);
+    const node = this.cache.get(key);
 
-    if (!entry) {
+    if (!node) {
       return undefined;
     }
 
     // 有効期限チェック
-    if (this.maxAge && Date.now() - entry.timestamp > this.maxAge) {
+    if (this.maxAge && Date.now() - node.timestamp > this.maxAge) {
       this.delete(key);
       return undefined;
     }
 
-    // アクセス順序を更新
-    this.updateAccessOrder(key);
+    // ノードを先頭に移動（最近使用されたことを示す）- O(1)
+    this.moveToHead(node);
 
     // アクセス統計を更新
-    entry.accessCount++;
-    entry.timestamp = Date.now();
+    node.accessCount++;
+    node.timestamp = Date.now();
 
-    return entry.value;
+    return node.value;
   }
 
   /**
@@ -92,30 +95,32 @@ export class LRUCache<T = any> {
    * @param value 値
    */
   set(key: string, value: T): void {
-    // 既存エントリーがある場合は更新
-    const existingEntry = this.cache.get(key);
-    if (existingEntry) {
-      existingEntry.value = value;
-      existingEntry.timestamp = Date.now();
-      this.updateAccessOrder(key);
+    // 既存ノードがある場合は更新
+    const existingNode = this.cache.get(key);
+    if (existingNode) {
+      existingNode.value = value;
+      existingNode.timestamp = Date.now();
+      this.moveToHead(existingNode); // O(1)
       return;
     }
 
-    // 新規エントリーを追加前に容量チェック
+    // 新規ノードを追加前に容量チェック
     if (this.cache.size >= this.maxSize) {
       this.evictLRU();
     }
 
-    // 新規エントリーを追加
-    const entry: CacheEntry<T> = {
+    // 新規ノードを作成して追加
+    const newNode: ListNode<T> = {
       key,
       value,
       timestamp: Date.now(),
       accessCount: 0,
+      prev: null,
+      next: null,
     };
 
-    this.cache.set(key, entry);
-    this.accessOrder.push(key);
+    this.cache.set(key, newNode);
+    this.addToHead(newNode); // O(1)
   }
 
   /**
@@ -125,22 +130,21 @@ export class LRUCache<T = any> {
    * @returns 削除に成功した場合true
    */
   delete(key: string): boolean {
-    const entry = this.cache.get(key);
-    if (!entry) {
+    const node = this.cache.get(key);
+    if (!node) {
       return false;
     }
 
     // 削除前にコールバックを実行
     if (this.onEvict) {
-      this.onEvict(key, entry.value);
+      this.onEvict(key, node.value);
     }
 
-    // キャッシュとアクセス順序から削除
+    // リストからノードを削除 - O(1)
+    this.removeNode(node);
+
+    // キャッシュから削除
     this.cache.delete(key);
-    const index = this.accessOrder.indexOf(key);
-    if (index > -1) {
-      this.accessOrder.splice(index, 1);
-    }
 
     return true;
   }
@@ -179,15 +183,16 @@ export class LRUCache<T = any> {
    * キャッシュをクリア
    */
   clear(): void {
-    // 全エントリーに対してコールバックを実行
+    // 全ノードに対してコールバックを実行
     if (this.onEvict) {
-      for (const [key, entry] of this.cache.entries()) {
-        this.onEvict(key, entry.value);
+      for (const [key, node] of this.cache.entries()) {
+        this.onEvict(key, node.value);
       }
     }
 
     this.cache.clear();
-    this.accessOrder.length = 0;
+    this.head = null;
+    this.tail = null;
   }
 
   /**
@@ -205,7 +210,7 @@ export class LRUCache<T = any> {
    * @returns 値の配列
    */
   values(): T[] {
-    return Array.from(this.cache.values()).map((entry) => entry.value);
+    return Array.from(this.cache.values()).map((node) => node.value);
   }
 
   /**
@@ -219,9 +224,9 @@ export class LRUCache<T = any> {
     hitRate: number;
     avgAccessCount: number;
   } {
-    const entries = Array.from(this.cache.values());
-    const totalAccessCount = entries.reduce(
-      (sum, entry) => sum + entry.accessCount,
+    const nodes = Array.from(this.cache.values());
+    const totalAccessCount = nodes.reduce(
+      (sum, node) => sum + node.accessCount,
       0
     );
 
@@ -229,8 +234,7 @@ export class LRUCache<T = any> {
       size: this.cache.size,
       maxSize: this.maxSize,
       hitRate: 0, // ヒット率は別途記録が必要
-      avgAccessCount:
-        entries.length > 0 ? totalAccessCount / entries.length : 0,
+      avgAccessCount: nodes.length > 0 ? totalAccessCount / nodes.length : 0,
     };
   }
 
@@ -247,8 +251,8 @@ export class LRUCache<T = any> {
     const now = Date.now();
     let purgedCount = 0;
 
-    for (const [key, entry] of this.cache.entries()) {
-      if (now - entry.timestamp > this.maxAge) {
+    for (const [key, node] of this.cache.entries()) {
+      if (now - node.timestamp > this.maxAge) {
         this.delete(key);
         purgedCount++;
       }
@@ -258,31 +262,66 @@ export class LRUCache<T = any> {
   }
 
   /**
-   * LRUアルゴリズムで最も使用されていないエントリーを退避
+   * LRUアルゴリズムで最も使用されていないエントリーを退避 - O(1)
    */
   private evictLRU(): void {
-    if (this.accessOrder.length === 0) {
+    if (!this.tail) {
       return;
     }
 
-    // 最も古いエントリー（アクセス順序の先頭）を削除
-    const lruKey = this.accessOrder[0];
+    // 最も使用されていないノード（tail）を削除
+    const lruKey = this.tail.key;
     this.delete(lruKey);
   }
 
   /**
-   * アクセス順序を更新
+   * ノードをリストから削除（O(1)）
    *
-   * @param key キー
+   * @param node 削除するノード
    */
-  private updateAccessOrder(key: string): void {
-    // 現在の位置を削除
-    const index = this.accessOrder.indexOf(key);
-    if (index > -1) {
-      this.accessOrder.splice(index, 1);
+  private removeNode(node: ListNode<T>): void {
+    if (node.prev) {
+      node.prev.next = node.next;
+    } else {
+      this.tail = node.next;
     }
 
-    // 最後尾に追加（最近アクセスされたエントリー）
-    this.accessOrder.push(key);
+    if (node.next) {
+      node.next.prev = node.prev;
+    } else {
+      this.head = node.prev;
+    }
+
+    node.prev = null;
+    node.next = null;
+  }
+
+  /**
+   * ノードをリストの先頭に追加（O(1)）
+   *
+   * @param node 追加するノード
+   */
+  private addToHead(node: ListNode<T>): void {
+    node.prev = this.head;
+    node.next = null;
+
+    if (this.head) {
+      this.head.next = node;
+    }
+    this.head = node;
+
+    if (!this.tail) {
+      this.tail = node;
+    }
+  }
+
+  /**
+   * ノードを先頭に移動（O(1)）
+   *
+   * @param node 移動するノード
+   */
+  private moveToHead(node: ListNode<T>): void {
+    this.removeNode(node);
+    this.addToHead(node);
   }
 }
