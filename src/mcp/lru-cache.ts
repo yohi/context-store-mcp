@@ -250,12 +250,19 @@ export class LRUCache<T = any> {
 
     const now = Date.now();
     let purgedCount = 0;
+    const keysToDelete: string[] = [];
 
+    // 削除対象のキーを収集
     for (const [key, node] of this.cache.entries()) {
       if (now - node.timestamp > this.maxAge) {
-        this.delete(key);
-        purgedCount++;
+        keysToDelete.push(key);
       }
+    }
+
+    // イテレーション完了後に削除を実行
+    for (const key of keysToDelete) {
+      this.delete(key);
+      purgedCount++;
     }
 
     return purgedCount;
