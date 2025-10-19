@@ -20,10 +20,10 @@ interface ListNode<T> {
 /**
  * LRUキャッシュ設定
  */
-export interface LRUCacheConfig {
+export interface LRUCacheConfig<T = any> {
   maxSize: number;
   maxAge?: number; // エントリーの最大有効期限（ミリ秒）
-  onEvict?: (key: string, value: any) => void; // 退避時のコールバック
+  onEvict?: (key: string, value: T) => void; // 退避時のコールバック
 }
 
 /**
@@ -49,7 +49,7 @@ export class LRUCache<T = any> {
    *
    * @param config キャッシュ設定
    */
-  constructor(config: LRUCacheConfig) {
+  constructor(config: LRUCacheConfig<T>) {
     if (config.maxSize <= 0) {
       throw new Error('maxSize must be greater than 0');
     }
