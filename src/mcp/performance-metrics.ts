@@ -46,7 +46,7 @@ export class PerformanceMetrics {
   private static readonly DEFAULT_MAX_LATENCIES = 1000;
   private static readonly DEFAULT_MAX_ERRORS = 100;
   private static readonly MAX_TIMESTAMPS = 10000;
-  private static readonly DEFAULT_THROUGHPUT_WINDOW_MS = 1000;
+  private static readonly TIMESTAMP_RETENTION_MS = 60000; // 60秒保持
 
   private readonly operations: Map<string, OperationStats> = new Map();
   private readonly config: MetricsConfig;
@@ -96,8 +96,8 @@ export class PerformanceMetrics {
     stats.successCount++;
     stats.timestamps.push(Date.now());
 
-    // timestampsを積極的にプルーニング
-    this.pruneTimestamps(stats);
+    // timestampsを積極的にプルーニング（保持期間: 60秒）
+    this.pruneTimestamps(stats, PerformanceMetrics.TIMESTAMP_RETENTION_MS);
   }
 
   /**
@@ -120,8 +120,8 @@ export class PerformanceMetrics {
       stats.errors.splice(0, removeCount);
     }
 
-    // timestampsを積極的にプルーニング
-    this.pruneTimestamps(stats);
+    // timestampsを積極的にプルーニング（保持期間: 60秒）
+    this.pruneTimestamps(stats, PerformanceMetrics.TIMESTAMP_RETENTION_MS);
   }
 
   /**
@@ -215,7 +215,8 @@ export class PerformanceMetrics {
   /**
    * オペレーションのスループットを取得（リクエスト/秒）
    *
-   * NOTE: このメソッドは古いタイムスタンプを自動的に削除してメモリ使用量を削減します。
+   * NOTE: このメソッドは指定されたウィンドウ期間外の古いタイムスタンプを
+   * 自動的に削除してメモリ使用量を削減します。
    *
    * @param operationName オペレーション名
    * @param windowMs ウィンドウ期間（ミリ秒）デフォルト: 1000ms (1秒)
@@ -227,13 +228,8 @@ export class PerformanceMetrics {
       return 0;
     }
 
-    const now = Date.now();
-    const windowStart = now - windowMs;
-
-    // ウィンドウ期間内のタイムスタンプのみを保持（古いものを削除）
-    stats.timestamps = stats.timestamps.filter(
-      (timestamp) => timestamp >= windowStart
-    );
+    // 指定されたウィンドウ期間でタイムスタンプをプルーニング
+    this.pruneTimestamps(stats, windowMs);
 
     // ウィンドウ期間内のリクエスト数を取得
     const requestsInWindow = stats.timestamps.length;
@@ -312,14 +308,15 @@ export class PerformanceMetrics {
    * さらに最大数を超えている場合は古いエントリーを削除
    *
    * @param stats オペレーション統計
+   * @param windowMs ウィンドウ期間（ミリ秒）
    */
-  private pruneTimestamps(stats: OperationStats): void {
+  private pruneTimestamps(stats: OperationStats, windowMs: number): void {
     if (stats.timestamps.length === 0) {
       return;
     }
 
     const now = Date.now();
-    const windowStart = now - PerformanceMetrics.DEFAULT_THROUGHPUT_WINDOW_MS;
+    const windowStart = now - windowMs;
 
     // ウィンドウ期間外の古いエントリーを削除
     const validIndex = stats.timestamps.findIndex(
