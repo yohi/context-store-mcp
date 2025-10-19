@@ -41,7 +41,8 @@ temp/
 # Docker volumes (persistent data should not be committed)
 docker/volumes/
 
-# Backup files
-*.sql
-*.dump
+# Backup files (excluding init scripts)
+*.sql.bak
+*.dump.bak
 backup.*
+!docker/init-scripts/**/*.sql
