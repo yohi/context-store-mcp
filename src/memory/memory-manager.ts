@@ -98,20 +98,20 @@ export class MemoryManager implements MemoryManagerService {
       }
     }
 
-    // Update the memory (preserving fields not in updates)
+    // Create updated memory, filtering out protected fields
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { id: _id, createdAt: _createdAt, isDeleted: _isDeleted, deletedAt: _deletedAt, ...allowedUpdates } = updates;
+
+    // Update the memory (preserving protected fields)
     const updatedMemory: Memory = {
       ...existing,
-      ...updates,
+      ...allowedUpdates,
       id: existing.id, // ID cannot be changed
       createdAt: existing.createdAt, // createdAt cannot be changed
+      isDeleted: existing.isDeleted, // isDeleted cannot be changed via update
+      deletedAt: existing.deletedAt, // deletedAt cannot be changed via update
       updatedAt: new Date(), // Always update updatedAt
     };
-
-    // If restoring a deleted memory (isDeleted changes from true to false),
-    // clear the deletedAt timestamp
-    if (existing.isDeleted && updates.isDeleted === false) {
-      updatedMemory.deletedAt = null;
-    }
 
     this.memories.set(id, updatedMemory);
 
