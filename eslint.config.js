@@ -20,7 +20,7 @@ export default tseslint.config(
     ...tseslint.configs.disableTypeChecked,
   },
   {
-    ignores: ['dist/', 'node_modules/', '*.config.js'],
+    ignores: ['dist/', 'node_modules/', 'prettier.config.js', 'vitest.config.js'],
   },
   {
     rules: {
