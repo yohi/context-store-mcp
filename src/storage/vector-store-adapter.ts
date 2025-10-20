@@ -219,7 +219,7 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
       await client.query(
         `INSERT INTO memory_vectors (memory_id, embedding)
          VALUES ($1, $2::vector)`,
-        [id, `[${normalizedEmbedding.join(',')}\]`]
+        [id, '[' + normalizedEmbedding.join(',') + ']']
       );
 
       await client.query('COMMIT');
@@ -251,7 +251,7 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
          AND 1 - (mv.embedding <=> $1::vector) >= $2
        ORDER BY similarity DESC
        LIMIT $3`,
-      [`[${normalizedQuery.join(',')}]`, this.similarityThreshold, limit]
+      ['[' + normalizedQuery.join(',') + ']', this.similarityThreshold, limit]
     );
 
     return result.rows.map(row => ({
@@ -298,7 +298,7 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
         await client.query(
           `INSERT INTO memory_vectors (memory_id, embedding)
            VALUES ($1, $2::vector)`,
-          [id, `[${normalizedEmbedding.join(',')}]`]
+          [id, '[' + normalizedEmbedding.join(',') + ']']
         );
       }
 

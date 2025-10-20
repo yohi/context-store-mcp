@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 describe('Vector format conversion (CodeRabbit fix validation)', () => {
   it('should format vector correctly for pgvector', () => {
     const vector = [0.1, 0.2, 0.3, 0.4, 0.5];
-    const formatted = `[${vector.join(',')}]`;
+    const formatted = '[' + vector.join(',') + ']';
 
     // pgvectorが期待する形式: "[0.1,0.2,0.3,0.4,0.5]"
     expect(formatted).toBe('[0.1,0.2,0.3,0.4,0.5]');
@@ -24,7 +24,7 @@ describe('Vector format conversion (CodeRabbit fix validation)', () => {
   it('should handle large vectors correctly (1536D)', () => {
     // OpenAI text-embedding-3-small: 1536次元
     const vector = Array.from({ length: 1536 }, (_, i) => i / 1536);
-    const formatted = `[${vector.join(',')}]`;
+    const formatted = '[' + vector.join(',') + ']';
 
     // 形式チェック
     expect(formatted.startsWith('[')).toBe(true);
@@ -49,14 +49,14 @@ describe('Vector format conversion (CodeRabbit fix validation)', () => {
     expect(normalizedNorm).toBeCloseTo(1.0);
 
     // pgvector形式
-    const formatted = `[${normalized.join(',')}]`;
+    const formatted = '[' + normalized.join(',') + ']';
     expect(formatted).toMatch(/^\[[\d.,]+\]$/);
     expect(formatted).not.toContain(' ');
   });
 
   it('should not use JSON.stringify for vectors', () => {
     const vector = [0.1, 0.2, 0.3];
-    const correctFormat = `[${vector.join(',')}]`;
+    const correctFormat = '[' + vector.join(',') + ']';
     const wrongFormat = JSON.stringify(vector);
 
     // JSON.stringify()の結果は同じに見えるが、型が異なる
