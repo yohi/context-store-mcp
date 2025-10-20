@@ -73,6 +73,12 @@ export class PerformanceMetrics {
    * @param latency レイテンシ（ミリ秒）
    */
   recordLatency(operationName: string, latency: number): void {
+    // Defensive validation: ignore invalid latency values
+    // This prevents NaN, Infinity, or negative values from corrupting metrics
+    if (!Number.isFinite(latency) || latency < 0) {
+      return;
+    }
+
     const stats = this.getOrCreateStats(operationName);
     const timestamp = Date.now();
 
