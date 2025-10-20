@@ -1409,7 +1409,7 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
       }
     });
 
-    it('should synchronize metadata.memoryType with top-level memoryType', async () => {
+    it('should update top-level memoryType only (single source of truth)', async () => {
       // Override to a new type
       await memoryManager.overrideMemoryType(
         episodicMemoryId,
@@ -1421,13 +1421,14 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
 
       expect(memory).toBeDefined();
       if (memory) {
-        // Both top-level and metadata should have the new type
+        // Top-level memoryType should be updated
         expect(memory.memoryType).toBe('semantic');
-        expect(memory.metadata.memoryType).toBe('semantic');
+        // metadata.memoryType should NOT exist (single source of truth)
+        expect(memory.metadata.memoryType).toBeUndefined();
       }
     });
 
-    it('should maintain metadata.memoryType consistency on multiple overrides', async () => {
+    it('should update top-level memoryType correctly on multiple overrides', async () => {
       // First override
       await memoryManager.overrideMemoryType(
         episodicMemoryId,
@@ -1436,7 +1437,7 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
 
       let memory = memoryManager.getMemoryForTest(episodicMemoryId);
       expect(memory?.memoryType).toBe('semantic');
-      expect(memory?.metadata.memoryType).toBe('semantic');
+      expect(memory?.metadata.memoryType).toBeUndefined();
 
       // Second override
       await memoryManager.overrideMemoryType(
@@ -1446,7 +1447,7 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
 
       memory = memoryManager.getMemoryForTest(episodicMemoryId);
       expect(memory?.memoryType).toBe('procedural');
-      expect(memory?.metadata.memoryType).toBe('procedural');
+      expect(memory?.metadata.memoryType).toBeUndefined();
     });
   });
 });

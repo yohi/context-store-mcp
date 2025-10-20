@@ -651,15 +651,11 @@ export class MemoryManager implements MemoryManagerService {
       };
     }
 
-    // Update memory type and ensure metadata is synchronized
+    // Update memory type (single source of truth: top-level memoryType only)
     const updated: Memory = {
       ...memory,
       memoryType: newType,
       updatedAt: new Date(),
-      metadata: {
-        ...memory.metadata,
-        memoryType: newType, // Synchronize metadata.memoryType with top-level memoryType
-      },
     };
 
     this.memories.set(memoryId, updated);
