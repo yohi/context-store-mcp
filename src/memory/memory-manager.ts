@@ -54,6 +54,7 @@ export class MemoryManager implements MemoryManagerService {
     const { memoryType: metadataType, ...metadataWithoutType } = processedMetadata;
 
     // Create memory entity
+    // memoryType is now exclusively managed at top-level (single source of truth)
     const memory: Memory = {
       id: memoryId,
       content: params.content,
@@ -107,14 +108,21 @@ export class MemoryManager implements MemoryManagerService {
       }
     }
 
+    // Normalize metadata if being updated
+    const normalizedMetadata = updates.metadata !== undefined
+      ? this.processMetadata(updates.metadata)
+      : undefined;
+
     // Create updated memory, filtering out protected fields
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { id: _id, createdAt: _createdAt, isDeleted: _isDeleted, deletedAt: _deletedAt, ...allowedUpdates } = updates;
+    const { id: _id, createdAt: _createdAt, isDeleted: _isDeleted, deletedAt: _deletedAt, metadata: _metadata, ...allowedUpdates } = updates;
 
-    // Update the memory (preserving protected fields)
+    // Update the memory (preserving protected fields and maintaining data integrity)
     const updatedMemory: Memory = {
       ...existing,
       ...allowedUpdates,
+      // Apply normalized metadata if provided, otherwise keep existing
+      ...(normalizedMetadata !== undefined ? { metadata: normalizedMetadata } : {}),
       id: existing.id, // ID cannot be changed
       createdAt: existing.createdAt, // createdAt cannot be changed
       isDeleted: existing.isDeleted, // isDeleted cannot be changed via update
@@ -239,7 +247,8 @@ export class MemoryManager implements MemoryManagerService {
     // Merge tags from all memories (unique tags only, sorted for deterministic order)
     const allTags = new Set<string>();
     for (const memory of memories) {
-      if (memory.metadata.tags) {
+      // Ensure tags is an array before iterating (defensive check)
+      if (memory.metadata.tags && Array.isArray(memory.metadata.tags)) {
         for (const tag of memory.metadata.tags) {
           allTags.add(tag);
         }
@@ -247,8 +256,10 @@ export class MemoryManager implements MemoryManagerService {
     }
 
     // Create merged memory
+    // Use first memory's type as the merged type (single source of truth)
     const mergedMemoryParams: StoreMemoryParams = {
       content: combinedContent,
+      memoryType: memories[0]?.memoryType || 'semantic', // Use first memory's type
       metadata: {
         tags: Array.from(allTags).sort(), // Sorted for stable ordering
         source: 'merged',
@@ -261,12 +272,32 @@ export class MemoryManager implements MemoryManagerService {
       return mergeResult;
     }
 
+    // Capture snapshot of source memories before modification
+    const snapshot = new Map<MemoryId, Memory>();
+    for (const id of ids) {
+      const memory = this.memories.get(id);
+      if (memory) {
+        // Deep copy to preserve original state
+        snapshot.set(id, { ...memory });
+      }
+    }
+
     // Soft delete source memories with rollback on failure
+    const deletedIds: MemoryId[] = [];
     for (const id of ids) {
       const deleteResult = await this.deleteMemory(id);
       if (!deleteResult.success) {
-        // Rollback: delete the merged memory to avoid inconsistency
+        // Rollback: restore all modified source memories
+        for (const deletedId of deletedIds) {
+          const original = snapshot.get(deletedId);
+          if (original) {
+            this.memories.set(deletedId, original);
+          }
+        }
+
+        // Remove the merged memory to avoid inconsistency
         this.memories.delete(mergeResult.value);
+
         return {
           success: false,
           error: {
@@ -275,6 +306,7 @@ export class MemoryManager implements MemoryManagerService {
           },
         };
       }
+      deletedIds.push(id);
     }
 
     return {

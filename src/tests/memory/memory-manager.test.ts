@@ -41,10 +41,10 @@ describe('MemoryManager - Basic Functionality (Task 3.1)', () => {
     it('should store memory with metadata', async () => {
       const params: StoreMemoryParams = {
         content: 'Memory with metadata',
+        memoryType: 'semantic',
         metadata: {
           source: 'test-suite',
           tags: ['test', 'unit'],
-          memoryType: 'semantic',
         },
       };
 
@@ -502,9 +502,9 @@ describe('MemoryManager - Update, Delete, Merge (Task 3.2)', () => {
     // Store a test memory for update/delete operations
     const storeResult = await memoryManager.storeMemory({
       content: 'Initial content for testing',
+      memoryType: 'semantic',
       metadata: {
         tags: ['test'],
-        memoryType: 'semantic',
       },
     });
 
