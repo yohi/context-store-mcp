@@ -109,7 +109,7 @@ export class MemoryManager implements MemoryManagerService {
       id: existing.id, // ID cannot be changed
       createdAt: existing.createdAt, // createdAt cannot be changed
       isDeleted: existing.isDeleted, // isDeleted cannot be changed via update
-      deletedAt: existing.deletedAt, // deletedAt cannot be changed via update
+      deletedAt: existing.deletedAt ?? null, // deletedAt cannot be changed via update, normalize undefined to null
       updatedAt: new Date(), // Always update updatedAt
     };
 
@@ -274,14 +274,62 @@ export class MemoryManager implements MemoryManagerService {
     };
   }
 
+  /**
+   * Perform garbage collection on soft-deleted memories
+   * Requirements: Task 3.3 - Storage auto-cleanup
+   */
   async performGarbageCollection(): Promise<void> {
-    // To be implemented in task 3.3
-    throw new Error('Not implemented yet');
+    const now = new Date();
+    const threshold = new Date(now.getTime() - 24 * 60 * 60 * 1000); // 24 hours ago
+
+    // Find soft-deleted memories that are old enough and not protected
+    const toRemove: MemoryId[] = [];
+    for (const [id, memory] of this.memories.entries()) {
+      if (
+        memory.isDeleted &&
+        !memory.isProtected &&
+        memory.deletedAt !== null &&
+        memory.deletedAt !== undefined &&
+        memory.deletedAt < threshold
+      ) {
+        toRemove.push(id);
+      }
+    }
+
+    // Physically remove these memories
+    for (const id of toRemove) {
+      this.memories.delete(id);
+    }
   }
 
+  /**
+   * Optimize storage by updating importance scores and compacting memory
+   * Requirements: Task 3.3 - Storage optimization
+   */
   async optimizeStorage(): Promise<void> {
-    // To be implemented in task 3.3
-    throw new Error('Not implemented yet');
+    // Update importance scores for all non-deleted memories
+    for (const [id, memory] of this.memories.entries()) {
+      if (!memory.isDeleted) {
+        // Simple importance score calculation based on access count
+        // In real implementation, this would consider:
+        // - Reference score (search result appearances)
+        // - Graph centrality score
+        const referenceScore = Math.min(memory.accessCount / 100, 1.0);
+        const centralityScore = 0.5; // Placeholder (would come from Neo4j PageRank)
+
+        const importanceScore = referenceScore * 0.6 + centralityScore * 0.4;
+
+        // Update the memory with new importance score
+        this.memories.set(id, {
+          ...memory,
+          importanceScore,
+        });
+      }
+    }
+
+    // Compact: Remove soft-deleted memories that have been deleted long enough
+    // This is essentially a lightweight garbage collection
+    await this.performGarbageCollection();
   }
 
   /**
@@ -345,5 +393,38 @@ export class MemoryManager implements MemoryManagerService {
       updatedAt: now,
       lastAccessedAt: now,
     };
+  }
+
+  /**
+   * Test helper: Get a memory by ID (including soft-deleted ones)
+   * Only for testing purposes - not part of public API
+   * @internal
+   */
+  getMemoryForTest(id: MemoryId): Memory | undefined {
+    return this.memories.get(id);
+  }
+
+  /**
+   * Test helper: Get all memories (including soft-deleted ones)
+   * Only for testing purposes - not part of public API
+   * @internal
+   */
+  getAllMemoriesForTest(): Memory[] {
+    return Array.from(this.memories.values());
+  }
+
+  /**
+   * Test helper: Manually set deletedAt timestamp for testing GC
+   * Only for testing purposes - allows simulating old deletions
+   * @internal
+   */
+  setDeletedAtForTest(id: MemoryId, deletedAt: Date): void {
+    const memory = this.memories.get(id);
+    if (memory) {
+      this.memories.set(id, {
+        ...memory,
+        deletedAt,
+      });
+    }
   }
 }
