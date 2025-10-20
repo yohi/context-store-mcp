@@ -45,10 +45,11 @@ export class MemoryManager implements MemoryManagerService {
     const timestamps = this.createTimestamps();
 
     // Create memory entity
+    // memoryType is now exclusively managed at top-level (single source of truth)
     const memory: Memory = {
       id: memoryId,
       content: params.content,
-      memoryType: processedMetadata.memoryType || 'semantic', // Default to semantic
+      memoryType: params.memoryType || 'semantic', // Default to semantic
       metadata: processedMetadata,
       ...timestamps,
       accessCount: 0,
@@ -98,14 +99,21 @@ export class MemoryManager implements MemoryManagerService {
       }
     }
 
+    // Normalize metadata if being updated
+    const normalizedMetadata = updates.metadata !== undefined
+      ? this.processMetadata(updates.metadata)
+      : undefined;
+
     // Create updated memory, filtering out protected fields
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { id: _id, createdAt: _createdAt, isDeleted: _isDeleted, deletedAt: _deletedAt, ...allowedUpdates } = updates;
+    const { id: _id, createdAt: _createdAt, isDeleted: _isDeleted, deletedAt: _deletedAt, metadata: _metadata, ...allowedUpdates } = updates;
 
-    // Update the memory (preserving protected fields)
+    // Update the memory (preserving protected fields and maintaining data integrity)
     const updatedMemory: Memory = {
       ...existing,
       ...allowedUpdates,
+      // Apply normalized metadata if provided, otherwise keep existing
+      ...(normalizedMetadata !== undefined ? { metadata: normalizedMetadata } : {}),
       id: existing.id, // ID cannot be changed
       createdAt: existing.createdAt, // createdAt cannot be changed
       isDeleted: existing.isDeleted, // isDeleted cannot be changed via update
@@ -230,7 +238,8 @@ export class MemoryManager implements MemoryManagerService {
     // Merge tags from all memories (unique tags only, sorted for deterministic order)
     const allTags = new Set<string>();
     for (const memory of memories) {
-      if (memory.metadata.tags) {
+      // Ensure tags is an array before iterating (defensive check)
+      if (memory.metadata.tags && Array.isArray(memory.metadata.tags)) {
         for (const tag of memory.metadata.tags) {
           allTags.add(tag);
         }
@@ -238,12 +247,13 @@ export class MemoryManager implements MemoryManagerService {
     }
 
     // Create merged memory
+    // Use first memory's type as the merged type (single source of truth)
     const mergedMemoryParams: StoreMemoryParams = {
       content: combinedContent,
+      memoryType: memories[0]?.memoryType || 'semantic', // Use first memory's type
       metadata: {
         tags: Array.from(allTags).sort(), // Sorted for stable ordering
         source: 'merged',
-        memoryType: memories[0]?.memoryType || 'semantic', // Use first memory's type
       },
     };
 

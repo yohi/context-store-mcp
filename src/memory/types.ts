@@ -22,11 +22,12 @@ export type Result<T, E> =
   | { success: false; error: E };
 
 // Memory metadata structure
+// Note: memoryType is stored at top-level Memory.memoryType, not in metadata
+// to maintain single source of truth and prevent drift
 export interface MemoryMetadata {
   source?: string;
   timestamp?: Date;
   tags?: string[];
-  memoryType?: MemoryType;
   userId?: string;
   projectId?: string;
 }
@@ -50,6 +51,7 @@ export interface Memory {
 // Parameters for storing a new memory
 export interface StoreMemoryParams {
   content: string;
+  memoryType?: MemoryType; // Optional, defaults to 'semantic'
   metadata?: MemoryMetadata;
 }
 
