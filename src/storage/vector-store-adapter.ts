@@ -272,35 +272,58 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
   }
 
   async bulkStore(items: VectorItem[]): Promise<VectorId[]> {
+    // Step 1: Generate all embeddings in parallel BEFORE opening transaction
+    // This avoids holding DB connection while waiting for OpenAI API
+    const embeddingPromises = items.map(item => this.generateEmbedding(item.content));
+    const embeddings = await Promise.all(embeddingPromises);
+    const normalizedEmbeddings = embeddings.map(emb => this.normalizeVector(emb));
+
+    // Step 2: Generate UUIDs upfront
+    const ids: VectorId[] = items.map(() => randomUUID());
+
+    // Step 3: Build bulk INSERT statements with parameterized queries
     const client = await this.pool.connect();
-    const ids: VectorId[] = [];
 
     try {
       await client.query('BEGIN');
 
-      for (const item of items) {
-        // ベクトル生成
-        const embedding = await this.generateEmbedding(item.content);
-        const normalizedEmbedding = this.normalizeVector(embedding);
+      // Bulk insert into memories table
+      // VALUES ($1, $2, $3, NOW(), NOW()), ($4, $5, $6, NOW(), NOW()), ...
+      const memoriesValues: string[] = [];
+      const memoriesParams: unknown[] = [];
+      let paramIndex = 1;
 
-        // UUIDを生成
-        const id = randomUUID();
-        ids.push(id);
-
-        // memories テーブルに保存
-        await client.query(
-          `INSERT INTO memories (id, content, metadata, created_at, updated_at)
-           VALUES ($1, $2, $3, NOW(), NOW())`,
-          [id, item.content, JSON.stringify(item.metadata)]
+      for (let i = 0; i < items.length; i++) {
+        memoriesValues.push(
+          `($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, NOW(), NOW())`
         );
-
-        // memory_vectors テーブルにベクトルを保存
-        await client.query(
-          `INSERT INTO memory_vectors (memory_id, embedding)
-           VALUES ($1, $2::vector)`,
-          [id, '[' + normalizedEmbedding.join(',') + ']']
-        );
+        memoriesParams.push(ids[i], items[i].content, JSON.stringify(items[i].metadata));
+        paramIndex += 3;
       }
+
+      await client.query(
+        `INSERT INTO memories (id, content, metadata, created_at, updated_at)
+         VALUES ${memoriesValues.join(', ')}`,
+        memoriesParams
+      );
+
+      // Bulk insert into memory_vectors table
+      // VALUES ($1, $2::vector), ($3, $4::vector), ...
+      const vectorsValues: string[] = [];
+      const vectorsParams: unknown[] = [];
+      paramIndex = 1;
+
+      for (let i = 0; i < items.length; i++) {
+        vectorsValues.push(`($${paramIndex}, $${paramIndex + 1}::vector)`);
+        vectorsParams.push(ids[i], '[' + normalizedEmbeddings[i].join(',') + ']');
+        paramIndex += 2;
+      }
+
+      await client.query(
+        `INSERT INTO memory_vectors (memory_id, embedding)
+         VALUES ${vectorsValues.join(', ')}`,
+        vectorsParams
+      );
 
       await client.query('COMMIT');
       return ids;
