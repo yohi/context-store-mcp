@@ -69,8 +69,12 @@ export interface MetadataFilter {
   /** 作成日時の範囲フィルタ */
   createdAfter?: Date;
   createdBefore?: Date;
-  /** カスタムメタデータフィルタ */
-  customFilters?: Record<string, unknown>;
+  // TODO(task5.2): カスタムメタデータフィルタの実装
+  // customFilters?: Record<string, unknown>;
+  // 実装時の要件：
+  // - キーのサニタイゼーション（SQLインジェクション対策）
+  // - 値のパラメータ化（プリペアドステートメント使用）
+  // - ユニットテストの追加（最低1ケース）
 }
 
 /**
@@ -628,6 +632,16 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
         queryParams.push(filter.createdBefore);
         paramIndex++;
       }
+
+      // TODO(task5.2): customFiltersの実装
+      // if (filter.customFilters) {
+      //   // 実装時の要件：
+      //   // 1. キーのホワイトリスト検証（許可されたメタデータキーのみ）
+      //   // 2. プリペアドステートメント使用（$${paramIndex}形式）
+      //   // 3. JSONBパス演算子の適切な使用（->>'key'）
+      //   // 4. SQLインジェクション対策の徹底
+      //   // 例: whereConditions.push(`m.metadata->>'${sanitizedKey}' = $${paramIndex}`);
+      // }
     }
 
     const whereClause = whereConditions.join(' AND ');
