@@ -67,3 +67,55 @@ export interface MemoryManagerService {
   performGarbageCollection(): Promise<void>;
   optimizeStorage(): Promise<void>;
 }
+
+// Memory Classification types (Requirements: 3.4)
+export interface MemoryClassification {
+  primaryType: MemoryType;
+  confidence: number; // 0.0 - 1.0
+  suggestedTypes: Array<{
+    type: MemoryType;
+    confidence: number;
+  }>;
+  features: {
+    ruleBasedScore: number;
+    embeddingScore: number;
+    detectedKeywords: string[];
+  };
+}
+
+// Labeled sample for training/evaluation
+export interface LabeledSample {
+  content: string;
+  trueType: MemoryType;
+}
+
+// Training sample with additional metadata
+export interface TrainingSample extends LabeledSample {
+  metadata?: Record<string, unknown>;
+}
+
+// Accuracy metrics for classifier evaluation
+export interface AccuracyMetrics {
+  overall: number; // Overall accuracy
+  perType: Record<MemoryType, number>; // Per-type accuracy
+  confusionMatrix: number[][]; // Confusion matrix
+}
+
+// Classification statistics
+export interface ClassificationStats {
+  totalClassified: number;
+  userOverrideRate: number; // User override rate (not implemented yet)
+  averageConfidence: number;
+  lowConfidenceCount: number;
+}
+
+// Memory Classifier service interface (Requirements: 3.1, 3.2, 3.3, 3.4)
+export interface MemoryClassifierService {
+  classifyContent(content: string): Promise<MemoryClassification>;
+  getConfidenceScore(content: string, type: MemoryType): Promise<number>;
+  trainClassifier(samples: TrainingSample[]): Promise<void>;
+
+  // Accuracy measurement
+  evaluateAccuracy(testSamples: LabeledSample[]): Promise<AccuracyMetrics>;
+  getClassificationStats(): Promise<ClassificationStats>;
+}
