@@ -11,12 +11,14 @@ import type {
   MemoryError,
   MemoryManagerService,
   MemoryMetadata,
-  MemoryType,
   Result,
   StoreMemoryParams,
 } from './types.js';
 
 export class MemoryManager implements MemoryManagerService {
+  // In-memory storage for testing (will be replaced with PostgreSQL in later tasks)
+  private memories: Map<MemoryId, Memory> = new Map();
+
   /**
    * Store a new memory with automatic ID generation and timestamp management
    * Requirements: 1.1 (永続的保存), 1.2 (セッション間アクセス), 1.6 (整合性維持)
@@ -40,11 +42,24 @@ export class MemoryManager implements MemoryManagerService {
     const processedMetadata = this.processMetadata(params.metadata);
 
     // Auto-generate timestamps
-    const now = new Date();
+    const timestamps = this.createTimestamps();
 
-    // For now, we're just validating and generating IDs
-    // Actual storage will be implemented in later tasks when we integrate with PostgreSQL
-    // This is the minimal implementation to make tests pass (GREEN step of TDD)
+    // Create memory entity
+    const memory: Memory = {
+      id: memoryId,
+      content: params.content,
+      memoryType: processedMetadata.memoryType || 'semantic', // Default to semantic
+      metadata: processedMetadata,
+      ...timestamps,
+      accessCount: 0,
+      importanceScore: 0.0,
+      isDeleted: false,
+      isProtected: false,
+      deletedAt: null, // Not deleted initially
+    };
+
+    // Store in memory (will be replaced with PostgreSQL later)
+    this.memories.set(memoryId, memory);
 
     return {
       success: true,
@@ -52,24 +67,211 @@ export class MemoryManager implements MemoryManagerService {
     };
   }
 
+  /**
+   * Update an existing memory
+   * Requirements: 1.3 (記憶更新), Task 3.2
+   */
   async updateMemory(
     id: MemoryId,
     updates: Partial<Memory>
   ): Promise<Result<boolean, MemoryError>> {
-    // To be implemented in task 3.2
-    throw new Error('Not implemented yet');
+    // Check if memory exists
+    const existing = this.memories.get(id);
+    if (!existing) {
+      return {
+        success: false,
+        error: {
+          type: 'MEMORY_NOT_FOUND',
+          message: `Memory with ID ${id} not found`,
+        },
+      };
+    }
+
+    // Validate content if being updated
+    if (updates.content !== undefined) {
+      const validationError = this.validateContent(updates.content);
+      if (validationError !== null) {
+        return {
+          success: false,
+          error: validationError,
+        };
+      }
+    }
+
+    // Create updated memory, filtering out protected fields
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { id: _id, createdAt: _createdAt, isDeleted: _isDeleted, deletedAt: _deletedAt, ...allowedUpdates } = updates;
+
+    // Update the memory (preserving protected fields)
+    const updatedMemory: Memory = {
+      ...existing,
+      ...allowedUpdates,
+      id: existing.id, // ID cannot be changed
+      createdAt: existing.createdAt, // createdAt cannot be changed
+      isDeleted: existing.isDeleted, // isDeleted cannot be changed via update
+      deletedAt: existing.deletedAt, // deletedAt cannot be changed via update
+      updatedAt: new Date(), // Always update updatedAt
+    };
+
+    this.memories.set(id, updatedMemory);
+
+    return {
+      success: true,
+      value: true,
+    };
   }
 
+  /**
+   * Soft delete a memory (mark as deleted, don't remove)
+   * Requirements: 1.5 (削除), Task 3.2
+   */
   async deleteMemory(id: MemoryId): Promise<Result<boolean, MemoryError>> {
-    // To be implemented in task 3.2
-    throw new Error('Not implemented yet');
+    // Check if memory exists
+    const existing = this.memories.get(id);
+    if (!existing) {
+      return {
+        success: false,
+        error: {
+          type: 'MEMORY_NOT_FOUND',
+          message: `Memory with ID ${id} not found`,
+        },
+      };
+    }
+
+    // Check if memory is protected
+    if (existing.isProtected) {
+      return {
+        success: false,
+        error: {
+          type: 'STORAGE_ERROR',
+          message: 'Cannot delete protected memory',
+        },
+      };
+    }
+
+    // Soft delete: mark as deleted with timestamp (GDPR compliance)
+    const deletedMemory: Memory = {
+      ...existing,
+      isDeleted: true,
+      deletedAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    this.memories.set(id, deletedMemory);
+
+    return {
+      success: true,
+      value: true,
+    };
   }
 
+  /**
+   * Merge multiple memories into a single memory
+   * Requirements: 1.3 (統合), Task 3.2
+   */
   async mergeMemories(
     ids: MemoryId[]
   ): Promise<Result<MemoryId, MemoryError>> {
-    // To be implemented in task 3.2
-    throw new Error('Not implemented yet');
+    // Validate input
+    if (ids.length < 2) {
+      return {
+        success: false,
+        error: {
+          type: 'INVALID_CONTENT',
+          message: 'Must provide at least 2 memories to merge',
+        },
+      };
+    }
+
+    // Check all memories exist and are mergeable
+    const memories: Memory[] = [];
+    for (const id of ids) {
+      const memory = this.memories.get(id);
+      if (!memory) {
+        return {
+          success: false,
+          error: {
+            type: 'MEMORY_NOT_FOUND',
+            message: `Memory with ID ${id} not found`,
+          },
+        };
+      }
+
+      // Check if memory is deleted
+      if (memory.isDeleted) {
+        return {
+          success: false,
+          error: {
+            type: 'INVALID_CONTENT',
+            message: `Cannot merge deleted memory: ${id}`,
+          },
+        };
+      }
+
+      // Check if memory is protected
+      if (memory.isProtected) {
+        return {
+          success: false,
+          error: {
+            type: 'STORAGE_ERROR',
+            message: `Cannot merge protected memory: ${id}`,
+          },
+        };
+      }
+
+      memories.push(memory);
+    }
+
+    // Combine content from all memories
+    const combinedContent = memories
+      .map((m, index) => `[Memory ${index + 1}]\n${m.content}`)
+      .join('\n\n');
+
+    // Merge tags from all memories (unique tags only, sorted for deterministic order)
+    const allTags = new Set<string>();
+    for (const memory of memories) {
+      if (memory.metadata.tags) {
+        for (const tag of memory.metadata.tags) {
+          allTags.add(tag);
+        }
+      }
+    }
+
+    // Create merged memory
+    const mergedMemoryParams: StoreMemoryParams = {
+      content: combinedContent,
+      metadata: {
+        tags: Array.from(allTags).sort(), // Sorted for stable ordering
+        source: 'merged',
+        memoryType: memories[0]?.memoryType || 'semantic', // Use first memory's type
+      },
+    };
+
+    const mergeResult = await this.storeMemory(mergedMemoryParams);
+    if (!mergeResult.success) {
+      return mergeResult;
+    }
+
+    // Soft delete source memories with rollback on failure
+    for (const id of ids) {
+      const deleteResult = await this.deleteMemory(id);
+      if (!deleteResult.success) {
+        // Rollback: delete the merged memory to avoid inconsistency
+        this.memories.delete(mergeResult.value);
+        return {
+          success: false,
+          error: {
+            type: deleteResult.error.type,
+            message: `Merge aborted: failed to delete source ${id} (${deleteResult.error.message})`,
+          },
+        };
+      }
+    }
+
+    return {
+      success: true,
+      value: mergeResult.value,
+    };
   }
 
   async performGarbageCollection(): Promise<void> {
@@ -112,7 +314,7 @@ export class MemoryManager implements MemoryManagerService {
    */
   private processMetadata(metadata?: MemoryMetadata): MemoryMetadata {
     const processed: MemoryMetadata = {
-      ...metadata,
+      ...(metadata ?? {}),
     };
 
     // Set timestamp if not provided

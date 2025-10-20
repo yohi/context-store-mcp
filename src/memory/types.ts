@@ -44,6 +44,7 @@ export interface Memory {
   importanceScore: number;
   isDeleted: boolean;
   isProtected: boolean;
+  deletedAt?: Date | null; // Timestamp when soft-deleted (GDPR compliance)
 }
 
 // Parameters for storing a new memory
