@@ -107,11 +107,11 @@
   - [x] 混同行列（Confusion Matrix）の計算
   - [x] 全体精度とタイプ別精度の算出
   - [x] ユーザーフィードバックの収集（ClassificationStats）
-  - [ ] 分類モデルの学習機構（trainClassifier） - プレースホルダー実装のみ
+  - [ ] 分類モデルの学習機構（trainClassifier） - プレースホルダー実装のみ → **Issue #22**
   - [x] 精度レポート生成（AccuracyMetrics、ClassificationStats）
   - [x] 13ユニットテスト全パス
   - _Requirements: 3.4_
-  - **TODO**: Issue作成 - trainClassifierの完全実装（機械学習モデルの統合）
+  - **TODO**: [Issue #22](https://github.com/yohi/context-store-mcp/issues/22) - trainClassifierの完全実装（機械学習モデルの統合）
 
 - [x] 4.3 記憶タイプ間の関連付けと管理
   - タイプ間リンクの生成と維持
