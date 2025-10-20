@@ -252,12 +252,32 @@ export class MemoryManager implements MemoryManagerService {
       return mergeResult;
     }
 
+    // Capture snapshot of source memories before modification
+    const snapshot = new Map<MemoryId, Memory>();
+    for (const id of ids) {
+      const memory = this.memories.get(id);
+      if (memory) {
+        // Deep copy to preserve original state
+        snapshot.set(id, { ...memory });
+      }
+    }
+
     // Soft delete source memories with rollback on failure
+    const deletedIds: MemoryId[] = [];
     for (const id of ids) {
       const deleteResult = await this.deleteMemory(id);
       if (!deleteResult.success) {
-        // Rollback: delete the merged memory to avoid inconsistency
+        // Rollback: restore all modified source memories
+        for (const deletedId of deletedIds) {
+          const original = snapshot.get(deletedId);
+          if (original) {
+            this.memories.set(deletedId, original);
+          }
+        }
+
+        // Remove the merged memory to avoid inconsistency
         this.memories.delete(mergeResult.value);
+
         return {
           success: false,
           error: {
@@ -266,6 +286,7 @@ export class MemoryManager implements MemoryManagerService {
           },
         };
       }
+      deletedIds.push(id);
     }
 
     return {
