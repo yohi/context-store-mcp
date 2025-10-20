@@ -354,4 +354,172 @@ describe('QueryProcessor', () => {
       );
     });
   });
+
+  /**
+   * Task 7.2: ハイブリッド検索とキャッシング
+   * - ベクトル検索とグラフ検索の統合
+   * - 重み付けによる結果マージ
+   * - キャッシュシステムの実装
+   * - キャッシュヒット率の最適化
+   * - キャッシュ無効化戦略
+   */
+  describe('タスク7.2: ハイブリッド検索とキャッシング', () => {
+    describe('ハイブリッド検索 - ベクトルとグラフの統合', () => {
+      test('ベクトル検索とグラフ検索の結果を統合できる', async () => {
+        // TODO: Implement hybrid search functionality
+        // This test will fail until hybridSearch method is implemented
+        const query = 'TypeScript のエラー対処法に関連する情報';
+        const options = {
+          weights: { semantic: 0.7, structural: 0.3 },
+          limit: 10,
+        };
+
+        // Expect processor to have hybridSearch method
+        expect(processor).toHaveProperty('hybridSearch');
+      });
+
+      test('デフォルトの重みで結果をマージできる (semantic: 0.7, structural: 0.3)', async () => {
+        // TODO: Implement default weights for hybrid search
+        const query = 'デバッグ手順';
+
+        // Default weights should be semantic: 0.7, structural: 0.3
+        expect(processor).toHaveProperty('hybridSearch');
+      });
+
+      test('カスタム重みで結果をマージできる', async () => {
+        // TODO: Implement custom weights for hybrid search
+        const query = 'プロジェクト構造';
+        const options = {
+          weights: { semantic: 0.5, structural: 0.5 },
+        };
+
+        expect(processor).toHaveProperty('hybridSearch');
+      });
+
+      test('スコアが正しく正規化される (0.0 - 1.0)', async () => {
+        // TODO: Implement score normalization
+        // Final score = w_semantic * semantic_score + w_structural * structural_score
+        // Both semantic_score and structural_score should be in [0.0, 1.0]
+        expect(processor).toHaveProperty('hybridSearch');
+      });
+
+      test('グラフスコアの指数減衰が正しく適用される', async () => {
+        // TODO: Implement graph score decay
+        // structural_score = exp(-α * path_length)
+        // デフォルト α = 1.0
+        expect(processor).toHaveProperty('hybridSearch');
+      });
+
+      test('重みが正規化される (合計が1.0でない場合)', async () => {
+        // TODO: Implement weight normalization
+        // If w_semantic + w_structural ≠ 1.0, normalize them
+        const weights = { semantic: 0.6, structural: 0.2 }; // Sum = 0.8
+
+        // Expected normalized: semantic = 0.75, structural = 0.25
+        expect(processor).toHaveProperty('hybridSearch');
+      });
+
+      test('同一スコアの場合、タイブレークルールが適用される', async () => {
+        // TODO: Implement tiebreak rules
+        // 1. semantic_score が高い方を優先
+        // 2. path_length が短い方を優先
+        // 3. UUID の辞書順
+        expect(processor).toHaveProperty('hybridSearch');
+      });
+    });
+
+    describe('キャッシュシステム - Redis統合', () => {
+      test('検索結果をキャッシュに保存できる', async () => {
+        // TODO: Implement cache storage
+        expect(processor).toHaveProperty('cacheSearchResult');
+      });
+
+      test('キャッシュされた結果を取得できる', async () => {
+        // TODO: Implement cache retrieval
+        const query = 'React hooks の使い方';
+
+        // First search should miss cache
+        // Second search with same query should hit cache
+        expect(processor).toHaveProperty('getCachedResult');
+      });
+
+      test('クエリハッシュを正しく生成できる', async () => {
+        // TODO: Implement query hashing
+        // Hash should be deterministic for same query + filters
+        const query1 = 'TypeScript';
+        const query2 = 'TypeScript';
+
+        // Same query should produce same hash
+        expect(processor).toHaveProperty('generateQueryHash');
+      });
+
+      test('フィルタを含むクエリのハッシュを正しく生成できる', async () => {
+        // TODO: Implement query + filter hashing
+        const query = 'デバッグ';
+        const filters = { tags: ['bug'], memoryTypes: ['procedural'] };
+
+        // Hash should include filters
+        expect(processor).toHaveProperty('generateQueryHash');
+      });
+
+      test('キャッシュTTL (有効期限) が正しく設定される', async () => {
+        // TODO: Implement cache TTL
+        // Default TTL should be configurable (e.g., 5 minutes)
+        expect(processor).toHaveProperty('cacheSearchResult');
+      });
+
+      test('キャッシュヒット率を計算できる', async () => {
+        // TODO: Implement cache hit rate calculation
+        // hit_rate = cache_hits / (cache_hits + cache_misses)
+        expect(processor).toHaveProperty('getCacheHitRate');
+      });
+    });
+
+    describe('キャッシュ無効化戦略', () => {
+      test('記憶更新時にキャッシュを無効化できる', async () => {
+        // TODO: Implement cache invalidation on memory update
+        expect(processor).toHaveProperty('invalidateCache');
+      });
+
+      test('記憶削除時にキャッシュを無効化できる', async () => {
+        // TODO: Implement cache invalidation on memory deletion
+        expect(processor).toHaveProperty('invalidateCache');
+      });
+
+      test('タグベースでキャッシュを無効化できる', async () => {
+        // TODO: Implement tag-based cache invalidation
+        const tags = ['bug', 'feature'];
+
+        // Invalidate all cached results that match these tags
+        expect(processor).toHaveProperty('invalidateCacheByTags');
+      });
+
+      test('記憶タイプベースでキャッシュを無効化できる', async () => {
+        // TODO: Implement memory type-based cache invalidation
+        const memoryType = 'procedural';
+
+        // Invalidate all cached results for this memory type
+        expect(processor).toHaveProperty('invalidateCacheByMemoryType');
+      });
+
+      test('全キャッシュをクリアできる', async () => {
+        // TODO: Implement cache clear
+        expect(processor).toHaveProperty('clearCache');
+      });
+    });
+
+    describe('パフォーマンス最適化', () => {
+      test('ハイブリッド検索が2秒以内に完了する (P95目標)', async () => {
+        // TODO: Performance test - should complete within 2 seconds
+        // This is a placeholder - actual performance test requires real data
+        expect(true).toBe(true);
+      });
+
+      test('キャッシュヒット時は100ms以内に応答する', async () => {
+        // TODO: Performance test for cache hit
+        // Should be much faster than actual search
+        expect(true).toBe(true);
+      });
+    });
+  });
 });

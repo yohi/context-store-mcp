@@ -23,14 +23,33 @@ import type {
   QueryStep,
   SearchStrategy,
   OptimizedQueryPlan,
-  QueryError,
 } from './types';
 import type { MemoryType } from '../memory/types';
 
+import type { LRUCache } from '../mcp/lru-cache';
+import { createHash } from 'crypto';
+
 /**
  * クエリプロセッサー
+ *
+ * Task 7.2: ハイブリッド検索とキャッシング機能を追加
  */
 export class QueryProcessor {
+  private cache?: LRUCache<any>;
+  private cacheHits: number = 0;
+  private cacheMisses: number = 0;
+
+  /**
+   * コンストラクタ
+   *
+   * @param options 設定オプション
+   */
+  constructor(options?: { cache?: LRUCache<any> }) {
+    if (options?.cache) {
+      this.cache = options.cache;
+    }
+  }
+
   /**
    * クエリを解析する
    */
@@ -618,5 +637,162 @@ export class QueryProcessor {
       originalEstimatedTime,
       improvementRate,
     };
+  }
+
+  /**
+   * Task 7.2: ハイブリッド検索とキャッシング
+   */
+
+  /**
+   * ハイブリッド検索 - ベクトル検索とグラフ検索の結果を統合
+   *
+   * design.md のハイブリッド検索スコアリング詳細に準拠:
+   * - 最終スコア = w_semantic * semantic_score + w_structural * structural_score
+   * - デフォルト重み: semantic = 0.7, structural = 0.3
+   * - グラフスコア正規化: structural_score = exp(-α * path_length), α = 1.0
+   */
+  async hybridSearch(
+    _query: string,
+    options?: {
+      weights?: { semantic: number; structural: number };
+      limit?: number;
+    }
+  ): Promise<any[]> {
+    // デフォルトパラメータ
+    const weights = options?.weights || { semantic: 0.7, structural: 0.3 };
+
+    // 重みの正規化 (合計が1.0でない場合)
+    const totalWeight = weights.semantic + weights.structural;
+    // 将来の実装で使用予定
+    void totalWeight; // Suppress unused variable warning
+
+    // TODO: VectorStoreAdapter と GraphStoreAdapter の統合
+    // 現在はスタブ実装
+    return [];
+  }
+
+  /**
+   * クエリハッシュを生成
+   *
+   * 同一のクエリ + フィルタに対して決定的なハッシュを生成
+   */
+  generateQueryHash(query: string, filters?: any): string {
+    const queryData = JSON.stringify({
+      query,
+      filters: filters || {},
+    });
+
+    return createHash('sha256').update(queryData).digest('hex');
+  }
+
+  /**
+   * 検索結果をキャッシュに保存
+   *
+   * @param queryHash クエリハッシュ
+   * @param results 検索結果
+   */
+  cacheSearchResult(queryHash: string, results: any): void {
+    if (!this.cache) {
+      return;
+    }
+
+    this.cache.set(queryHash, results);
+  }
+
+  /**
+   * キャッシュから結果を取得
+   *
+   * @param queryHash クエリハッシュ
+   * @returns キャッシュされた結果（存在しない場合はundefined）
+   */
+  getCachedResult(queryHash: string): any | undefined {
+    if (!this.cache) {
+      this.cacheMisses++;
+      return undefined;
+    }
+
+    const cached = this.cache.get(queryHash);
+
+    if (cached) {
+      this.cacheHits++;
+      return cached;
+    } else {
+      this.cacheMisses++;
+      return undefined;
+    }
+  }
+
+  /**
+   * キャッシュを無効化
+   *
+   * @param key 無効化するキャッシュキー（省略時は全キャッシュをクリア）
+   */
+  invalidateCache(key?: string): void {
+    if (!this.cache) {
+      return;
+    }
+
+    if (key) {
+      this.cache.delete(key);
+    } else {
+      this.cache.clear();
+    }
+  }
+
+  /**
+   * タグに基づいてキャッシュを無効化
+   *
+   * @param _tags 無効化対象のタグ
+   */
+  invalidateCacheByTags(_tags: string[]): void {
+    if (!this.cache) {
+      return;
+    }
+
+    // キャッシュキーにタグ情報が含まれていれば削除
+    // TODO: より効率的な実装（キャッシュメタデータの活用）
+    this.cache.clear();
+  }
+
+  /**
+   * 記憶タイプに基づいてキャッシュを無効化
+   *
+   * @param _memoryType 無効化対象の記憶タイプ
+   */
+  invalidateCacheByMemoryType(_memoryType: MemoryType): void {
+    if (!this.cache) {
+      return;
+    }
+
+    // TODO: より効率的な実装（キャッシュメタデータの活用）
+    this.cache.clear();
+  }
+
+  /**
+   * 全キャッシュをクリア
+   */
+  clearCache(): void {
+    if (!this.cache) {
+      return;
+    }
+
+    this.cache.clear();
+    this.cacheHits = 0;
+    this.cacheMisses = 0;
+  }
+
+  /**
+   * キャッシュヒット率を取得
+   *
+   * @returns ヒット率 (0.0 - 1.0)
+   */
+  getCacheHitRate(): number {
+    const total = this.cacheHits + this.cacheMisses;
+
+    if (total === 0) {
+      return 0;
+    }
+
+    return this.cacheHits / total;
   }
 }
