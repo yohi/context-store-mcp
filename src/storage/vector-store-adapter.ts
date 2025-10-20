@@ -15,7 +15,7 @@
  */
 
 import type { Pool } from 'pg';
-import OpenAI from 'openai';
+import OpenAI, { APIError, APIConnectionError, RateLimitError } from 'openai';
 import { randomUUID } from 'crypto';
 
 /**
@@ -120,6 +120,8 @@ export interface EnhancedSearchResult extends VectorSearchResult {
   };
   /** マッチした理由の説明 */
   explanation?: string;
+  /** ベクトル埋め込み（MMRの多様性計算に使用） */
+  embedding?: number[];
 }
 
 /**
@@ -231,6 +233,12 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
   // タスク5.2: 新しさスコアの減衰パラメータ（日数）
   private static readonly RECENCY_DECAY_DAYS = 30;
 
+  // タスク5.2: 候補プール拡大倍率（再ランキングで真のトップ結果を逃さないため）
+  private static readonly CANDIDATE_POOL_MULTIPLIER = 2.0;
+
+  // タスク5.2: 候補プールの最大サイズ（メモリ使用量制限）
+  private static readonly MAX_CANDIDATE_POOL_SIZE = 1000;
+
   private pool: Pool;
   private openaiClient: OpenAI;
   private embeddingModel: string;
@@ -302,14 +310,14 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
         // - InternalServerError (5xx)
         // - APIConnectionError (ネットワークエラー)
         const isRetryableError =
-          error instanceof OpenAI.RateLimitError ||
-          error instanceof OpenAI.APIConnectionError ||
-          (error instanceof OpenAI.APIError &&
+          error instanceof RateLimitError ||
+          error instanceof APIConnectionError ||
+          (error instanceof APIError &&
             (error.status === 429 || (error.status !== undefined && error.status >= 500)));
 
         if (!isRetryableError) {
           // リトライ不可能なエラーは即座に再スロー
-          if (error instanceof OpenAI.APIError) {
+          if (error instanceof APIError) {
             throw new Error(
               `OpenAI API error: ${error.message} (status: ${error.status}, code: ${error.code})`
             );
@@ -354,6 +362,59 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
     return vector.map(val => val / norm);
   }
 
+  /**
+   * ベクトルをpgvector形式の文字列に変換
+   * スペースなしのカンマ区切り形式 "[x,y,z]"
+   *
+   * @param vector - 変換対象のベクトル
+   * @returns pgvector形式の文字列
+   */
+  private toPgvector(vector: number[]): string {
+    return `[${vector.join(',')}]`;
+  }
+
+  /**
+   * 候補プールサイズを計算
+   * 再ランキングで真のトップ結果を逃さないため、要求サイズより大きな候補プールを取得
+   *
+   * @param requestedSize - 要求されたサイズ (limit + offset)
+   * @returns 候補プールサイズ（MAX_CANDIDATE_POOL_SIZE以下）
+   */
+  private calculateCandidateLimit(requestedSize: number): number {
+    const expanded = Math.ceil(requestedSize * VectorStoreAdapter.CANDIDATE_POOL_MULTIPLIER);
+    return Math.min(VectorStoreAdapter.MAX_CANDIDATE_POOL_SIZE, Math.max(requestedSize, expanded));
+  }
+
+  /**
+   * 2つのベクトル間のコサイン類似度を計算
+   *
+   * @param vec1 - ベクトル1
+   * @param vec2 - ベクトル2
+   * @returns コサイン類似度 (0.0 - 1.0)
+   */
+  private calculateCosineSimilarity(vec1: number[], vec2: number[]): number {
+    if (vec1.length !== vec2.length) {
+      throw new Error(`Vector dimensions mismatch: ${vec1.length} vs ${vec2.length}`);
+    }
+
+    let dotProduct = 0;
+    let norm1 = 0;
+    let norm2 = 0;
+
+    for (let i = 0; i < vec1.length; i++) {
+      dotProduct += vec1[i]! * vec2[i]!;
+      norm1 += vec1[i]! * vec1[i]!;
+      norm2 += vec2[i]! * vec2[i]!;
+    }
+
+    const denominator = Math.sqrt(norm1) * Math.sqrt(norm2);
+    if (denominator === 0) {
+      return 0;
+    }
+
+    return dotProduct / denominator;
+  }
+
   async storeWithEmbedding(content: string, metadata: Metadata): Promise<VectorId> {
     // ベクトル生成
     const embedding = await this.generateEmbedding(content);
@@ -378,7 +439,7 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
       await client.query(
         `INSERT INTO memory_vectors (memory_id, embedding)
          VALUES ($1, $2::vector)`,
-        [id, '[' + normalizedEmbedding.join(',') + ']']
+        [id, this.toPgvector(normalizedEmbedding)]
       );
 
       await client.query('COMMIT');
@@ -410,7 +471,7 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
          AND 1 - (mv.embedding <=> $1::vector) >= $2
        ORDER BY similarity DESC
        LIMIT $3`,
-      ['[' + normalizedQuery.join(',') + ']', this.similarityThreshold, limit]
+      [this.toPgvector(normalizedQuery), this.similarityThreshold, limit]
     );
 
     return result.rows.map(row => ({
@@ -474,7 +535,7 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
 
       for (let i = 0; i < items.length; i++) {
         vectorsValues.push(`($${paramIndex}, $${paramIndex + 1}::vector)`);
-        vectorsParams.push(ids[i], '[' + normalizedEmbeddings[i].join(',') + ']');
+        vectorsParams.push(ids[i], this.toPgvector(normalizedEmbeddings[i]!));
         paramIndex += 2;
       }
 
@@ -590,7 +651,7 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
 
     // メタデータフィルタ条件を構築
     const whereConditions: string[] = ['m.is_deleted = false'];
-    const queryParams: unknown[] = [JSON.stringify(normalizedQuery), minSimilarity];
+    const queryParams: unknown[] = [this.toPgvector(normalizedQuery), minSimilarity];
     let paramIndex = 3;
 
     // 除外IDフィルタ
@@ -648,24 +709,30 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
 
     const whereClause = whereConditions.join(' AND ');
 
-    // コサイン類似度検索を実行
+    // 候補プールサイズを計算（再ランキングで真のトップ結果を逃さないため）
+    const candidateLimit = this.calculateCandidateLimit(limit + offset);
+    queryParams.push(candidateLimit);
+
+    // コサイン類似度検索を実行（拡大された候補プールを取得）
+    // MMRの多様性計算のためembeddingも取得
     const result = await this.pool.query(
       `SELECT
         m.id,
         m.content,
         m.metadata,
         m.created_at,
+        mv.embedding,
         1 - (mv.embedding <=> $1::vector) AS similarity
        FROM memories m
        JOIN memory_vectors mv ON m.id = mv.memory_id
        WHERE ${whereClause}
          AND 1 - (mv.embedding <=> $1::vector) >= $2
        ORDER BY similarity DESC
-       LIMIT ${limit + offset}`,
+       LIMIT $${paramIndex}`,
       queryParams
     );
 
-    // 基本検索結果を取得
+    // 基本検索結果を取得し、embeddingも保持
     const baseResults: VectorSearchResult[] = result.rows.map(row => {
       // metadataをパース（文字列の場合はJSON.parse）
       const parsedMetadata =
@@ -686,20 +753,27 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
       };
     });
 
+    // embeddings配列を別途保持（MMR用）
+    const embeddings = result.rows.map(row => row.embedding);
+
     // スコアリング戦略を適用
-    const enhancedResults: EnhancedSearchResult[] = baseResults.map(result => {
-      const scoreBreakdown = this.calculateScoreBreakdown(result, scoringStrategy, result.metadata);
+    const enhancedResults: EnhancedSearchResult[] = baseResults.map((baseResult, index) => {
+      const scoreBreakdown = this.calculateScoreBreakdown(baseResult, scoringStrategy, baseResult.metadata);
       const finalScore = this.calculateFinalScore(scoreBreakdown, scoringStrategy);
 
+      // MMR用にembeddingを含める（pgvectorの配列をそのまま使用）
+      const embedding = embeddings[index];
+
       return {
-        ...result,
+        ...baseResult,
         finalScore,
         scoreBreakdown,
-        explanation: this.generateExplanation(result, scoreBreakdown),
+        explanation: this.generateExplanation(baseResult, scoreBreakdown),
+        embedding,
       };
     });
 
-    // 最終スコアでソート
+    // 最終スコアでソート（候補プール全体を再ランキング）
     enhancedResults.sort((a, b) => {
       if (Math.abs(a.finalScore - b.finalScore) < 0.0001) {
         // 同じスコアの場合は新しい記憶を優先
@@ -710,10 +784,15 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
       return b.finalScore - a.finalScore;
     });
 
+    // オフセット適用前の結果を取得（limit + offset 分）
+    const resultsBeforeDiversity = enhancedResults.slice(0, limit + offset);
+
     // 多様性を考慮する場合（MMRアルゴリズム）
-    let finalResults = enhancedResults;
-    if (diversityEnabled && enhancedResults.length > 1) {
-      finalResults = this.applyMaximalMarginalRelevance(enhancedResults, limit);
+    let finalResults = resultsBeforeDiversity;
+    if (diversityEnabled && resultsBeforeDiversity.length > 1) {
+      // MMRは limit のみを考慮（offset適用は後で行う）
+      const mmrLimit = limit + offset;
+      finalResults = this.applyMaximalMarginalRelevance(resultsBeforeDiversity, mmrLimit);
     }
 
     // オフセットとリミットを適用
@@ -839,6 +918,13 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
    *
    * 結果の多様性を確保するために、類似した結果を除外しつつ
    * 関連性の高い結果を優先的に選択する
+   *
+   * コサイン類似度を用いて候補間の多様性を計算し、
+   * λ * 関連性 - (1 - λ) * 類似度 の式で多様性とバランスを取る
+   *
+   * @param results - 検索結果のリスト（finalScoreでソート済み、embeddingを含む）
+   * @param limit - 返却する結果の最大数
+   * @returns 多様性を考慮して選択された結果
    */
   private applyMaximalMarginalRelevance(
     results: EnhancedSearchResult[],
@@ -864,17 +950,23 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
       // 残りの各候補について MMR スコアを計算
       for (let i = 0; i < remaining.length; i++) {
         const candidate = remaining[i];
-        if (!candidate) continue;
+        if (!candidate || !candidate.embedding) continue;
 
-        // 既に選択された結果との最大類似度を計算
+        // 既に選択された結果との最大類似度を計算（真のコサイン類似度を使用）
         let maxSimilarityToSelected = 0;
         for (const selectedResult of selected) {
-          // ここでは簡易的にスコアの差を類似度の代理として使用
-          const similarity = 1 - Math.abs(candidate.finalScore - selectedResult.finalScore);
-          maxSimilarityToSelected = Math.max(maxSimilarityToSelected, similarity);
+          if (!selectedResult.embedding) continue;
+
+          // コサイン類似度を計算（0〜1の範囲）
+          const cosineSim = this.calculateCosineSimilarity(
+            candidate.embedding,
+            selectedResult.embedding
+          );
+          maxSimilarityToSelected = Math.max(maxSimilarityToSelected, cosineSim);
         }
 
-        // MMR スコア = λ * 関連性 - (1 - λ) * 類似度
+        // MMR スコア = λ * 関連性 - (1 - λ) * 最大類似度
+        // 関連性が高く、既選択結果と類似度が低いほど高スコア
         const mmrScore = lambda * candidate.finalScore - (1 - lambda) * maxSimilarityToSelected;
 
         if (mmrScore > maxScore) {

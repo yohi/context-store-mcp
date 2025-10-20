@@ -141,6 +141,11 @@
   - 拡張された検索オプション（limit, offset, excludeIds, diversityEnabled）
   - 4つのスコアリング戦略（similarity_only, recency_weighted, importance_weighted, hybrid）
   - MMR（Maximal Marginal Relevance）アルゴリズムによる多様性確保
+    - **実装完了**: 真のコサイン類似度を使用したMMRアルゴリズムを実装
+    - **動作**: SELECTクエリでembeddingを取得し、候補間のコサイン類似度を計算
+    - **アルゴリズム**: `MMR = λ × 関連性 - (1 - λ) × max_cosine_similarity`
+    - **パフォーマンス**: 候補プール制限（最大1000件）により計算量を管理
+    - **精度**: ベクトル空間上の真の類似度に基づく多様性確保
   - カスタマイズ可能なスコアリング重み設定
   - _Requirements: 2.3, 2.5_
 
