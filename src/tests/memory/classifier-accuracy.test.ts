@@ -248,11 +248,10 @@ describe('MemoryClassifier Accuracy Measurement', () => {
 
       const metrics = await classifier.evaluateAccuracy(testSamples);
 
-      // Per-type accuracy should be at least 0.65 (design.md requirement)
-      // Note: With current rule-based approach, accuracy depends on keyword matches
-      expect(metrics.perType.episodic).toBeGreaterThanOrEqual(0.5); // Relaxed for initial implementation
-      expect(metrics.perType.semantic).toBeGreaterThanOrEqual(0.5);
-      expect(metrics.perType.procedural).toBeGreaterThanOrEqual(0.5);
+      // Per-type accuracy should be at least 0.65 (design.md requirement 3.4)
+      expect(metrics.perType.episodic).toBeGreaterThanOrEqual(0.65);
+      expect(metrics.perType.semantic).toBeGreaterThanOrEqual(0.65);
+      expect(metrics.perType.procedural).toBeGreaterThanOrEqual(0.65);
     });
   });
 
