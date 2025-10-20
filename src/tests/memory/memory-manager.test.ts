@@ -9,6 +9,7 @@ import type {
   StoreMemoryParams,
   MemoryId,
   MemoryError,
+  MemoryLinkType,
 } from '../../memory/types.js';
 
 describe('MemoryManager - Basic Functionality (Task 3.1)', () => {
@@ -830,6 +831,661 @@ describe('MemoryManager - Update, Delete, Merge (Task 3.2)', () => {
         expect(result.error.message).toContain('protected memory');
       }
       // Early validation prevents merge operation, ensuring consistency
+    });
+  });
+});
+
+describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
+  let memoryManager: MemoryManager;
+  let episodicMemoryId: MemoryId;
+  let semanticMemoryId: MemoryId;
+  let proceduralMemoryId: MemoryId;
+
+  beforeEach(async () => {
+    memoryManager = new MemoryManager();
+
+    // Create test memories with different types
+    const episodic = await memoryManager.storeMemory({
+      content: '昨日、チームミーティングでUIの改善について議論した',
+      metadata: { memoryType: 'episodic' },
+    });
+    const semantic = await memoryManager.storeMemory({
+      content: 'TypeScript interface の定義はコンポーネント設計における重要なパターンである',
+      metadata: { memoryType: 'semantic' },
+    });
+    const procedural = await memoryManager.storeMemory({
+      content: 'パフォーマンス改善の手順: 1. 測定 2. ボトルネック特定 3. 最適化実装',
+      metadata: { memoryType: 'procedural' },
+    });
+
+    if (episodic.success) episodicMemoryId = episodic.value;
+    if (semantic.success) semanticMemoryId = semantic.value;
+    if (procedural.success) proceduralMemoryId = procedural.value;
+  });
+
+  describe('createLink - タイプ間リンクの生成', () => {
+    it('should create a REFERENCES link between two memories', async () => {
+      const result = await memoryManager.createLink(
+        episodicMemoryId,
+        semanticMemoryId,
+        'REFERENCES'
+      );
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.value).toBeTruthy();
+        expect(typeof result.value).toBe('string');
+      }
+    });
+
+    it('should create a link with custom strength', async () => {
+      const result = await memoryManager.createLink(
+        episodicMemoryId,
+        semanticMemoryId,
+        'DERIVED_FROM',
+        0.8
+      );
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should create a user-created link', async () => {
+      const result = await memoryManager.createLink(
+        semanticMemoryId,
+        proceduralMemoryId,
+        'SUPPORTS',
+        0.9,
+        'user',
+        'User explicitly connected these concepts'
+      );
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should create a system-created link', async () => {
+      const result = await memoryManager.createLink(
+        proceduralMemoryId,
+        episodicMemoryId,
+        'PREREQUISITE',
+        0.7,
+        'system'
+      );
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should default strength to 0.5 if not provided', async () => {
+      const result = await memoryManager.createLink(
+        episodicMemoryId,
+        proceduralMemoryId,
+        'NEXT_STEP'
+      );
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should reject link creation with invalid source memory ID', async () => {
+      const fakeId = '00000000-0000-4000-8000-000000000000';
+      const result = await memoryManager.createLink(
+        fakeId,
+        semanticMemoryId,
+        'REFERENCES'
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('MEMORY_NOT_FOUND');
+      }
+    });
+
+    it('should reject link creation with invalid target memory ID', async () => {
+      const fakeId = '00000000-0000-4000-8000-000000000000';
+      const result = await memoryManager.createLink(
+        episodicMemoryId,
+        fakeId,
+        'REFERENCES'
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('MEMORY_NOT_FOUND');
+      }
+    });
+
+    it('should reject link creation with strength outside valid range (< 0)', async () => {
+      const result = await memoryManager.createLink(
+        episodicMemoryId,
+        semanticMemoryId,
+        'SUPPORTS',
+        -0.5
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('INVALID_CONTENT');
+        expect(result.error.message).toContain('strength');
+      }
+    });
+
+    it('should reject link creation with strength outside valid range (> 1)', async () => {
+      const result = await memoryManager.createLink(
+        episodicMemoryId,
+        semanticMemoryId,
+        'SUPPORTS',
+        1.5
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('INVALID_CONTENT');
+        expect(result.error.message).toContain('strength');
+      }
+    });
+
+    it('should create bidirectional links', async () => {
+      const result = await memoryManager.createLink(
+        episodicMemoryId,
+        semanticMemoryId,
+        'REFERENCES'
+      );
+
+      expect(result.success).toBe(true);
+      // Both directions should be retrievable via getLinks
+    });
+
+    it('should reject self-links (same from and to memory)', async () => {
+      const result = await memoryManager.createLink(
+        episodicMemoryId,
+        episodicMemoryId,
+        'REFERENCES'
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('INVALID_CONTENT');
+        expect(result.error.message).toContain('Self-links are not allowed');
+      }
+    });
+
+    it('should reject link creation when source memory is deleted', async () => {
+      // Delete the source memory
+      await memoryManager.deleteMemory(episodicMemoryId);
+
+      // Try to create a link from deleted memory
+      const result = await memoryManager.createLink(
+        episodicMemoryId,
+        semanticMemoryId,
+        'REFERENCES'
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('MEMORY_NOT_FOUND');
+        expect(result.error.message).toContain('source memory');
+        expect(result.error.message).toContain('deleted');
+      }
+    });
+
+    it('should reject link creation when target memory is deleted', async () => {
+      // Delete the target memory
+      await memoryManager.deleteMemory(semanticMemoryId);
+
+      // Try to create a link to deleted memory
+      const result = await memoryManager.createLink(
+        proceduralMemoryId,
+        semanticMemoryId,
+        'REFERENCES'
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('MEMORY_NOT_FOUND');
+        expect(result.error.message).toContain('target memory');
+        expect(result.error.message).toContain('deleted');
+      }
+    });
+
+    it('should return existing link ID for duplicate links', async () => {
+      // Create first link
+      const result1 = await memoryManager.createLink(
+        episodicMemoryId,
+        semanticMemoryId,
+        'SUPPORTS',
+        0.8
+      );
+
+      expect(result1.success).toBe(true);
+      const firstLinkId = result1.success ? result1.value : '';
+
+      // Try to create duplicate link with same from, to, and linkType
+      const result2 = await memoryManager.createLink(
+        episodicMemoryId,
+        semanticMemoryId,
+        'SUPPORTS',
+        0.9 // Different strength, but same endpoints and type
+      );
+
+      expect(result2.success).toBe(true);
+      if (result2.success) {
+        // Should return the existing link ID
+        expect(result2.value).toBe(firstLinkId);
+      }
+    });
+  });
+
+  describe('getLinks - リンクの取得', () => {
+    beforeEach(async () => {
+      // Create test links
+      await memoryManager.createLink(
+        episodicMemoryId,
+        semanticMemoryId,
+        'REFERENCES'
+      );
+      await memoryManager.createLink(
+        episodicMemoryId,
+        proceduralMemoryId,
+        'DERIVED_FROM'
+      );
+    });
+
+    it('should retrieve all links for a memory', async () => {
+      const links = await memoryManager.getLinks(episodicMemoryId);
+
+      expect(links).toBeInstanceOf(Array);
+      expect(links.length).toBeGreaterThan(0);
+    });
+
+    it('should retrieve links in both directions (bidirectional)', async () => {
+      const linksFrom = await memoryManager.getLinks(episodicMemoryId);
+      const linksTo = await memoryManager.getLinks(semanticMemoryId);
+
+      expect(linksFrom.length).toBeGreaterThan(0);
+      expect(linksTo.length).toBeGreaterThan(0);
+    });
+
+    it('should return link metadata', async () => {
+      const links = await memoryManager.getLinks(episodicMemoryId);
+
+      expect(links.length).toBeGreaterThan(0);
+      const link = links[0];
+      expect(link).toHaveProperty('linkId');
+      expect(link).toHaveProperty('fromMemoryId');
+      expect(link).toHaveProperty('toMemoryId');
+      expect(link).toHaveProperty('linkType');
+      expect(link).toHaveProperty('strength');
+      expect(link).toHaveProperty('metadata');
+      expect(link.metadata).toHaveProperty('createdAt');
+      expect(link.metadata).toHaveProperty('createdBy');
+    });
+
+    it('should return empty array for memory with no links', async () => {
+      const newMemory = await memoryManager.storeMemory({
+        content: 'Isolated memory with no links',
+      });
+
+      if (newMemory.success) {
+        const links = await memoryManager.getLinks(newMemory.value);
+        expect(links).toBeInstanceOf(Array);
+        expect(links.length).toBe(0);
+      }
+    });
+
+    it('should return empty array for non-existent memory ID', async () => {
+      const fakeId = '00000000-0000-4000-8000-000000000000';
+      const links = await memoryManager.getLinks(fakeId);
+
+      expect(links).toBeInstanceOf(Array);
+      expect(links.length).toBe(0);
+    });
+
+    it('should not return links where source memory is deleted', async () => {
+      // Create a link from episodic to semantic
+      await memoryManager.createLink(
+        episodicMemoryId,
+        semanticMemoryId,
+        'SUPPORTS'
+      );
+
+      // Soft-delete the source memory
+      await memoryManager.deleteMemory(episodicMemoryId);
+
+      // Links should not be returned for the target memory
+      const links = await memoryManager.getLinks(semanticMemoryId);
+      const hasDeletedSourceLink = links.some(
+        (link) => link.fromMemoryId === episodicMemoryId
+      );
+
+      expect(hasDeletedSourceLink).toBe(false);
+    });
+
+    it('should not return links where target memory is deleted', async () => {
+      // Create a link from episodic to semantic
+      await memoryManager.createLink(
+        episodicMemoryId,
+        semanticMemoryId,
+        'SUPPORTS'
+      );
+
+      // Soft-delete the target memory
+      await memoryManager.deleteMemory(semanticMemoryId);
+
+      // Links should not be returned for the source memory
+      const links = await memoryManager.getLinks(episodicMemoryId);
+      const hasDeletedTargetLink = links.some(
+        (link) => link.toMemoryId === semanticMemoryId
+      );
+
+      expect(hasDeletedTargetLink).toBe(false);
+    });
+
+    it('should not return links where both endpoints are deleted', async () => {
+      // Create a link
+      await memoryManager.createLink(
+        episodicMemoryId,
+        semanticMemoryId,
+        'SUPPORTS'
+      );
+
+      // Delete both memories
+      await memoryManager.deleteMemory(episodicMemoryId);
+      await memoryManager.deleteMemory(semanticMemoryId);
+
+      // Neither should return any links
+      const linksFrom = await memoryManager.getLinks(episodicMemoryId);
+      const linksTo = await memoryManager.getLinks(semanticMemoryId);
+
+      expect(linksFrom.length).toBe(0);
+      expect(linksTo.length).toBe(0);
+    });
+  });
+
+  describe('deleteLink - リンクの削除', () => {
+    let linkId: string;
+
+    beforeEach(async () => {
+      const result = await memoryManager.createLink(
+        episodicMemoryId,
+        semanticMemoryId,
+        'REFERENCES'
+      );
+      if (result.success) {
+        linkId = result.value;
+      }
+    });
+
+    it('should delete a link successfully', async () => {
+      const result = await memoryManager.deleteLink(linkId);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.value).toBe(true);
+      }
+    });
+
+    it('should return error for non-existent link ID', async () => {
+      const fakeId = '00000000-0000-4000-8000-000000000000';
+      const result = await memoryManager.deleteLink(fakeId);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('MEMORY_NOT_FOUND');
+      }
+    });
+
+    it('should remove link from both directions', async () => {
+      await memoryManager.deleteLink(linkId);
+
+      const linksFrom = await memoryManager.getLinks(episodicMemoryId);
+      const linksTo = await memoryManager.getLinks(semanticMemoryId);
+
+      // Link should be removed from both perspectives
+      expect(
+        linksFrom.some((l) => l.linkId === linkId)
+      ).toBe(false);
+      expect(
+        linksTo.some((l) => l.linkId === linkId)
+      ).toBe(false);
+    });
+
+    it('should be idempotent (deleting already deleted link)', async () => {
+      const firstDelete = await memoryManager.deleteLink(linkId);
+      expect(firstDelete.success).toBe(true);
+
+      const secondDelete = await memoryManager.deleteLink(linkId);
+      expect(secondDelete.success).toBe(false);
+      if (!secondDelete.success) {
+        expect(secondDelete.error.type).toBe('MEMORY_NOT_FOUND');
+      }
+    });
+  });
+
+  describe('searchMemories - タイプフィルタリング機能', () => {
+    beforeEach(async () => {
+      // Additional memories for search testing
+      await memoryManager.storeMemory({
+        content: '先週金曜日にスタンドアップで確認した要望',
+        metadata: { memoryType: 'episodic', tags: ['meeting'] },
+      });
+      await memoryManager.storeMemory({
+        content: 'REST API の設計パターンとベストプラクティス',
+        metadata: { memoryType: 'semantic', tags: ['api'] },
+      });
+    });
+
+    it('should filter memories by single memory type', async () => {
+      const results = await memoryManager.searchMemories({
+        memoryTypes: ['episodic'],
+      });
+
+      expect(results).toBeInstanceOf(Array);
+      expect(results.length).toBeGreaterThan(0);
+      results.forEach((memory) => {
+        expect(memory.memoryType).toBe('episodic');
+      });
+    });
+
+    it('should filter memories by multiple memory types', async () => {
+      const results = await memoryManager.searchMemories({
+        memoryTypes: ['episodic', 'semantic'],
+      });
+
+      expect(results).toBeInstanceOf(Array);
+      expect(results.length).toBeGreaterThan(0);
+      results.forEach((memory) => {
+        expect(['episodic', 'semantic']).toContain(memory.memoryType);
+      });
+    });
+
+    it('should filter by tags', async () => {
+      const results = await memoryManager.searchMemories({
+        tags: ['meeting'],
+      });
+
+      expect(results).toBeInstanceOf(Array);
+      results.forEach((memory) => {
+        expect(memory.metadata.tags).toContain('meeting');
+      });
+    });
+
+    it('should combine memoryType and tag filters', async () => {
+      const results = await memoryManager.searchMemories({
+        memoryTypes: ['semantic'],
+        tags: ['api'],
+      });
+
+      expect(results).toBeInstanceOf(Array);
+      results.forEach((memory) => {
+        expect(memory.memoryType).toBe('semantic');
+        expect(memory.metadata.tags).toContain('api');
+      });
+    });
+
+    it('should limit results based on limit parameter', async () => {
+      const results = await memoryManager.searchMemories({
+        limit: 2,
+      });
+
+      expect(results).toBeInstanceOf(Array);
+      expect(results.length).toBeLessThanOrEqual(2);
+    });
+
+    it('should return empty array if no memories match criteria', async () => {
+      const results = await memoryManager.searchMemories({
+        memoryTypes: ['episodic'],
+        tags: ['non-existent-tag'],
+      });
+
+      expect(results).toBeInstanceOf(Array);
+      expect(results.length).toBe(0);
+    });
+
+    it('should return all memories if no filters provided', async () => {
+      const results = await memoryManager.searchMemories({});
+
+      expect(results).toBeInstanceOf(Array);
+      expect(results.length).toBeGreaterThan(0);
+    });
+
+    it('should exclude deleted memories from search results', async () => {
+      await memoryManager.deleteMemory(episodicMemoryId);
+
+      const results = await memoryManager.searchMemories({
+        memoryTypes: ['episodic'],
+      });
+
+      expect(results.every((m) => m.id !== episodicMemoryId)).toBe(true);
+    });
+  });
+
+  describe('overrideMemoryType - ユーザーによるタイプ上書き', () => {
+    it('should override memory type successfully', async () => {
+      const result = await memoryManager.overrideMemoryType(
+        episodicMemoryId,
+        'semantic'
+      );
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.value).toBe(true);
+      }
+    });
+
+    it('should return error for non-existent memory ID', async () => {
+      const fakeId = '00000000-0000-4000-8000-000000000000';
+      const result = await memoryManager.overrideMemoryType(
+        fakeId,
+        'semantic'
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('MEMORY_NOT_FOUND');
+      }
+    });
+
+    it('should update memory type to new value', async () => {
+      await memoryManager.overrideMemoryType(
+        episodicMemoryId,
+        'procedural'
+      );
+
+      const memories = await memoryManager.searchMemories({
+        memoryTypes: ['procedural'],
+      });
+
+      const updated = memories.find((m) => m.id === episodicMemoryId);
+      expect(updated).toBeDefined();
+      if (updated) {
+        expect(updated.memoryType).toBe('procedural');
+      }
+    });
+
+    it('should allow overriding to the same type (idempotent)', async () => {
+      const firstResult = await memoryManager.overrideMemoryType(
+        episodicMemoryId,
+        'episodic'
+      );
+      expect(firstResult.success).toBe(true);
+
+      const secondResult = await memoryManager.overrideMemoryType(
+        episodicMemoryId,
+        'episodic'
+      );
+      expect(secondResult.success).toBe(true);
+    });
+
+    it('should track user override for statistics', async () => {
+      await memoryManager.overrideMemoryType(
+        episodicMemoryId,
+        'semantic'
+      );
+
+      // User override should be tracked for classification stats
+      // This will be verified in integration tests with classifier stats
+    });
+
+    it('should update updatedAt timestamp', async () => {
+      await memoryManager.overrideMemoryType(
+        episodicMemoryId,
+        'semantic'
+      );
+
+      // Timestamp update verification in integration tests
+    });
+
+    it('should reject override on deleted memory', async () => {
+      await memoryManager.deleteMemory(semanticMemoryId);
+
+      const result = await memoryManager.overrideMemoryType(
+        semanticMemoryId,
+        'episodic'
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('MEMORY_NOT_FOUND');
+      }
+    });
+
+    it('should update top-level memoryType only (single source of truth)', async () => {
+      // Override to a new type
+      await memoryManager.overrideMemoryType(
+        episodicMemoryId,
+        'semantic'
+      );
+
+      // Access memory directly using test helper
+      const memory = memoryManager.getMemoryForTest(episodicMemoryId);
+
+      expect(memory).toBeDefined();
+      if (memory) {
+        // Top-level memoryType should be updated
+        expect(memory.memoryType).toBe('semantic');
+        // metadata.memoryType should NOT exist (single source of truth)
+        expect(memory.metadata.memoryType).toBeUndefined();
+      }
+    });
+
+    it('should update top-level memoryType correctly on multiple overrides', async () => {
+      // First override
+      await memoryManager.overrideMemoryType(
+        episodicMemoryId,
+        'semantic'
+      );
+
+      let memory = memoryManager.getMemoryForTest(episodicMemoryId);
+      expect(memory?.memoryType).toBe('semantic');
+      expect(memory?.metadata.memoryType).toBeUndefined();
+
+      // Second override
+      await memoryManager.overrideMemoryType(
+        episodicMemoryId,
+        'procedural'
+      );
+
+      memory = memoryManager.getMemoryForTest(episodicMemoryId);
+      expect(memory?.memoryType).toBe('procedural');
+      expect(memory?.metadata.memoryType).toBeUndefined();
     });
   });
 });

@@ -13,11 +13,17 @@ import type {
   MemoryMetadata,
   Result,
   StoreMemoryParams,
+  MemoryLink,
+  MemoryLinkType,
+  SearchParams,
+  MemoryType,
 } from './types.js';
 
 export class MemoryManager implements MemoryManagerService {
   // In-memory storage for testing (will be replaced with PostgreSQL in later tasks)
   private memories: Map<MemoryId, Memory> = new Map();
+  // In-memory storage for memory links (will be replaced with Neo4j in later tasks)
+  private links: Map<string, MemoryLink> = new Map();
 
   /**
    * Store a new memory with automatic ID generation and timestamp management
@@ -44,12 +50,15 @@ export class MemoryManager implements MemoryManagerService {
     // Auto-generate timestamps
     const timestamps = this.createTimestamps();
 
+    // Normalize memoryType: prefer top-level, drop from metadata to avoid drift
+    const { memoryType: metadataType, ...metadataWithoutType } = processedMetadata;
+
     // Create memory entity
     const memory: Memory = {
       id: memoryId,
       content: params.content,
-      memoryType: processedMetadata.memoryType || 'semantic', // Default to semantic
-      metadata: processedMetadata,
+      memoryType: metadataType || 'semantic', // Default to semantic
+      metadata: metadataWithoutType,
       ...timestamps,
       accessCount: 0,
       importanceScore: 0.0,
@@ -243,7 +252,7 @@ export class MemoryManager implements MemoryManagerService {
       metadata: {
         tags: Array.from(allTags).sort(), // Sorted for stable ordering
         source: 'merged',
-        memoryType: memories[0]?.memoryType || 'semantic', // Use first memory's type
+        memoryType: memories[0]?.memoryType || 'semantic', // Use first memory's type (will be extracted to top-level)
       },
     };
 
@@ -299,6 +308,17 @@ export class MemoryManager implements MemoryManagerService {
     // Physically remove these memories
     for (const id of toRemove) {
       this.memories.delete(id);
+    }
+
+    // Remove orphan links referencing deleted memories
+    const toRemoveLinks: string[] = [];
+    for (const [lid, link] of this.links.entries()) {
+      if (toRemove.includes(link.fromMemoryId) || toRemove.includes(link.toMemoryId)) {
+        toRemoveLinks.push(lid);
+      }
+    }
+    for (const lid of toRemoveLinks) {
+      this.links.delete(lid);
     }
   }
 
@@ -392,6 +412,278 @@ export class MemoryManager implements MemoryManagerService {
       createdAt: now,
       updatedAt: now,
       lastAccessedAt: now,
+    };
+  }
+
+  /**
+   * Create a link between two memories (Task 4.3)
+   * Requirements: 3.5 (タイプ間リンクの生成と維持)
+   */
+  async createLink(
+    from: MemoryId,
+    to: MemoryId,
+    linkType: MemoryLinkType,
+    strength: number = 0.5,
+    createdBy: 'user' | 'system' = 'system',
+    reasoning?: string
+  ): Promise<Result<string, MemoryError>> {
+    // Prevent self-links
+    if (from === to) {
+      return {
+        success: false,
+        error: {
+          type: 'INVALID_CONTENT',
+          message: `Self-links are not allowed: cannot link memory ${from} to itself`,
+        },
+      };
+    }
+
+    // Validate that both memories exist
+    const fromMemory = this.memories.get(from);
+    const toMemory = this.memories.get(to);
+
+    if (!fromMemory) {
+      return {
+        success: false,
+        error: {
+          type: 'MEMORY_NOT_FOUND',
+          message: `Source memory with ID ${from} not found`,
+        },
+      };
+    }
+
+    if (!toMemory) {
+      return {
+        success: false,
+        error: {
+          type: 'MEMORY_NOT_FOUND',
+          message: `Target memory with ID ${to} not found`,
+        },
+      };
+    }
+
+    // Check if either memory is deleted
+    if (fromMemory.isDeleted) {
+      return {
+        success: false,
+        error: {
+          type: 'MEMORY_NOT_FOUND',
+          message: `Cannot create link: source memory ${from} is deleted`,
+        },
+      };
+    }
+
+    if (toMemory.isDeleted) {
+      return {
+        success: false,
+        error: {
+          type: 'MEMORY_NOT_FOUND',
+          message: `Cannot create link: target memory ${to} is deleted`,
+        },
+      };
+    }
+
+    // Validate strength range
+    if (strength < 0 || strength > 1) {
+      return {
+        success: false,
+        error: {
+          type: 'INVALID_CONTENT',
+          message: `Link strength must be between 0 and 1, got ${strength}`,
+        },
+      };
+    }
+
+    // Check for duplicate links (same fromMemoryId, toMemoryId, and linkType)
+    for (const existingLink of this.links.values()) {
+      if (
+        existingLink.fromMemoryId === from &&
+        existingLink.toMemoryId === to &&
+        existingLink.linkType === linkType
+      ) {
+        // Return existing link ID instead of creating duplicate
+        return {
+          success: true,
+          value: existingLink.linkId,
+        };
+      }
+    }
+
+    // Generate link ID
+    const linkId = randomUUID();
+
+    // Create link
+    const link: MemoryLink = {
+      linkId,
+      fromMemoryId: from,
+      toMemoryId: to,
+      linkType,
+      strength,
+      metadata: {
+        createdAt: new Date(),
+        createdBy,
+        ...(reasoning !== undefined && { reasoning }),
+      },
+    };
+
+    // Store link
+    this.links.set(linkId, link);
+
+    return {
+      success: true,
+      value: linkId,
+    };
+  }
+
+  /**
+   * Get all links for a memory (bidirectional)
+   * Requirements: 3.5 (相互参照の管理)
+   */
+  async getLinks(memoryId: MemoryId): Promise<MemoryLink[]> {
+    const results: MemoryLink[] = [];
+
+    // Find all links where this memory is either source or target
+    for (const link of this.links.values()) {
+      if (link.fromMemoryId === memoryId || link.toMemoryId === memoryId) {
+        // Skip links where either endpoint is deleted or missing
+        const fromMemory = this.memories.get(link.fromMemoryId);
+        const toMemory = this.memories.get(link.toMemoryId);
+
+        // Only include link if both endpoints exist and are not deleted
+        if (fromMemory && !fromMemory.isDeleted && toMemory && !toMemory.isDeleted) {
+          results.push(link);
+        }
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Delete a link
+   * Requirements: 3.5 (リンク管理)
+   */
+  async deleteLink(linkId: string): Promise<Result<boolean, MemoryError>> {
+    const link = this.links.get(linkId);
+
+    if (!link) {
+      return {
+        success: false,
+        error: {
+          type: 'MEMORY_NOT_FOUND',
+          message: `Link with ID ${linkId} not found`,
+        },
+      };
+    }
+
+    // Delete the link
+    this.links.delete(linkId);
+
+    return {
+      success: true,
+      value: true,
+    };
+  }
+
+  /**
+   * Search memories with type filtering
+   * Requirements: 3.6 (タイプフィルタリング機能)
+   */
+  async searchMemories(params: SearchParams): Promise<Memory[]> {
+    const results: Memory[] = [];
+
+    // Iterate through all memories
+    for (const memory of this.memories.values()) {
+      // Skip deleted memories
+      if (memory.isDeleted) {
+        continue;
+      }
+
+      // Apply memoryType filter
+      if (
+        params.memoryTypes &&
+        params.memoryTypes.length > 0 &&
+        !params.memoryTypes.includes(memory.memoryType)
+      ) {
+        continue;
+      }
+
+      // Apply tags filter
+      if (params.tags && params.tags.length > 0) {
+        const memoryTags = memory.metadata.tags || [];
+        const hasMatchingTag = params.tags.some((tag) =>
+          memoryTags.includes(tag)
+        );
+        if (!hasMatchingTag) {
+          continue;
+        }
+      }
+
+      // Apply userId filter
+      if (params.userId && memory.metadata.userId !== params.userId) {
+        continue;
+      }
+
+      // Apply projectId filter
+      if (params.projectId && memory.metadata.projectId !== params.projectId) {
+        continue;
+      }
+
+      // Add to results
+      results.push(memory);
+    }
+
+    // Apply limit
+    if (params.limit && params.limit > 0) {
+      return results.slice(0, params.limit);
+    }
+
+    return results;
+  }
+
+  /**
+   * Override memory type (user can manually change the auto-classified type)
+   * Requirements: 3.4 design.md 決定2 (ユーザーによるタイプ上書き可能)
+   */
+  async overrideMemoryType(
+    memoryId: MemoryId,
+    newType: MemoryType
+  ): Promise<Result<boolean, MemoryError>> {
+    const memory = this.memories.get(memoryId);
+
+    if (!memory) {
+      return {
+        success: false,
+        error: {
+          type: 'MEMORY_NOT_FOUND',
+          message: `Memory with ID ${memoryId} not found`,
+        },
+      };
+    }
+
+    // Don't allow override on deleted memories
+    if (memory.isDeleted) {
+      return {
+        success: false,
+        error: {
+          type: 'MEMORY_NOT_FOUND',
+          message: `Cannot override type of deleted memory ${memoryId}`,
+        },
+      };
+    }
+
+    // Update memory type (single source of truth: top-level memoryType only)
+    const updated: Memory = {
+      ...memory,
+      memoryType: newType,
+      updatedAt: new Date(),
+    };
+
+    this.memories.set(memoryId, updated);
+
+    return {
+      success: true,
+      value: true,
     };
   }
 

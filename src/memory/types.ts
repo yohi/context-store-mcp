@@ -66,6 +66,27 @@ export interface MemoryManagerService {
   // Memory management operations
   performGarbageCollection(): Promise<void>;
   optimizeStorage(): Promise<void>;
+
+  // Memory link operations (Requirements: 3.5 - タイプ間リンクの生成と維持)
+  createLink(
+    from: MemoryId,
+    to: MemoryId,
+    linkType: MemoryLinkType,
+    strength?: number,
+    createdBy?: 'user' | 'system',
+    reasoning?: string
+  ): Promise<Result<string, MemoryError>>; // Returns linkId
+  getLinks(memoryId: MemoryId): Promise<MemoryLink[]>;
+  deleteLink(linkId: string): Promise<Result<boolean, MemoryError>>;
+
+  // Search with type filtering (Requirements: 3.6 - タイプフィルタリング機能)
+  searchMemories(params: SearchParams): Promise<Memory[]>;
+
+  // User override memory type (Requirements: 3.4 design.md 決定2)
+  overrideMemoryType(
+    memoryId: MemoryId,
+    newType: MemoryType
+  ): Promise<Result<boolean, MemoryError>>;
 }
 
 // Memory Classification types (Requirements: 3.4)
@@ -118,4 +139,36 @@ export interface MemoryClassifierService {
   // Accuracy measurement
   evaluateAccuracy(testSamples: LabeledSample[]): Promise<AccuracyMetrics>;
   getClassificationStats(): Promise<ClassificationStats>;
+}
+
+// Memory Link types (Requirements: 3.5 - Cross-type relationships)
+export type MemoryLinkType =
+  | 'REFERENCES' // General reference
+  | 'DERIVED_FROM' // Derivation relationship
+  | 'CONTRADICTS' // Contradiction relationship
+  | 'SUPPORTS' // Support relationship
+  | 'PREREQUISITE' // Prerequisite condition
+  | 'NEXT_STEP'; // Next step in sequence
+
+export interface MemoryLink {
+  linkId: string; // UUID
+  fromMemoryId: MemoryId;
+  toMemoryId: MemoryId;
+  linkType: MemoryLinkType;
+  strength: number; // 0.0 - 1.0
+  metadata: {
+    createdAt: Date;
+    createdBy: 'user' | 'system';
+    reasoning?: string;
+  };
+}
+
+// Search parameters with type filtering (Requirements: 3.6)
+export interface SearchParams {
+  query?: string;
+  memoryTypes?: MemoryType[]; // Filter by memory types
+  tags?: string[];
+  limit?: number;
+  userId?: string;
+  projectId?: string;
 }
