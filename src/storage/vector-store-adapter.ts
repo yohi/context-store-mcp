@@ -292,13 +292,19 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
 
         return embedding;
       } catch (error) {
-        // レート制限エラーかどうかを判定
-        const isRateLimitError =
+        // リトライ可能なエラーかどうかを判定
+        // OpenAI SDK v6.5.0のデフォルト動作に準拠：
+        // - RateLimitError (429)
+        // - InternalServerError (5xx)
+        // - APIConnectionError (ネットワークエラー)
+        const isRetryableError =
           error instanceof OpenAI.RateLimitError ||
-          (error instanceof OpenAI.APIError && error.status === 429);
+          error instanceof OpenAI.APIConnectionError ||
+          (error instanceof OpenAI.APIError &&
+            (error.status === 429 || (error.status !== undefined && error.status >= 500)));
 
-        if (!isRateLimitError) {
-          // レート制限以外のエラーは即座に再スロー
+        if (!isRetryableError) {
+          // リトライ不可能なエラーは即座に再スロー
           if (error instanceof OpenAI.APIError) {
             throw new Error(
               `OpenAI API error: ${error.message} (status: ${error.status}, code: ${error.code})`
