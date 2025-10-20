@@ -216,7 +216,6 @@ export class CircuitBreaker {
    * 状態遷移
    */
   private transitionTo(newState: CircuitState): void {
-    const oldState = this.state;
     this.state = newState;
 
     // OPEN状態に遷移した場合、タイマーをセット
