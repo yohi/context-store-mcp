@@ -50,12 +50,15 @@ export class MemoryManager implements MemoryManagerService {
     // Auto-generate timestamps
     const timestamps = this.createTimestamps();
 
+    // Normalize memoryType: prefer top-level, drop from metadata to avoid drift
+    const { memoryType: metadataType, ...metadataWithoutType } = processedMetadata;
+
     // Create memory entity
     const memory: Memory = {
       id: memoryId,
       content: params.content,
-      memoryType: processedMetadata.memoryType || 'semantic', // Default to semantic
-      metadata: processedMetadata,
+      memoryType: metadataType || 'semantic', // Default to semantic
+      metadata: metadataWithoutType,
       ...timestamps,
       accessCount: 0,
       importanceScore: 0.0,
@@ -249,7 +252,7 @@ export class MemoryManager implements MemoryManagerService {
       metadata: {
         tags: Array.from(allTags).sort(), // Sorted for stable ordering
         source: 'merged',
-        memoryType: memories[0]?.memoryType || 'semantic', // Use first memory's type
+        memoryType: memories[0]?.memoryType || 'semantic', // Use first memory's type (will be extracted to top-level)
       },
     };
 
@@ -305,6 +308,17 @@ export class MemoryManager implements MemoryManagerService {
     // Physically remove these memories
     for (const id of toRemove) {
       this.memories.delete(id);
+    }
+
+    // Remove orphan links referencing deleted memories
+    const toRemoveLinks: string[] = [];
+    for (const [lid, link] of this.links.entries()) {
+      if (toRemove.includes(link.fromMemoryId) || toRemove.includes(link.toMemoryId)) {
+        toRemoveLinks.push(lid);
+      }
+    }
+    for (const lid of toRemoveLinks) {
+      this.links.delete(lid);
     }
   }
 
@@ -461,7 +475,7 @@ export class MemoryManager implements MemoryManagerService {
       metadata: {
         createdAt: new Date(),
         createdBy,
-        reasoning,
+        ...(reasoning !== undefined && { reasoning }),
       },
     };
 
