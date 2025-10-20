@@ -133,6 +133,7 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
 
   /**
    * OpenAI Embeddings APIを使用してベクトルを生成
+   * レート制限エラー(429)に対してエクスポネンシャルバックオフで自動リトライを実行
    *
    * @param text - 埋め込み対象テキスト
    * @returns ベクトル配列 (1536次元)
@@ -143,42 +144,75 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
       throw new Error('Text cannot be empty');
     }
 
-    try {
-      // OpenAI Embeddings API呼び出し
-      const response = await this.openaiClient.embeddings.create({
-        model: this.embeddingModel,
-        input: text,
-        encoding_format: 'float',
-      });
+    const maxRetries = 5;
+    const baseDelay = 1000; // 1秒
+    let lastError: Error | null = null;
 
-      if (!response.data || response.data.length === 0) {
-        throw new Error('No embedding data returned from OpenAI API');
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        // OpenAI Embeddings API呼び出し
+        const response = await this.openaiClient.embeddings.create({
+          model: this.embeddingModel,
+          input: text,
+          encoding_format: 'float',
+        });
+
+        if (!response.data || response.data.length === 0) {
+          throw new Error('No embedding data returned from OpenAI API');
+        }
+
+        const firstEmbedding = response.data[0];
+        if (!firstEmbedding) {
+          throw new Error('Invalid embedding data structure from OpenAI API');
+        }
+
+        const embedding = firstEmbedding.embedding;
+
+        // 次元数チェック
+        if (embedding.length !== this.dimensions) {
+          throw new Error(
+            `Unexpected embedding dimensions: expected ${this.dimensions}, got ${embedding.length}`
+          );
+        }
+
+        return embedding;
+      } catch (error) {
+        // レート制限エラーかどうかを判定
+        const isRateLimitError =
+          error instanceof OpenAI.RateLimitError ||
+          (error instanceof OpenAI.APIError && error.status === 429);
+
+        if (!isRateLimitError) {
+          // レート制限以外のエラーは即座に再スロー
+          if (error instanceof OpenAI.APIError) {
+            throw new Error(
+              `OpenAI API error: ${error.message} (status: ${error.status}, code: ${error.code})`
+            );
+          }
+          throw error;
+        }
+
+        lastError = error as Error;
+
+        // 最後のリトライまで達した場合は抜ける
+        if (attempt === maxRetries - 1) {
+          break;
+        }
+
+        // エクスポネンシャルバックオフ + ジッター計算
+        const exponentialDelay = baseDelay * Math.pow(2, attempt);
+        const jitter = Math.random() * 200 - 100; // -100ms ~ +100ms
+        const delayMs = Math.max(0, exponentialDelay + jitter);
+
+        // リトライ前に待機
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
-
-      const firstEmbedding = response.data[0];
-      if (!firstEmbedding) {
-        throw new Error('Invalid embedding data structure from OpenAI API');
-      }
-
-      const embedding = firstEmbedding.embedding;
-
-      // 次元数チェック
-      if (embedding.length !== this.dimensions) {
-        throw new Error(
-          `Unexpected embedding dimensions: expected ${this.dimensions}, got ${embedding.length}`
-        );
-      }
-
-      return embedding;
-    } catch (error) {
-      if (error instanceof OpenAI.APIError) {
-        // APIエラーの詳細をログに記録
-        throw new Error(
-          `OpenAI API error: ${error.message} (status: ${error.status}, code: ${error.code})`
-        );
-      }
-      throw error;
     }
+
+    // 全リトライ失敗時
+    throw new Error(
+      `OpenAI API rate limit exceeded after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`
+    );
   }
 
   /**
@@ -335,10 +369,62 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
     }
   }
 
+  /**
+   * HNSWインデックスの再構築
+   * REINDEX CONCURRENTLY を使用し、再構築中も検索可能な状態を維持
+   *
+   * @throws REINDEX失敗時にエラーをスロー。失敗時は無効なインデックス(_ccnewサフィックス)が残る可能性があるため、
+   *         手動でのクリーンアップが必要な場合がある
+   */
   async reindexVectors(): Promise<void> {
-    // HNSW インデックスの再構築
-    // REINDEX を使用してインデックスを再構築
-    // CONCURRENTLY オプションで、再構築中も検索可能
-    await this.pool.query('REINDEX INDEX CONCURRENTLY idx_memory_vectors_embedding');
+    const indexName = 'idx_memory_vectors_embedding';
+    const client = await this.pool.connect();
+
+    try {
+      console.log(`Starting REINDEX CONCURRENTLY for ${indexName}...`);
+
+      // REINDEX CONCURRENTLY実行
+      await client.query(`REINDEX INDEX CONCURRENTLY ${indexName}`);
+
+      console.log(`Successfully completed REINDEX CONCURRENTLY for ${indexName}`);
+    } catch (error) {
+      // REINDEX CONCURRENTLY失敗時のエラーログ
+      console.error(`REINDEX CONCURRENTLY failed for ${indexName}:`, error);
+      console.error(
+        `Warning: An invalid index with _ccnew suffix may remain. ` +
+          `Check with: SELECT indexrelid::regclass, indisvalid FROM pg_index WHERE indexrelid::regclass::text LIKE '${indexName}%';`
+      );
+
+      // 無効なインデックスの存在をチェック
+      try {
+        const invalidIndexResult = await client.query(
+          `SELECT indexrelid::regclass AS index_name, indisvalid
+           FROM pg_index
+           WHERE indexrelid::regclass::text LIKE $1 AND NOT indisvalid`,
+          [`${indexName}%`]
+        );
+
+        if (invalidIndexResult.rows.length > 0) {
+          const invalidIndexes = invalidIndexResult.rows
+            .map((row) => row.index_name)
+            .join(', ');
+          console.error(
+            `Detected invalid indexes that need manual cleanup: ${invalidIndexes}`
+          );
+          console.error(
+            `To cleanup, run: DROP INDEX CONCURRENTLY IF EXISTS <invalid_index_name>;`
+          );
+        }
+      } catch (checkError) {
+        // インデックスチェック自体が失敗した場合も記録
+        console.error('Failed to check for invalid indexes:', checkError);
+      }
+
+      throw new Error(
+        `Failed to reindex ${indexName}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      client.release();
+    }
   }
 }
