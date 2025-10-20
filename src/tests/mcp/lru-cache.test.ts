@@ -15,12 +15,8 @@ describe('LRUCache', () => {
     });
 
     it('should throw error for invalid max size', () => {
-      expect(() => new LRUCache({ maxSize: 0 })).toThrow(
-        'maxSize must be greater than 0'
-      );
-      expect(() => new LRUCache({ maxSize: -1 })).toThrow(
-        'maxSize must be greater than 0'
-      );
+      expect(() => new LRUCache({ maxSize: 0 })).toThrow('maxSize must be greater than 0');
+      expect(() => new LRUCache({ maxSize: -1 })).toThrow('maxSize must be greater than 0');
     });
 
     it('should set and get values correctly', () => {

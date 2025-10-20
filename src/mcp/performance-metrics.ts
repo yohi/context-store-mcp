@@ -328,10 +328,7 @@ export class PerformanceMetrics {
   /**
    * パーセンタイルレイテンシを計算
    */
-  private getPercentileLatency(
-    operationName: string,
-    percentile: number
-  ): number {
+  private getPercentileLatency(operationName: string, percentile: number): number {
     const stats = this.operations.get(operationName);
     if (!stats || stats.latencies.length === 0) {
       return 0;
@@ -361,9 +358,7 @@ export class PerformanceMetrics {
     const windowStart = now - windowMs;
 
     // ウィンドウ期間外の古いエントリーを削除
-    const validIndex = stats.timestamps.findIndex(
-      (timestamp) => timestamp >= windowStart
-    );
+    const validIndex = stats.timestamps.findIndex((timestamp) => timestamp >= windowStart);
 
     if (validIndex > 0) {
       // 古いエントリーを削除（in-placeで処理）
@@ -376,8 +371,7 @@ export class PerformanceMetrics {
 
     // 最大数を超えた場合、古いエントリーを削除
     if (stats.timestamps.length > PerformanceMetrics.MAX_TIMESTAMPS) {
-      const removeCount =
-        stats.timestamps.length - PerformanceMetrics.MAX_TIMESTAMPS;
+      const removeCount = stats.timestamps.length - PerformanceMetrics.MAX_TIMESTAMPS;
       stats.timestamps.splice(0, removeCount);
     }
   }

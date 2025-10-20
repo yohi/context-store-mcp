@@ -31,10 +31,7 @@ export class TimeoutController {
    * @returns オペレーションの結果
    * @throws TimeoutError タイムアウト時
    */
-  async execute<T>(
-    operation: () => Promise<T>,
-    timeout?: number
-  ): Promise<T> {
+  async execute<T>(operation: () => Promise<T>, timeout?: number): Promise<T> {
     const timeoutMs = timeout ?? this.config.defaultTimeout;
 
     return new Promise<T>((resolve, reject) => {

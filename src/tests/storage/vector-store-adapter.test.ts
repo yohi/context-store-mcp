@@ -40,12 +40,10 @@ describe('Vector format conversion (CodeRabbit fix validation)', () => {
   it('should handle normalized vectors correctly', () => {
     const vector = [0.6, 0.8];
     const norm = Math.sqrt(vector.reduce((sum, val) => sum + val * val, 0));
-    const normalized = vector.map(val => val / norm);
+    const normalized = vector.map((val) => val / norm);
 
     // ノルム確認
-    const normalizedNorm = Math.sqrt(
-      normalized.reduce((sum, val) => sum + val * val, 0)
-    );
+    const normalizedNorm = Math.sqrt(normalized.reduce((sum, val) => sum + val * val, 0));
     expect(normalizedNorm).toBeCloseTo(1.0);
 
     // pgvector形式

@@ -73,10 +73,7 @@ export class RateLimiter {
     }
 
     this.cleanupOldTimestamps(clientLog, now);
-    return Math.max(
-      0,
-      this.config.maxRequests - clientLog.timestamps.length
-    );
+    return Math.max(0, this.config.maxRequests - clientLog.timestamps.length);
   }
 
   /**
@@ -135,9 +132,7 @@ export class RateLimiter {
   private cleanupOldTimestamps(clientLog: ClientRequestLog, now: number): void {
     const windowStart = now - this.config.windowMs;
 
-    clientLog.timestamps = clientLog.timestamps.filter(
-      (timestamp) => timestamp > windowStart
-    );
+    clientLog.timestamps = clientLog.timestamps.filter((timestamp) => timestamp > windowStart);
 
     // ウィンドウ開始時刻を更新
     if (clientLog.timestamps.length > 0) {

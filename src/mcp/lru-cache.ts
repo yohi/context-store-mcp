@@ -225,10 +225,7 @@ export class LRUCache<T = any> {
     avgAccessCount: number;
   } {
     const nodes = Array.from(this.cache.values());
-    const totalAccessCount = nodes.reduce(
-      (sum, node) => sum + node.accessCount,
-      0
-    );
+    const totalAccessCount = nodes.reduce((sum, node) => sum + node.accessCount, 0);
 
     return {
       size: this.cache.size,

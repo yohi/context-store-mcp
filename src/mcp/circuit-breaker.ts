@@ -167,7 +167,9 @@ export class CircuitBreaker {
 
     // Ensure positive thresholds make sense
     if (config.failureThreshold === 0 && config.failureRateThreshold === 0) {
-      throw new Error('At least one threshold (failureThreshold or failureRateThreshold) must be positive');
+      throw new Error(
+        'At least one threshold (failureThreshold or failureRateThreshold) must be positive'
+      );
     }
   }
 
@@ -196,15 +198,12 @@ export class CircuitBreaker {
     let usedHalfOpenProbe = false;
     if (this.state === CircuitState.HALF_OPEN) {
       if (this.halfOpenProbeInFlight) {
-        throw new ServiceUnavailableError(
-          'Circuit breaker is HALF_OPEN (probe in flight)',
-          {
-            state: this.state,
-            consecutiveFailures: this.consecutiveFailures,
-            lastFailureTime: this.lastFailureTime,
-            nextAttemptTime: this.getNextAttemptTime(),
-          }
-        );
+        throw new ServiceUnavailableError('Circuit breaker is HALF_OPEN (probe in flight)', {
+          state: this.state,
+          consecutiveFailures: this.consecutiveFailures,
+          lastFailureTime: this.lastFailureTime,
+          nextAttemptTime: this.getNextAttemptTime(),
+        });
       }
       this.halfOpenProbeInFlight = true;
       usedHalfOpenProbe = true;
@@ -355,9 +354,7 @@ export class CircuitBreaker {
    */
   private trimRequestHistory(): void {
     if (this.requestHistory.length > this.config.windowSize) {
-      this.requestHistory = this.requestHistory.slice(
-        -this.config.windowSize
-      );
+      this.requestHistory = this.requestHistory.slice(-this.config.windowSize);
     }
   }
 

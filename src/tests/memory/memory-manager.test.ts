@@ -418,9 +418,7 @@ describe('MemoryManager - Auto Cleanup (Task 3.3)', () => {
       expect(recentMemory?.deletedAt).toBeDefined();
       expect(oldMemory?.deletedAt).toBeDefined();
       if (recentMemory?.deletedAt && oldMemory?.deletedAt) {
-        expect(oldMemory.deletedAt.getTime()).toBeLessThan(
-          recentMemory.deletedAt.getTime()
-        );
+        expect(oldMemory.deletedAt.getTime()).toBeLessThan(recentMemory.deletedAt.getTime());
       }
 
       // Run GC - should only remove old memory, keep recent one
@@ -438,9 +436,7 @@ describe('MemoryManager - Auto Cleanup (Task 3.3)', () => {
 
     it('should handle empty collection gracefully', async () => {
       // Run GC on empty collection
-      await expect(
-        memoryManager.performGarbageCollection()
-      ).resolves.not.toThrow();
+      await expect(memoryManager.performGarbageCollection()).resolves.not.toThrow();
     });
   });
 
@@ -745,11 +741,7 @@ describe('MemoryManager - Update, Delete, Merge (Task 3.2)', () => {
     });
 
     it('should merge multiple memories into one', async () => {
-      const result = await memoryManager.mergeMemories([
-        memory1Id,
-        memory2Id,
-        memory3Id,
-      ]);
+      const result = await memoryManager.mergeMemories([memory1Id, memory2Id, memory3Id]);
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -770,11 +762,7 @@ describe('MemoryManager - Update, Delete, Merge (Task 3.2)', () => {
 
     it('should return error if any memory ID does not exist', async () => {
       const fakeId = '00000000-0000-4000-8000-000000000000';
-      const result = await memoryManager.mergeMemories([
-        memory1Id,
-        fakeId,
-        memory2Id,
-      ]);
+      const result = await memoryManager.mergeMemories([memory1Id, fakeId, memory2Id]);
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -783,43 +771,28 @@ describe('MemoryManager - Update, Delete, Merge (Task 3.2)', () => {
     });
 
     it('should combine content from all memories', async () => {
-      const result = await memoryManager.mergeMemories([
-        memory1Id,
-        memory2Id,
-        memory3Id,
-      ]);
+      const result = await memoryManager.mergeMemories([memory1Id, memory2Id, memory3Id]);
 
       expect(result.success).toBe(true);
       // Content combination verification in integration tests
     });
 
     it('should merge metadata tags from all memories', async () => {
-      const result = await memoryManager.mergeMemories([
-        memory1Id,
-        memory2Id,
-        memory3Id,
-      ]);
+      const result = await memoryManager.mergeMemories([memory1Id, memory2Id, memory3Id]);
 
       expect(result.success).toBe(true);
       // Tags merging verification in integration tests
     });
 
     it('should soft delete source memories after merge', async () => {
-      const result = await memoryManager.mergeMemories([
-        memory1Id,
-        memory2Id,
-        memory3Id,
-      ]);
+      const result = await memoryManager.mergeMemories([memory1Id, memory2Id, memory3Id]);
 
       expect(result.success).toBe(true);
       // Soft deletion of source memories verification in integration tests
     });
 
     it('should return new merged memory ID', async () => {
-      const result = await memoryManager.mergeMemories([
-        memory1Id,
-        memory2Id,
-      ]);
+      const result = await memoryManager.mergeMemories([memory1Id, memory2Id]);
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -833,10 +806,7 @@ describe('MemoryManager - Update, Delete, Merge (Task 3.2)', () => {
       // Delete one of the memories
       await memoryManager.deleteMemory(memory1Id);
 
-      const result = await memoryManager.mergeMemories([
-        memory1Id,
-        memory2Id,
-      ]);
+      const result = await memoryManager.mergeMemories([memory1Id, memory2Id]);
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -851,10 +821,7 @@ describe('MemoryManager - Update, Delete, Merge (Task 3.2)', () => {
         isProtected: true,
       });
 
-      const result = await memoryManager.mergeMemories([
-        memory1Id,
-        memory2Id,
-      ]);
+      const result = await memoryManager.mergeMemories([memory1Id, memory2Id]);
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -878,10 +845,7 @@ describe('MemoryManager - Update, Delete, Merge (Task 3.2)', () => {
         throw new Error('Failed to create test memories');
       }
 
-      const result = await memoryManager.mergeMemories([
-        mem1.value,
-        mem2.value,
-      ]);
+      const result = await memoryManager.mergeMemories([mem1.value, mem2.value]);
 
       expect(result.success).toBe(true);
       // Tags should be sorted alphabetically: ['alpha', 'bravo', 'charlie', 'delta', 'zebra']
@@ -895,10 +859,7 @@ describe('MemoryManager - Update, Delete, Merge (Task 3.2)', () => {
         isProtected: true,
       });
 
-      const result = await memoryManager.mergeMemories([
-        memory1Id,
-        memory2Id,
-      ]);
+      const result = await memoryManager.mergeMemories([memory1Id, memory2Id]);
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -1001,11 +962,7 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
 
     it('should reject link creation with invalid source memory ID', async () => {
       const fakeId = '00000000-0000-4000-8000-000000000000';
-      const result = await memoryManager.createLink(
-        fakeId,
-        semanticMemoryId,
-        'REFERENCES'
-      );
+      const result = await memoryManager.createLink(fakeId, semanticMemoryId, 'REFERENCES');
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -1015,11 +972,7 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
 
     it('should reject link creation with invalid target memory ID', async () => {
       const fakeId = '00000000-0000-4000-8000-000000000000';
-      const result = await memoryManager.createLink(
-        episodicMemoryId,
-        fakeId,
-        'REFERENCES'
-      );
+      const result = await memoryManager.createLink(episodicMemoryId, fakeId, 'REFERENCES');
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -1151,16 +1104,8 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
   describe('getLinks - リンクの取得', () => {
     beforeEach(async () => {
       // Create test links
-      await memoryManager.createLink(
-        episodicMemoryId,
-        semanticMemoryId,
-        'REFERENCES'
-      );
-      await memoryManager.createLink(
-        episodicMemoryId,
-        proceduralMemoryId,
-        'DERIVED_FROM'
-      );
+      await memoryManager.createLink(episodicMemoryId, semanticMemoryId, 'REFERENCES');
+      await memoryManager.createLink(episodicMemoryId, proceduralMemoryId, 'DERIVED_FROM');
     });
 
     it('should retrieve all links for a memory', async () => {
@@ -1215,51 +1160,35 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
 
     it('should not return links where source memory is deleted', async () => {
       // Create a link from episodic to semantic
-      await memoryManager.createLink(
-        episodicMemoryId,
-        semanticMemoryId,
-        'SUPPORTS'
-      );
+      await memoryManager.createLink(episodicMemoryId, semanticMemoryId, 'SUPPORTS');
 
       // Soft-delete the source memory
       await memoryManager.deleteMemory(episodicMemoryId);
 
       // Links should not be returned for the target memory
       const links = await memoryManager.getLinks(semanticMemoryId);
-      const hasDeletedSourceLink = links.some(
-        (link) => link.fromMemoryId === episodicMemoryId
-      );
+      const hasDeletedSourceLink = links.some((link) => link.fromMemoryId === episodicMemoryId);
 
       expect(hasDeletedSourceLink).toBe(false);
     });
 
     it('should not return links where target memory is deleted', async () => {
       // Create a link from episodic to semantic
-      await memoryManager.createLink(
-        episodicMemoryId,
-        semanticMemoryId,
-        'SUPPORTS'
-      );
+      await memoryManager.createLink(episodicMemoryId, semanticMemoryId, 'SUPPORTS');
 
       // Soft-delete the target memory
       await memoryManager.deleteMemory(semanticMemoryId);
 
       // Links should not be returned for the source memory
       const links = await memoryManager.getLinks(episodicMemoryId);
-      const hasDeletedTargetLink = links.some(
-        (link) => link.toMemoryId === semanticMemoryId
-      );
+      const hasDeletedTargetLink = links.some((link) => link.toMemoryId === semanticMemoryId);
 
       expect(hasDeletedTargetLink).toBe(false);
     });
 
     it('should not return links where both endpoints are deleted', async () => {
       // Create a link
-      await memoryManager.createLink(
-        episodicMemoryId,
-        semanticMemoryId,
-        'SUPPORTS'
-      );
+      await memoryManager.createLink(episodicMemoryId, semanticMemoryId, 'SUPPORTS');
 
       // Delete both memories
       await memoryManager.deleteMemory(episodicMemoryId);
@@ -1314,12 +1243,8 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
       const linksTo = await memoryManager.getLinks(semanticMemoryId);
 
       // Link should be removed from both perspectives
-      expect(
-        linksFrom.some((l) => l.linkId === linkId)
-      ).toBe(false);
-      expect(
-        linksTo.some((l) => l.linkId === linkId)
-      ).toBe(false);
+      expect(linksFrom.some((l) => l.linkId === linkId)).toBe(false);
+      expect(linksTo.some((l) => l.linkId === linkId)).toBe(false);
     });
 
     it('should be idempotent (deleting already deleted link)', async () => {
@@ -1434,10 +1359,7 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
 
   describe('overrideMemoryType - ユーザーによるタイプ上書き', () => {
     it('should override memory type successfully', async () => {
-      const result = await memoryManager.overrideMemoryType(
-        episodicMemoryId,
-        'semantic'
-      );
+      const result = await memoryManager.overrideMemoryType(episodicMemoryId, 'semantic');
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -1447,10 +1369,7 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
 
     it('should return error for non-existent memory ID', async () => {
       const fakeId = '00000000-0000-4000-8000-000000000000';
-      const result = await memoryManager.overrideMemoryType(
-        fakeId,
-        'semantic'
-      );
+      const result = await memoryManager.overrideMemoryType(fakeId, 'semantic');
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -1459,10 +1378,7 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
     });
 
     it('should update memory type to new value', async () => {
-      await memoryManager.overrideMemoryType(
-        episodicMemoryId,
-        'procedural'
-      );
+      await memoryManager.overrideMemoryType(episodicMemoryId, 'procedural');
 
       const memories = await memoryManager.searchMemories({
         memoryTypes: ['procedural'],
@@ -1476,34 +1392,22 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
     });
 
     it('should allow overriding to the same type (idempotent)', async () => {
-      const firstResult = await memoryManager.overrideMemoryType(
-        episodicMemoryId,
-        'episodic'
-      );
+      const firstResult = await memoryManager.overrideMemoryType(episodicMemoryId, 'episodic');
       expect(firstResult.success).toBe(true);
 
-      const secondResult = await memoryManager.overrideMemoryType(
-        episodicMemoryId,
-        'episodic'
-      );
+      const secondResult = await memoryManager.overrideMemoryType(episodicMemoryId, 'episodic');
       expect(secondResult.success).toBe(true);
     });
 
     it('should track user override for statistics', async () => {
-      await memoryManager.overrideMemoryType(
-        episodicMemoryId,
-        'semantic'
-      );
+      await memoryManager.overrideMemoryType(episodicMemoryId, 'semantic');
 
       // User override should be tracked for classification stats
       // This will be verified in integration tests with classifier stats
     });
 
     it('should update updatedAt timestamp', async () => {
-      await memoryManager.overrideMemoryType(
-        episodicMemoryId,
-        'semantic'
-      );
+      await memoryManager.overrideMemoryType(episodicMemoryId, 'semantic');
 
       // Timestamp update verification in integration tests
     });
@@ -1511,10 +1415,7 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
     it('should reject override on deleted memory', async () => {
       await memoryManager.deleteMemory(semanticMemoryId);
 
-      const result = await memoryManager.overrideMemoryType(
-        semanticMemoryId,
-        'episodic'
-      );
+      const result = await memoryManager.overrideMemoryType(semanticMemoryId, 'episodic');
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -1524,10 +1425,7 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
 
     it('should update top-level memoryType only (single source of truth)', async () => {
       // Override to a new type
-      await memoryManager.overrideMemoryType(
-        episodicMemoryId,
-        'semantic'
-      );
+      await memoryManager.overrideMemoryType(episodicMemoryId, 'semantic');
 
       // Access memory directly using test helper
       const memory = memoryManager.getMemoryForTest(episodicMemoryId);
@@ -1543,20 +1441,14 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
 
     it('should update top-level memoryType correctly on multiple overrides', async () => {
       // First override
-      await memoryManager.overrideMemoryType(
-        episodicMemoryId,
-        'semantic'
-      );
+      await memoryManager.overrideMemoryType(episodicMemoryId, 'semantic');
 
       let memory = memoryManager.getMemoryForTest(episodicMemoryId);
       expect(memory?.memoryType).toBe('semantic');
       expect(memory?.metadata.memoryType).toBeUndefined();
 
       // Second override
-      await memoryManager.overrideMemoryType(
-        episodicMemoryId,
-        'procedural'
-      );
+      await memoryManager.overrideMemoryType(episodicMemoryId, 'procedural');
 
       memory = memoryManager.getMemoryForTest(episodicMemoryId);
       expect(memory?.memoryType).toBe('procedural');

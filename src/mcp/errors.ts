@@ -168,11 +168,7 @@ export class RateLimitError extends McpError {
 export class ServiceUnavailableError extends McpError {
   public readonly retryAfter?: number;
 
-  constructor(
-    message: string = 'Service unavailable',
-    data?: unknown,
-    retryAfter?: number
-  ) {
+  constructor(message: string = 'Service unavailable', data?: unknown, retryAfter?: number) {
     super(ErrorCode.SERVICE_UNAVAILABLE, message, data);
     this.name = 'ServiceUnavailableError';
     this.retryAfter = retryAfter;
