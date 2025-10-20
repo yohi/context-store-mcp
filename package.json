@@ -33,6 +33,7 @@
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.17.10",
+    "@types/pg": "^8.15.5",
     "@typescript-eslint/eslint-plugin": "^8.20.0",
     "@typescript-eslint/parser": "^8.20.0",
     "@vitest/coverage-v8": "^2.1.8",
@@ -47,6 +48,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.6",
     "neo4j-driver": "^5.27.1",
+    "openai": "^6.5.0",
     "pg": "^8.14.0",
     "pgvector": "^0.2.1",
     "redis": "^4.7.0",
