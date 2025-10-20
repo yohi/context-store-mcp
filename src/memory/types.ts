@@ -55,12 +55,28 @@ export interface StoreMemoryParams {
   metadata?: MemoryMetadata;
 }
 
+// Parameters for updating an existing memory
+// Excludes immutable fields (id, createdAt) and system-managed fields
+// (updatedAt, lastAccessedAt, accessCount) to prevent modification
+export type UpdateMemoryParams = Partial<
+  Pick<
+    Memory,
+    | 'content'
+    | 'memoryType'
+    | 'metadata'
+    | 'importanceScore'
+    | 'isDeleted'
+    | 'isProtected'
+    | 'deletedAt'
+  >
+>;
+
 // Memory Manager service interface
 export interface MemoryManagerService {
   storeMemory(params: StoreMemoryParams): Promise<Result<MemoryId, MemoryError>>;
   updateMemory(
     id: MemoryId,
-    updates: Partial<Memory>
+    updates: UpdateMemoryParams
   ): Promise<Result<boolean, MemoryError>>;
   deleteMemory(id: MemoryId): Promise<Result<boolean, MemoryError>>;
   mergeMemories(ids: MemoryId[]): Promise<Result<MemoryId, MemoryError>>;
