@@ -427,6 +427,17 @@ export class MemoryManager implements MemoryManagerService {
     createdBy: 'user' | 'system' = 'system',
     reasoning?: string
   ): Promise<Result<string, MemoryError>> {
+    // Prevent self-links
+    if (from === to) {
+      return {
+        success: false,
+        error: {
+          type: 'INVALID_CONTENT',
+          message: `Self-links are not allowed: cannot link memory ${from} to itself`,
+        },
+      };
+    }
+
     // Validate that both memories exist
     const fromMemory = this.memories.get(from);
     const toMemory = this.memories.get(to);
@@ -460,6 +471,21 @@ export class MemoryManager implements MemoryManagerService {
           message: `Link strength must be between 0 and 1, got ${strength}`,
         },
       };
+    }
+
+    // Check for duplicate links (same fromMemoryId, toMemoryId, and linkType)
+    for (const existingLink of this.links.values()) {
+      if (
+        existingLink.fromMemoryId === from &&
+        existingLink.toMemoryId === to &&
+        existingLink.linkType === linkType
+      ) {
+        // Return existing link ID instead of creating duplicate
+        return {
+          success: true,
+          value: existingLink.linkId,
+        };
+      }
     }
 
     // Generate link ID
@@ -498,7 +524,14 @@ export class MemoryManager implements MemoryManagerService {
     // Find all links where this memory is either source or target
     for (const link of this.links.values()) {
       if (link.fromMemoryId === memoryId || link.toMemoryId === memoryId) {
-        results.push(link);
+        // Skip links where either endpoint is deleted or missing
+        const fromMemory = this.memories.get(link.fromMemoryId);
+        const toMemory = this.memories.get(link.toMemoryId);
+
+        // Only include link if both endpoints exist and are not deleted
+        if (fromMemory && !fromMemory.isDeleted && toMemory && !toMemory.isDeleted) {
+          results.push(link);
+        }
       }
     }
 
@@ -618,11 +651,15 @@ export class MemoryManager implements MemoryManagerService {
       };
     }
 
-    // Update memory type
+    // Update memory type and ensure metadata is synchronized
     const updated: Memory = {
       ...memory,
       memoryType: newType,
       updatedAt: new Date(),
+      metadata: {
+        ...memory.metadata,
+        memoryType: newType, // Synchronize metadata.memoryType with top-level memoryType
+      },
     };
 
     this.memories.set(memoryId, updated);

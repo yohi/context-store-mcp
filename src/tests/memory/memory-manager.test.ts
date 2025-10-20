@@ -992,6 +992,47 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
       expect(result.success).toBe(true);
       // Both directions should be retrievable via getLinks
     });
+
+    it('should reject self-links (same from and to memory)', async () => {
+      const result = await memoryManager.createLink(
+        episodicMemoryId,
+        episodicMemoryId,
+        'REFERENCES'
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('INVALID_CONTENT');
+        expect(result.error.message).toContain('Self-links are not allowed');
+      }
+    });
+
+    it('should return existing link ID for duplicate links', async () => {
+      // Create first link
+      const result1 = await memoryManager.createLink(
+        episodicMemoryId,
+        semanticMemoryId,
+        'SUPPORTS',
+        0.8
+      );
+
+      expect(result1.success).toBe(true);
+      const firstLinkId = result1.success ? result1.value : '';
+
+      // Try to create duplicate link with same from, to, and linkType
+      const result2 = await memoryManager.createLink(
+        episodicMemoryId,
+        semanticMemoryId,
+        'SUPPORTS',
+        0.9 // Different strength, but same endpoints and type
+      );
+
+      expect(result2.success).toBe(true);
+      if (result2.success) {
+        // Should return the existing link ID
+        expect(result2.value).toBe(firstLinkId);
+      }
+    });
   });
 
   describe('getLinks - リンクの取得', () => {
@@ -1057,6 +1098,66 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
 
       expect(links).toBeInstanceOf(Array);
       expect(links.length).toBe(0);
+    });
+
+    it('should not return links where source memory is deleted', async () => {
+      // Create a link from episodic to semantic
+      await memoryManager.createLink(
+        episodicMemoryId,
+        semanticMemoryId,
+        'SUPPORTS'
+      );
+
+      // Soft-delete the source memory
+      await memoryManager.deleteMemory(episodicMemoryId);
+
+      // Links should not be returned for the target memory
+      const links = await memoryManager.getLinks(semanticMemoryId);
+      const hasDeletedSourceLink = links.some(
+        (link) => link.fromMemoryId === episodicMemoryId
+      );
+
+      expect(hasDeletedSourceLink).toBe(false);
+    });
+
+    it('should not return links where target memory is deleted', async () => {
+      // Create a link from episodic to semantic
+      await memoryManager.createLink(
+        episodicMemoryId,
+        semanticMemoryId,
+        'SUPPORTS'
+      );
+
+      // Soft-delete the target memory
+      await memoryManager.deleteMemory(semanticMemoryId);
+
+      // Links should not be returned for the source memory
+      const links = await memoryManager.getLinks(episodicMemoryId);
+      const hasDeletedTargetLink = links.some(
+        (link) => link.toMemoryId === semanticMemoryId
+      );
+
+      expect(hasDeletedTargetLink).toBe(false);
+    });
+
+    it('should not return links where both endpoints are deleted', async () => {
+      // Create a link
+      await memoryManager.createLink(
+        episodicMemoryId,
+        semanticMemoryId,
+        'SUPPORTS'
+      );
+
+      // Delete both memories
+      await memoryManager.deleteMemory(episodicMemoryId);
+      await memoryManager.deleteMemory(semanticMemoryId);
+
+      // Neither should return any links
+      const linksFrom = await memoryManager.getLinks(episodicMemoryId);
+      const linksTo = await memoryManager.getLinks(semanticMemoryId);
+
+      expect(linksFrom.length).toBe(0);
+      expect(linksTo.length).toBe(0);
     });
   });
 
@@ -1306,6 +1407,46 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
       if (!result.success) {
         expect(result.error.type).toBe('MEMORY_NOT_FOUND');
       }
+    });
+
+    it('should synchronize metadata.memoryType with top-level memoryType', async () => {
+      // Override to a new type
+      await memoryManager.overrideMemoryType(
+        episodicMemoryId,
+        'semantic'
+      );
+
+      // Access memory directly using test helper
+      const memory = memoryManager.getMemoryForTest(episodicMemoryId);
+
+      expect(memory).toBeDefined();
+      if (memory) {
+        // Both top-level and metadata should have the new type
+        expect(memory.memoryType).toBe('semantic');
+        expect(memory.metadata.memoryType).toBe('semantic');
+      }
+    });
+
+    it('should maintain metadata.memoryType consistency on multiple overrides', async () => {
+      // First override
+      await memoryManager.overrideMemoryType(
+        episodicMemoryId,
+        'semantic'
+      );
+
+      let memory = memoryManager.getMemoryForTest(episodicMemoryId);
+      expect(memory?.memoryType).toBe('semantic');
+      expect(memory?.metadata.memoryType).toBe('semantic');
+
+      // Second override
+      await memoryManager.overrideMemoryType(
+        episodicMemoryId,
+        'procedural'
+      );
+
+      memory = memoryManager.getMemoryForTest(episodicMemoryId);
+      expect(memory?.memoryType).toBe('procedural');
+      expect(memory?.metadata.memoryType).toBe('procedural');
     });
   });
 });
