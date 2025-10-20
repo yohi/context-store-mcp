@@ -131,12 +131,16 @@
   - バッチ処理による効率化
   - _Requirements: 2.1, 5.1_
 
-- [ ] 5.2 類似性検索とランキング機能
+- [x] 5.2 類似性検索とランキング機能
   - 類似度計算による検索実装
   - 閾値フィルタリング
   - スコアリングアルゴリズム
   - 検索結果のランキング
   - メタデータフィルタの適用
+  - 拡張された検索オプション（limit, offset, excludeIds, diversityEnabled）
+  - 4つのスコアリング戦略（similarity_only, recency_weighted, importance_weighted, hybrid）
+  - MMR（Maximal Marginal Relevance）アルゴリズムによる多様性確保
+  - カスタマイズ可能なスコアリング重み設定
   - _Requirements: 2.3, 2.5_
 
 ## グラフデータベース統合

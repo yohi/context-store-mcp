@@ -5,6 +5,13 @@
  * - PostgreSQL + pgvector を使用したベクトル埋め込みの保存と検索
  * - OpenAI Embeddings API統合
  * - 高速近似最近傍探索 (HNSW インデックス)
+ *
+ * タスク5.2: 類似性検索とランキング機能
+ * - 類似度計算による検索実装
+ * - 閾値フィルタリング
+ * - スコアリングアルゴリズム
+ * - 検索結果のランキング
+ * - メタデータフィルタの適用
  */
 
 import type { Pool } from 'pg';
@@ -50,6 +57,86 @@ export interface VectorItem {
 }
 
 /**
+ * メタデータフィルタ条件（タスク5.2）
+ */
+export interface MetadataFilter {
+  /** タグによるフィルタ（OR条件） */
+  tags?: string[];
+  /** 記憶タイプによるフィルタ */
+  memoryType?: 'episodic' | 'semantic' | 'procedural';
+  /** ソースによるフィルタ */
+  source?: string;
+  /** 作成日時の範囲フィルタ */
+  createdAfter?: Date;
+  createdBefore?: Date;
+  // TODO(task5.2): カスタムメタデータフィルタの実装
+  // customFilters?: Record<string, unknown>;
+  // 実装時の要件：
+  // - キーのサニタイゼーション（SQLインジェクション対策）
+  // - 値のパラメータ化（プリペアドステートメント使用）
+  // - ユニットテストの追加（最低1ケース）
+}
+
+/**
+ * スコアリング戦略（タスク5.2）
+ */
+export type ScoringStrategy =
+  | 'similarity_only' // コサイン類似度のみ
+  | 'recency_weighted' // 類似度 + 新しさの加重平均
+  | 'importance_weighted' // 類似度 + 重要度の加重平均
+  | 'hybrid'; // 類似度 + 新しさ + 重要度の複合スコア
+
+/**
+ * 検索オプション（タスク5.2）
+ */
+export interface SearchOptions {
+  /** 最大結果件数 (デフォルト: 10, 最大: 100) */
+  limit?: number;
+  /** オフセット (ページネーション用) */
+  offset?: number;
+  /** 最小類似度閾値 (デフォルト: 0.7) */
+  minSimilarity?: number;
+  /** メタデータフィルタ */
+  filter?: MetadataFilter;
+  /** スコアリング戦略 (デフォルト: similarity_only) */
+  scoringStrategy?: ScoringStrategy;
+  /** 除外する記憶のIDリスト */
+  excludeIds?: VectorId[];
+  /** 多様性を考慮するかどうか (MMRアルゴリズム) */
+  diversityEnabled?: boolean;
+}
+
+/**
+ * 拡張されたベクトル検索結果（タスク5.2）
+ */
+export interface EnhancedSearchResult extends VectorSearchResult {
+  /** 最終スコア（スコアリング戦略適用後） */
+  finalScore: number;
+  /** スコアの内訳 */
+  scoreBreakdown?: {
+    similarityScore: number;
+    recencyScore?: number;
+    importanceScore?: number;
+  };
+  /** マッチした理由の説明 */
+  explanation?: string;
+}
+
+/**
+ * スコアリング重み設定（タスク5.2）
+ */
+export interface ScoringWeights {
+  /** similarity_only: 類似度のみ */
+  similarityOnly: { similarity: number };
+  /** recency_weighted: 類似度 + 新しさ */
+  recencyWeighted: { similarity: number; recency: number };
+  /** importance_weighted: 類似度 + 重要度 */
+  importanceWeighted: { similarity: number; importance: number };
+  /** hybrid: 類似度 + 新しさ + 重要度 */
+  hybrid: { similarity: number; recency: number; importance: number };
+}
+
+/**
  * Vector Store Adapter Configuration
  */
 export interface VectorStoreConfig {
@@ -63,6 +150,8 @@ export interface VectorStoreConfig {
   dimensions?: number;
   /** 類似度閾値 (デフォルト: 0.7) */
   similarityThreshold?: number;
+  /** スコアリング重み (タスク5.2, カスタマイズ可能) */
+  scoringWeights?: Partial<ScoringWeights>;
 }
 
 /**
@@ -88,6 +177,17 @@ export interface IVectorStoreAdapter {
    * @returns 検索結果配列 (類似度降順)
    */
   searchSimilar(query: string, limit?: number): Promise<VectorSearchResult[]>;
+
+  /**
+   * 拡張された類似性検索を実行（タスク5.2）
+   *
+   * メタデータフィルタ、スコアリング戦略、ランキング機能を提供
+   *
+   * @param query - 検索クエリ
+   * @param options - 検索オプション
+   * @returns 拡張された検索結果配列
+   */
+  searchSimilarAdvanced(query: string, options?: SearchOptions): Promise<EnhancedSearchResult[]>;
 
   /**
    * ベクトルを削除
@@ -117,11 +217,26 @@ export interface IVectorStoreAdapter {
  * Vector Store Adapter Implementation
  */
 export class VectorStoreAdapter implements IVectorStoreAdapter {
+  // タスク5.2: スコアリング重みのデフォルト値（カスタマイズ可能）
+  private static readonly DEFAULT_SCORING_WEIGHTS: ScoringWeights = {
+    similarityOnly: { similarity: 1.0 },
+    recencyWeighted: { similarity: 0.7, recency: 0.3 },
+    importanceWeighted: { similarity: 0.7, importance: 0.3 },
+    hybrid: { similarity: 0.6, recency: 0.2, importance: 0.2 },
+  };
+
+  // タスク5.2: MMRアルゴリズムのλパラメータ（関連性と多様性のバランス）
+  private static readonly MMR_LAMBDA = 0.7;
+
+  // タスク5.2: 新しさスコアの減衰パラメータ（日数）
+  private static readonly RECENCY_DECAY_DAYS = 30;
+
   private pool: Pool;
   private openaiClient: OpenAI;
   private embeddingModel: string;
   private dimensions: number;
   private similarityThreshold: number;
+  private scoringWeights: ScoringWeights;
 
   constructor(config: VectorStoreConfig) {
     this.pool = config.pool;
@@ -129,6 +244,10 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
     this.embeddingModel = config.embeddingModel || 'text-embedding-3-small';
     this.dimensions = config.dimensions || 1536;
     this.similarityThreshold = config.similarityThreshold || 0.7;
+    this.scoringWeights = {
+      ...VectorStoreAdapter.DEFAULT_SCORING_WEIGHTS,
+      ...config.scoringWeights,
+    };
   }
 
   /**
@@ -177,13 +296,19 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
 
         return embedding;
       } catch (error) {
-        // レート制限エラーかどうかを判定
-        const isRateLimitError =
+        // リトライ可能なエラーかどうかを判定
+        // OpenAI SDK v6.5.0のデフォルト動作に準拠：
+        // - RateLimitError (429)
+        // - InternalServerError (5xx)
+        // - APIConnectionError (ネットワークエラー)
+        const isRetryableError =
           error instanceof OpenAI.RateLimitError ||
-          (error instanceof OpenAI.APIError && error.status === 429);
+          error instanceof OpenAI.APIConnectionError ||
+          (error instanceof OpenAI.APIError &&
+            (error.status === 429 || (error.status !== undefined && error.status >= 500)));
 
-        if (!isRateLimitError) {
-          // レート制限以外のエラーは即座に再スロー
+        if (!isRetryableError) {
+          // リトライ不可能なエラーは即座に再スロー
           if (error instanceof OpenAI.APIError) {
             throw new Error(
               `OpenAI API error: ${error.message} (status: ${error.status}, code: ${error.code})`
@@ -426,5 +551,349 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * 拡張された類似性検索を実行（タスク5.2）
+   *
+   * メタデータフィルタ、スコアリング戦略、ランキング機能を提供
+   */
+  async searchSimilarAdvanced(query: string, options: SearchOptions = {}): Promise<EnhancedSearchResult[]> {
+    // パラメータの検証とデフォルト値の設定
+    const {
+      limit = 10,
+      offset = 0,
+      minSimilarity = this.similarityThreshold,
+      filter,
+      scoringStrategy = 'similarity_only',
+      excludeIds = [],
+      diversityEnabled = false,
+    } = options;
+
+    // パラメータの範囲チェック
+    if (limit < 1 || limit > 100) {
+      throw new Error('limit must be between 1 and 100');
+    }
+    if (offset < 0) {
+      throw new Error('offset must be non-negative');
+    }
+    if (minSimilarity < 0 || minSimilarity > 1) {
+      throw new Error('minSimilarity must be between 0 and 1');
+    }
+    if (!query || query.trim().length === 0) {
+      throw new Error('query cannot be empty');
+    }
+
+    // クエリのベクトルを生成
+    const queryEmbedding = await this.generateEmbedding(query);
+    const normalizedQuery = this.normalizeVector(queryEmbedding);
+
+    // メタデータフィルタ条件を構築
+    const whereConditions: string[] = ['m.is_deleted = false'];
+    const queryParams: unknown[] = [JSON.stringify(normalizedQuery), minSimilarity];
+    let paramIndex = 3;
+
+    // 除外IDフィルタ
+    if (excludeIds.length > 0) {
+      // NOT (m.id = ANY(...)) 形式を使用し、uuid[]型を明示的にキャスト
+      whereConditions.push(`NOT (m.id = ANY($${paramIndex}::uuid[]))`);
+      queryParams.push(excludeIds); // UUID文字列の配列をそのまま渡す
+      paramIndex++;
+    }
+
+    // メタデータフィルタの適用
+    if (filter) {
+      if (filter.memoryType) {
+        whereConditions.push(`m.metadata->>'memoryType' = $${paramIndex}`);
+        queryParams.push(filter.memoryType);
+        paramIndex++;
+      }
+
+      if (filter.source) {
+        whereConditions.push(`m.metadata->>'source' = $${paramIndex}`);
+        queryParams.push(filter.source);
+        paramIndex++;
+      }
+
+      if (filter.tags && filter.tags.length > 0) {
+        // タグの OR 条件（いずれかのタグを含む）
+        // ?| 演算子にtext[]型を明示的にキャストして型解決を保証
+        whereConditions.push(`m.metadata->'tags' ?| $${paramIndex}::text[]`);
+        queryParams.push(filter.tags); // 文字列の配列をそのまま渡す
+        paramIndex++;
+      }
+
+      if (filter.createdAfter) {
+        whereConditions.push(`m.created_at >= $${paramIndex}`);
+        queryParams.push(filter.createdAfter);
+        paramIndex++;
+      }
+
+      if (filter.createdBefore) {
+        whereConditions.push(`m.created_at <= $${paramIndex}`);
+        queryParams.push(filter.createdBefore);
+        paramIndex++;
+      }
+
+      // TODO(task5.2): customFiltersの実装
+      // if (filter.customFilters) {
+      //   // 実装時の要件：
+      //   // 1. キーのホワイトリスト検証（許可されたメタデータキーのみ）
+      //   // 2. プリペアドステートメント使用（$${paramIndex}形式）
+      //   // 3. JSONBパス演算子の適切な使用（->>'key'）
+      //   // 4. SQLインジェクション対策の徹底
+      //   // 例: whereConditions.push(`m.metadata->>'${sanitizedKey}' = $${paramIndex}`);
+      // }
+    }
+
+    const whereClause = whereConditions.join(' AND ');
+
+    // コサイン類似度検索を実行
+    const result = await this.pool.query(
+      `SELECT
+        m.id,
+        m.content,
+        m.metadata,
+        m.created_at,
+        1 - (mv.embedding <=> $1::vector) AS similarity
+       FROM memories m
+       JOIN memory_vectors mv ON m.id = mv.memory_id
+       WHERE ${whereClause}
+         AND 1 - (mv.embedding <=> $1::vector) >= $2
+       ORDER BY similarity DESC
+       LIMIT ${limit + offset}`,
+      queryParams
+    );
+
+    // 基本検索結果を取得
+    const baseResults: VectorSearchResult[] = result.rows.map(row => {
+      // metadataをパース（文字列の場合はJSON.parse）
+      const parsedMetadata =
+        typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata;
+
+      // metadata.timestampが未設定の場合、created_atをフォールバックとして使用
+      // recency計算とタイブレークソートで一貫して使用される
+      const metadata = {
+        ...parsedMetadata,
+        timestamp: parsedMetadata.timestamp ?? new Date(row.created_at).toISOString(),
+      };
+
+      return {
+        id: row.id,
+        content: row.content,
+        similarity: parseFloat(row.similarity),
+        metadata,
+      };
+    });
+
+    // スコアリング戦略を適用
+    const enhancedResults: EnhancedSearchResult[] = baseResults.map(result => {
+      const scoreBreakdown = this.calculateScoreBreakdown(result, scoringStrategy, result.metadata);
+      const finalScore = this.calculateFinalScore(scoreBreakdown, scoringStrategy);
+
+      return {
+        ...result,
+        finalScore,
+        scoreBreakdown,
+        explanation: this.generateExplanation(result, scoreBreakdown),
+      };
+    });
+
+    // 最終スコアでソート
+    enhancedResults.sort((a, b) => {
+      if (Math.abs(a.finalScore - b.finalScore) < 0.0001) {
+        // 同じスコアの場合は新しい記憶を優先
+        const timeA = new Date(a.metadata.timestamp || 0).getTime();
+        const timeB = new Date(b.metadata.timestamp || 0).getTime();
+        return timeB - timeA;
+      }
+      return b.finalScore - a.finalScore;
+    });
+
+    // 多様性を考慮する場合（MMRアルゴリズム）
+    let finalResults = enhancedResults;
+    if (diversityEnabled && enhancedResults.length > 1) {
+      finalResults = this.applyMaximalMarginalRelevance(enhancedResults, limit);
+    }
+
+    // オフセットとリミットを適用
+    return finalResults.slice(offset, offset + limit);
+  }
+
+  /**
+   * スコアの内訳を計算
+   */
+  private calculateScoreBreakdown(
+    result: VectorSearchResult,
+    strategy: ScoringStrategy,
+    metadata: Metadata
+  ): {
+    similarityScore: number;
+    recencyScore?: number;
+    importanceScore?: number;
+  } {
+    const breakdown: {
+      similarityScore: number;
+      recencyScore?: number;
+      importanceScore?: number;
+    } = {
+      similarityScore: result.similarity,
+    };
+
+    if (strategy !== 'similarity_only') {
+      // 新しさスコアを計算（0-1の範囲）
+      if (strategy === 'recency_weighted' || strategy === 'hybrid') {
+        const timestamp = metadata.timestamp ? new Date(metadata.timestamp).getTime() : 0;
+        const now = Date.now();
+        const daysSinceCreation = (now - timestamp) / (1000 * 60 * 60 * 24);
+        // 指定日数以内なら高スコア、それ以降は指数関数的に減衰
+        breakdown.recencyScore = Math.exp(
+          -daysSinceCreation / VectorStoreAdapter.RECENCY_DECAY_DAYS
+        );
+      }
+
+      // 重要度スコアを計算（0-1の範囲）
+      if (strategy === 'importance_weighted' || strategy === 'hybrid') {
+        // metadata に importance フィールドがあればそれを使用、なければ0.5
+        breakdown.importanceScore =
+          typeof metadata['importance'] === 'number' ? (metadata['importance'] as number) : 0.5;
+      }
+    }
+
+    return breakdown;
+  }
+
+  /**
+   * 最終スコアを計算
+   */
+  private calculateFinalScore(
+    breakdown: {
+      similarityScore: number;
+      recencyScore?: number;
+      importanceScore?: number;
+    },
+    strategy: ScoringStrategy
+  ): number {
+    const weights = this.scoringWeights;
+
+    switch (strategy) {
+      case 'similarity_only':
+        return breakdown.similarityScore * weights.similarityOnly.similarity;
+
+      case 'recency_weighted':
+        return (
+          breakdown.similarityScore * weights.recencyWeighted.similarity +
+          (breakdown.recencyScore || 0) * weights.recencyWeighted.recency
+        );
+
+      case 'importance_weighted':
+        return (
+          breakdown.similarityScore * weights.importanceWeighted.similarity +
+          (breakdown.importanceScore || 0) * weights.importanceWeighted.importance
+        );
+
+      case 'hybrid':
+        return (
+          breakdown.similarityScore * weights.hybrid.similarity +
+          (breakdown.recencyScore || 0) * weights.hybrid.recency +
+          (breakdown.importanceScore || 0) * weights.hybrid.importance
+        );
+
+      default:
+        return breakdown.similarityScore;
+    }
+  }
+
+  /**
+   * マッチした理由の説明を生成
+   */
+  private generateExplanation(
+    result: VectorSearchResult,
+    scoreBreakdown: {
+      similarityScore: number;
+      recencyScore?: number;
+      importanceScore?: number;
+    }
+  ): string {
+    const parts: string[] = [];
+
+    parts.push(`類似度: ${(scoreBreakdown.similarityScore * 100).toFixed(1)}%`);
+
+    if (scoreBreakdown.recencyScore !== undefined) {
+      parts.push(`新しさ: ${(scoreBreakdown.recencyScore * 100).toFixed(1)}%`);
+    }
+
+    if (scoreBreakdown.importanceScore !== undefined) {
+      parts.push(`重要度: ${(scoreBreakdown.importanceScore * 100).toFixed(1)}%`);
+    }
+
+    if (result.metadata.tags && Array.isArray(result.metadata.tags)) {
+      parts.push(`タグ: ${result.metadata.tags.join(', ')}`);
+    }
+
+    return parts.join(' | ');
+  }
+
+  /**
+   * MMR (Maximal Marginal Relevance) アルゴリズムを適用
+   *
+   * 結果の多様性を確保するために、類似した結果を除外しつつ
+   * 関連性の高い結果を優先的に選択する
+   */
+  private applyMaximalMarginalRelevance(
+    results: EnhancedSearchResult[],
+    limit: number
+  ): EnhancedSearchResult[] {
+    if (results.length <= limit) {
+      return results;
+    }
+
+    const selected: EnhancedSearchResult[] = [];
+    const remaining = [...results];
+
+    // 最初は最も関連性の高い結果を選択
+    selected.push(remaining.shift()!);
+
+    // lambda パラメータ（関連性と多様性のバランス）
+    const lambda = VectorStoreAdapter.MMR_LAMBDA;
+
+    while (selected.length < limit && remaining.length > 0) {
+      let maxScore = -Infinity;
+      let maxIndex = -1;
+
+      // 残りの各候補について MMR スコアを計算
+      for (let i = 0; i < remaining.length; i++) {
+        const candidate = remaining[i];
+        if (!candidate) continue;
+
+        // 既に選択された結果との最大類似度を計算
+        let maxSimilarityToSelected = 0;
+        for (const selectedResult of selected) {
+          // ここでは簡易的にスコアの差を類似度の代理として使用
+          const similarity = 1 - Math.abs(candidate.finalScore - selectedResult.finalScore);
+          maxSimilarityToSelected = Math.max(maxSimilarityToSelected, similarity);
+        }
+
+        // MMR スコア = λ * 関連性 - (1 - λ) * 類似度
+        const mmrScore = lambda * candidate.finalScore - (1 - lambda) * maxSimilarityToSelected;
+
+        if (mmrScore > maxScore) {
+          maxScore = mmrScore;
+          maxIndex = i;
+        }
+      }
+
+      // 最もMMRスコアの高い候補を選択
+      if (maxIndex >= 0) {
+        const selectedCandidate = remaining.splice(maxIndex, 1)[0];
+        if (selectedCandidate) {
+          selected.push(selectedCandidate);
+        }
+      } else {
+        break;
+      }
+    }
+
+    return selected;
   }
 }
