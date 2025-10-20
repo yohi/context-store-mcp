@@ -11,7 +11,6 @@ import type {
   MemoryError,
   MemoryManagerService,
   MemoryMetadata,
-  MemoryType,
   Result,
   StoreMemoryParams,
 } from './types.js';
@@ -56,6 +55,7 @@ export class MemoryManager implements MemoryManagerService {
       importanceScore: 0.0,
       isDeleted: false,
       isProtected: false,
+      deletedAt: null, // Not deleted initially
     };
 
     // Store in memory (will be replaced with PostgreSQL later)
@@ -98,12 +98,18 @@ export class MemoryManager implements MemoryManagerService {
       }
     }
 
-    // Update the memory (preserving fields not in updates)
+    // Create updated memory, filtering out protected fields
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { id: _id, createdAt: _createdAt, isDeleted: _isDeleted, deletedAt: _deletedAt, ...allowedUpdates } = updates;
+
+    // Update the memory (preserving protected fields)
     const updatedMemory: Memory = {
       ...existing,
-      ...updates,
+      ...allowedUpdates,
       id: existing.id, // ID cannot be changed
       createdAt: existing.createdAt, // createdAt cannot be changed
+      isDeleted: existing.isDeleted, // isDeleted cannot be changed via update
+      deletedAt: existing.deletedAt, // deletedAt cannot be changed via update
       updatedAt: new Date(), // Always update updatedAt
     };
 
@@ -143,10 +149,11 @@ export class MemoryManager implements MemoryManagerService {
       };
     }
 
-    // Soft delete: mark as deleted instead of removing
+    // Soft delete: mark as deleted with timestamp (GDPR compliance)
     const deletedMemory: Memory = {
       ...existing,
       isDeleted: true,
+      deletedAt: new Date(),
       updatedAt: new Date(),
     };
 
@@ -176,7 +183,7 @@ export class MemoryManager implements MemoryManagerService {
       };
     }
 
-    // Check all memories exist
+    // Check all memories exist and are mergeable
     const memories: Memory[] = [];
     for (const id of ids) {
       const memory = this.memories.get(id);
@@ -189,6 +196,29 @@ export class MemoryManager implements MemoryManagerService {
           },
         };
       }
+
+      // Check if memory is deleted
+      if (memory.isDeleted) {
+        return {
+          success: false,
+          error: {
+            type: 'INVALID_CONTENT',
+            message: `Cannot merge deleted memory: ${id}`,
+          },
+        };
+      }
+
+      // Check if memory is protected
+      if (memory.isProtected) {
+        return {
+          success: false,
+          error: {
+            type: 'STORAGE_ERROR',
+            message: `Cannot merge protected memory: ${id}`,
+          },
+        };
+      }
+
       memories.push(memory);
     }
 
@@ -197,7 +227,7 @@ export class MemoryManager implements MemoryManagerService {
       .map((m, index) => `[Memory ${index + 1}]\n${m.content}`)
       .join('\n\n');
 
-    // Merge tags from all memories (unique tags only)
+    // Merge tags from all memories (unique tags only, sorted for deterministic order)
     const allTags = new Set<string>();
     for (const memory of memories) {
       if (memory.metadata.tags) {
@@ -211,9 +241,9 @@ export class MemoryManager implements MemoryManagerService {
     const mergedMemoryParams: StoreMemoryParams = {
       content: combinedContent,
       metadata: {
-        tags: Array.from(allTags),
+        tags: Array.from(allTags).sort(), // Sorted for stable ordering
         source: 'merged',
-        memoryType: memories[0].memoryType, // Use first memory's type
+        memoryType: memories[0]?.memoryType || 'semantic', // Use first memory's type
       },
     };
 
@@ -222,9 +252,20 @@ export class MemoryManager implements MemoryManagerService {
       return mergeResult;
     }
 
-    // Soft delete source memories
+    // Soft delete source memories with rollback on failure
     for (const id of ids) {
-      await this.deleteMemory(id);
+      const deleteResult = await this.deleteMemory(id);
+      if (!deleteResult.success) {
+        // Rollback: delete the merged memory to avoid inconsistency
+        this.memories.delete(mergeResult.value);
+        return {
+          success: false,
+          error: {
+            type: deleteResult.error.type,
+            message: `Merge aborted: failed to delete source ${id} (${deleteResult.error.message})`,
+          },
+        };
+      }
     }
 
     return {
@@ -319,7 +360,7 @@ export class MemoryManager implements MemoryManagerService {
    */
   private processMetadata(metadata?: MemoryMetadata): MemoryMetadata {
     const processed: MemoryMetadata = {
-      ...metadata,
+      ...(metadata ?? {}),
     };
 
     // Set timestamp if not provided

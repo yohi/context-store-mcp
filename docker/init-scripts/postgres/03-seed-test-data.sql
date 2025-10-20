@@ -98,10 +98,7 @@ INSERT INTO memories (id, content, memory_type, metadata, importance_score, is_p
 INSERT INTO memory_vectors (memory_id, embedding)
 SELECT
   id,
-  array_to_string(
-    ARRAY(SELECT random()::text FROM generate_series(1, 1536)),
-    ','
-  )::vector
+  ARRAY(SELECT random()::float FROM generate_series(1, 1536))::vector
 FROM memories
 WHERE NOT EXISTS (
   SELECT 1 FROM memory_vectors WHERE memory_vectors.memory_id = memories.id
