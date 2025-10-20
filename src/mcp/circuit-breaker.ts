@@ -75,16 +75,100 @@ interface RequestRecord {
 }
 
 export class CircuitBreaker {
-  private readonly config: CircuitBreakerConfig;
+  private readonly config: Readonly<CircuitBreakerConfig>;
   private state: CircuitState = CircuitState.CLOSED;
   private consecutiveFailures = 0;
   private consecutiveSuccesses = 0;
   private lastFailureTime: number | null = null;
   private requestHistory: RequestRecord[] = [];
   private openStateTimer: NodeJS.Timeout | null = null;
+  private halfOpenProbeInFlight = false;
 
   constructor(config: CircuitBreakerConfig) {
-    this.config = config;
+    this.validateConfig(config);
+    // Clone and freeze to prevent external mutation
+    this.config = Object.freeze({ ...config });
+  }
+
+  /**
+   * Validate circuit breaker configuration
+   * @private
+   */
+  private validateConfig(config: CircuitBreakerConfig): void {
+    // Required fields check
+    if (config.failureThreshold === undefined || config.failureThreshold === null) {
+      throw new Error('failureThreshold is required');
+    }
+    if (config.successThreshold === undefined || config.successThreshold === null) {
+      throw new Error('successThreshold is required');
+    }
+    if (config.timeout === undefined || config.timeout === null) {
+      throw new Error('timeout is required');
+    }
+    if (config.windowSize === undefined || config.windowSize === null) {
+      throw new Error('windowSize is required');
+    }
+    if (config.failureRateThreshold === undefined || config.failureRateThreshold === null) {
+      throw new Error('failureRateThreshold is required');
+    }
+
+    // Type validation
+    if (typeof config.failureThreshold !== 'number') {
+      throw new TypeError('failureThreshold must be a number');
+    }
+    if (typeof config.successThreshold !== 'number') {
+      throw new TypeError('successThreshold must be a number');
+    }
+    if (typeof config.timeout !== 'number') {
+      throw new TypeError('timeout must be a number');
+    }
+    if (typeof config.windowSize !== 'number') {
+      throw new TypeError('windowSize must be a number');
+    }
+    if (typeof config.failureRateThreshold !== 'number') {
+      throw new TypeError('failureRateThreshold must be a number');
+    }
+
+    // Range validation - no negative values
+    if (config.failureThreshold < 0) {
+      throw new RangeError('failureThreshold must be non-negative');
+    }
+    if (config.successThreshold < 0) {
+      throw new RangeError('successThreshold must be non-negative');
+    }
+    if (config.timeout <= 0) {
+      throw new RangeError('timeout must be positive');
+    }
+    if (config.windowSize <= 0) {
+      throw new RangeError('windowSize must be positive');
+    }
+
+    // Percentage range validation (0.0 - 1.0)
+    if (config.failureRateThreshold < 0 || config.failureRateThreshold > 1) {
+      throw new RangeError('failureRateThreshold must be between 0.0 and 1.0');
+    }
+
+    // Logical validation
+    if (!Number.isFinite(config.failureThreshold)) {
+      throw new RangeError('failureThreshold must be a finite number');
+    }
+    if (!Number.isFinite(config.successThreshold)) {
+      throw new RangeError('successThreshold must be a finite number');
+    }
+    if (!Number.isFinite(config.timeout)) {
+      throw new RangeError('timeout must be a finite number');
+    }
+    if (!Number.isFinite(config.windowSize)) {
+      throw new RangeError('windowSize must be a finite number');
+    }
+    if (!Number.isFinite(config.failureRateThreshold)) {
+      throw new RangeError('failureRateThreshold must be a finite number');
+    }
+
+    // Ensure positive thresholds make sense
+    if (config.failureThreshold === 0 && config.failureRateThreshold === 0) {
+      throw new Error('At least one threshold (failureThreshold or failureRateThreshold) must be positive');
+    }
   }
 
   /**
@@ -108,6 +192,24 @@ export class CircuitBreaker {
       });
     }
 
+    // HALF_OPEN中はプローブを1本に制限（トラフィックスパイク防止）
+    let usedHalfOpenProbe = false;
+    if (this.state === CircuitState.HALF_OPEN) {
+      if (this.halfOpenProbeInFlight) {
+        throw new ServiceUnavailableError(
+          'Circuit breaker is HALF_OPEN (probe in flight)',
+          {
+            state: this.state,
+            consecutiveFailures: this.consecutiveFailures,
+            lastFailureTime: this.lastFailureTime,
+            nextAttemptTime: this.getNextAttemptTime(),
+          }
+        );
+      }
+      this.halfOpenProbeInFlight = true;
+      usedHalfOpenProbe = true;
+    }
+
     try {
       const result = await operation();
       this.recordSuccess();
@@ -115,6 +217,10 @@ export class CircuitBreaker {
     } catch (error) {
       this.recordFailure();
       throw error;
+    } finally {
+      if (usedHalfOpenProbe) {
+        this.halfOpenProbeInFlight = false;
+      }
     }
   }
 
@@ -146,6 +252,7 @@ export class CircuitBreaker {
     this.lastFailureTime = null;
     this.requestHistory = [];
     this.clearOpenStateTimer();
+    this.halfOpenProbeInFlight = false;
   }
 
   /**
@@ -216,7 +323,6 @@ export class CircuitBreaker {
    * 状態遷移
    */
   private transitionTo(newState: CircuitState): void {
-    const oldState = this.state;
     this.state = newState;
 
     // OPEN状態に遷移した場合、タイマーをセット
@@ -234,11 +340,13 @@ export class CircuitBreaker {
       this.consecutiveFailures = 0;
       this.consecutiveSuccesses = 0;
       this.clearOpenStateTimer();
+      this.halfOpenProbeInFlight = false;
     }
 
-    // HALF_OPEN状態に遷移した場合、タイマーをクリア
+    // HALF_OPEN状態に遷移した場合、タイマーをクリアして最初のプローブを許可
     if (newState === CircuitState.HALF_OPEN) {
       this.clearOpenStateTimer();
+      this.halfOpenProbeInFlight = false; // 最初のプローブを許可
     }
   }
 
