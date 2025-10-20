@@ -617,8 +617,9 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
 
       if (filter.tags && filter.tags.length > 0) {
         // タグの OR 条件（いずれかのタグを含む）
-        whereConditions.push(`m.metadata->'tags' ?| $${paramIndex}`);
-        queryParams.push(filter.tags);
+        // ?| 演算子にtext[]型を明示的にキャストして型解決を保証
+        whereConditions.push(`m.metadata->'tags' ?| $${paramIndex}::text[]`);
+        queryParams.push(filter.tags); // 文字列の配列をそのまま渡す
         paramIndex++;
       }
 
