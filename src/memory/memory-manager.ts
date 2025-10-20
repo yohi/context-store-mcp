@@ -109,7 +109,7 @@ export class MemoryManager implements MemoryManagerService {
       id: existing.id, // ID cannot be changed
       createdAt: existing.createdAt, // createdAt cannot be changed
       isDeleted: existing.isDeleted, // isDeleted cannot be changed via update
-      deletedAt: existing.deletedAt, // deletedAt cannot be changed via update
+      deletedAt: existing.deletedAt ?? null, // deletedAt cannot be changed via update, normalize undefined to null
       updatedAt: new Date(), // Always update updatedAt
     };
 
@@ -288,7 +288,9 @@ export class MemoryManager implements MemoryManagerService {
       if (
         memory.isDeleted &&
         !memory.isProtected &&
-        memory.updatedAt < threshold
+        memory.deletedAt !== null &&
+        memory.deletedAt !== undefined &&
+        memory.deletedAt < threshold
       ) {
         toRemove.push(id);
       }
@@ -391,5 +393,38 @@ export class MemoryManager implements MemoryManagerService {
       updatedAt: now,
       lastAccessedAt: now,
     };
+  }
+
+  /**
+   * Test helper: Get a memory by ID (including soft-deleted ones)
+   * Only for testing purposes - not part of public API
+   * @internal
+   */
+  getMemoryForTest(id: MemoryId): Memory | undefined {
+    return this.memories.get(id);
+  }
+
+  /**
+   * Test helper: Get all memories (including soft-deleted ones)
+   * Only for testing purposes - not part of public API
+   * @internal
+   */
+  getAllMemoriesForTest(): Memory[] {
+    return Array.from(this.memories.values());
+  }
+
+  /**
+   * Test helper: Manually set deletedAt timestamp for testing GC
+   * Only for testing purposes - allows simulating old deletions
+   * @internal
+   */
+  setDeletedAtForTest(id: MemoryId, deletedAt: Date): void {
+    const memory = this.memories.get(id);
+    if (memory) {
+      this.memories.set(id, {
+        ...memory,
+        deletedAt,
+      });
+    }
   }
 }

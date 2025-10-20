@@ -268,12 +268,21 @@ describe('MemoryManager - Auto Cleanup (Task 3.3)', () => {
       const memoryId = storeResult.value;
       await memoryManager.deleteMemory(memoryId);
 
+      // Set deletedAt to >24 hours ago to make it eligible for GC
+      const oldDate = new Date(Date.now() - 25 * 60 * 60 * 1000); // 25 hours ago
+      memoryManager.setDeletedAtForTest(memoryId, oldDate);
+
+      // Verify memory exists before GC
+      let memory = memoryManager.getMemoryForTest(memoryId);
+      expect(memory).toBeDefined();
+      expect(memory?.isDeleted).toBe(true);
+
       // Perform garbage collection
       await memoryManager.performGarbageCollection();
 
       // Memory should be completely removed (not just soft-deleted)
-      // Verification will be done in integration tests
-      expect(true).toBe(true); // Placeholder
+      memory = memoryManager.getMemoryForTest(memoryId);
+      expect(memory).toBeUndefined();
     });
 
     it('should not remove protected memories even if soft-deleted', async () => {
@@ -287,38 +296,87 @@ describe('MemoryManager - Auto Cleanup (Task 3.3)', () => {
 
       const memoryId = storeResult.value;
 
-      // Mark as protected
+      // Soft delete first (before protecting)
+      const deleteResult = await memoryManager.deleteMemory(memoryId);
+      expect(deleteResult.success).toBe(true);
+
+      // Mark as protected AFTER deletion (simulating edge case)
       await memoryManager.updateMemory(memoryId, { isProtected: true });
 
-      // Soft delete
-      await memoryManager.deleteMemory(memoryId);
+      // Set deletedAt to >24 hours ago (would normally be eligible for GC)
+      const oldDate = new Date(Date.now() - 25 * 60 * 60 * 1000); // 25 hours ago
+      memoryManager.setDeletedAtForTest(memoryId, oldDate);
+
+      // Verify memory state before GC
+      let memory = memoryManager.getMemoryForTest(memoryId);
+      expect(memory).toBeDefined();
+      expect(memory?.isDeleted).toBe(true);
+      expect(memory?.isProtected).toBe(true);
 
       // Perform garbage collection
       await memoryManager.performGarbageCollection();
 
-      // Protected memory should still exist
-      // Verification in integration tests
-      expect(true).toBe(true); // Placeholder
+      // Protected memory should still exist (not garbage collected)
+      memory = memoryManager.getMemoryForTest(memoryId);
+      expect(memory).toBeDefined();
+      expect(memory?.isDeleted).toBe(true);
+      expect(memory?.isProtected).toBe(true);
     });
 
     it('should only remove memories older than threshold', async () => {
-      const storeResult = await memoryManager.storeMemory({
+      // Create two memories - one recent, one old
+      const recentResult = await memoryManager.storeMemory({
         content: 'Recently deleted memory',
         metadata: { tags: ['recent'] },
       });
+      const oldResult = await memoryManager.storeMemory({
+        content: 'Old deleted memory',
+        metadata: { tags: ['old'] },
+      });
 
-      expect(storeResult.success).toBe(true);
-      if (!storeResult.success) return;
+      expect(recentResult.success).toBe(true);
+      expect(oldResult.success).toBe(true);
+      if (!recentResult.success || !oldResult.success) return;
 
-      const memoryId = storeResult.value;
-      await memoryManager.deleteMemory(memoryId);
+      const recentId = recentResult.value;
+      const oldId = oldResult.value;
 
-      // Immediately run GC (memory should not be removed if threshold not met)
+      // Delete both memories
+      await memoryManager.deleteMemory(recentId);
+      await memoryManager.deleteMemory(oldId);
+
+      // Set old memory's deletedAt to >24 hours ago
+      const oldDate = new Date(Date.now() - 25 * 60 * 60 * 1000); // 25 hours ago
+      memoryManager.setDeletedAtForTest(oldId, oldDate);
+
+      // Verify both memories exist and are deleted before GC
+      let recentMemory = memoryManager.getMemoryForTest(recentId);
+      let oldMemory = memoryManager.getMemoryForTest(oldId);
+      expect(recentMemory).toBeDefined();
+      expect(recentMemory?.isDeleted).toBe(true);
+      expect(oldMemory).toBeDefined();
+      expect(oldMemory?.isDeleted).toBe(true);
+
+      // Verify deletedAt timestamps
+      expect(recentMemory?.deletedAt).toBeDefined();
+      expect(oldMemory?.deletedAt).toBeDefined();
+      if (recentMemory?.deletedAt && oldMemory?.deletedAt) {
+        expect(oldMemory.deletedAt.getTime()).toBeLessThan(
+          recentMemory.deletedAt.getTime()
+        );
+      }
+
+      // Run GC - should only remove old memory, keep recent one
       await memoryManager.performGarbageCollection();
 
-      // Memory should still exist (recent deletion)
-      // Verification in integration tests
-      expect(true).toBe(true); // Placeholder
+      // Recent memory should still exist (within 24 hours)
+      recentMemory = memoryManager.getMemoryForTest(recentId);
+      expect(recentMemory).toBeDefined();
+      expect(recentMemory?.isDeleted).toBe(true);
+
+      // Old memory should be completely removed (>24 hours old)
+      oldMemory = memoryManager.getMemoryForTest(oldId);
+      expect(oldMemory).toBeUndefined();
     });
 
     it('should handle empty collection gracefully', async () => {
@@ -345,34 +403,85 @@ describe('MemoryManager - Auto Cleanup (Task 3.3)', () => {
         if (result.success) ids.push(result.value);
       }
 
-      // Run optimization
-      await memoryManager.optimizeStorage();
-
-      // Importance scores should be updated
-      // Verification in integration tests
       expect(ids.length).toBe(5);
-    });
 
-    it('should compact memory if needed', async () => {
-      // Create and delete some memories
-      const result1 = await memoryManager.storeMemory({
-        content: 'Memory to delete',
-        metadata: {},
-      });
-      const result2 = await memoryManager.storeMemory({
-        content: 'Memory to keep',
-        metadata: {},
-      });
-
-      if (result1.success) {
-        await memoryManager.deleteMemory(result1.value);
+      // Verify initial importance scores (should be 0.0)
+      const initialMemories = memoryManager.getAllMemoriesForTest();
+      expect(initialMemories.length).toBe(5);
+      for (const memory of initialMemories) {
+        expect(memory.importanceScore).toBe(0.0);
+        expect(memory.accessCount).toBe(0);
       }
 
       // Run optimization
       await memoryManager.optimizeStorage();
 
-      // Storage should be optimized
-      expect(true).toBe(true); // Placeholder
+      // Verify importance scores are updated
+      const optimizedMemories = memoryManager.getAllMemoriesForTest();
+      expect(optimizedMemories.length).toBe(5);
+      for (const memory of optimizedMemories) {
+        // Based on optimizeStorage implementation:
+        // importanceScore = referenceScore * 0.6 + centralityScore * 0.4
+        // referenceScore = min(accessCount / 100, 1.0) = 0 (accessCount is 0)
+        // centralityScore = 0.5 (placeholder)
+        // importanceScore = 0 * 0.6 + 0.5 * 0.4 = 0.2
+        expect(memory.importanceScore).toBe(0.2);
+        expect(memory.isDeleted).toBe(false);
+      }
+    });
+
+    it('should compact memory if needed', async () => {
+      // Create memories - some to delete, some to keep
+      const deleteResult = await memoryManager.storeMemory({
+        content: 'Memory to delete (old)',
+        metadata: {},
+      });
+      const keepResult = await memoryManager.storeMemory({
+        content: 'Memory to keep',
+        metadata: {},
+      });
+
+      expect(deleteResult.success).toBe(true);
+      expect(keepResult.success).toBe(true);
+      if (!deleteResult.success || !keepResult.success) return;
+
+      const deleteId = deleteResult.value;
+      const keepId = keepResult.value;
+
+      // Soft delete the first memory
+      await memoryManager.deleteMemory(deleteId);
+
+      // Set deletedAt to >24 hours ago to make it eligible for GC
+      const oldDate = new Date(Date.now() - 25 * 60 * 60 * 1000); // 25 hours ago
+      memoryManager.setDeletedAtForTest(deleteId, oldDate);
+
+      // Verify initial state: 2 memories (1 deleted, 1 active)
+      let allMemories = memoryManager.getAllMemoriesForTest();
+      expect(allMemories.length).toBe(2);
+
+      const deletedMemory = allMemories.find((m) => m.id === deleteId);
+      const activeMemory = allMemories.find((m) => m.id === keepId);
+      expect(deletedMemory).toBeDefined();
+      expect(deletedMemory?.isDeleted).toBe(true);
+      expect(activeMemory).toBeDefined();
+      expect(activeMemory?.isDeleted).toBe(false);
+
+      // Run optimization (should update scores AND compact/GC)
+      await memoryManager.optimizeStorage();
+
+      // Verify compaction: old deleted memory should be removed
+      allMemories = memoryManager.getAllMemoriesForTest();
+      expect(allMemories.length).toBe(1);
+
+      // Only the kept memory should remain
+      const remainingMemory = allMemories[0];
+      expect(remainingMemory.id).toBe(keepId);
+      expect(remainingMemory.isDeleted).toBe(false);
+      expect(remainingMemory.importanceScore).toBe(0.2); // Updated by optimization
+
+      // Deleted memory should be completely gone
+      const deletedAfterGC = memoryManager.getMemoryForTest(deleteId);
+      expect(deletedAfterGC).toBeUndefined();
     });
 
     it('should handle optimization errors gracefully', async () => {
