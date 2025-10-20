@@ -666,12 +666,25 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
     );
 
     // 基本検索結果を取得
-    const baseResults: VectorSearchResult[] = result.rows.map(row => ({
-      id: row.id,
-      content: row.content,
-      similarity: parseFloat(row.similarity),
-      metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata,
-    }));
+    const baseResults: VectorSearchResult[] = result.rows.map(row => {
+      // metadataをパース（文字列の場合はJSON.parse）
+      const parsedMetadata =
+        typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata;
+
+      // metadata.timestampが未設定の場合、created_atをフォールバックとして使用
+      // recency計算とタイブレークソートで一貫して使用される
+      const metadata = {
+        ...parsedMetadata,
+        timestamp: parsedMetadata.timestamp ?? new Date(row.created_at).toISOString(),
+      };
+
+      return {
+        id: row.id,
+        content: row.content,
+        similarity: parseFloat(row.similarity),
+        metadata,
+      };
+    });
 
     // スコアリング戦略を適用
     const enhancedResults: EnhancedSearchResult[] = baseResults.map(result => {
