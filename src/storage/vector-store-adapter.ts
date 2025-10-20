@@ -595,8 +595,9 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
 
     // 除外IDフィルタ
     if (excludeIds.length > 0) {
-      whereConditions.push(`m.id != ALL($${paramIndex})`);
-      queryParams.push(excludeIds);
+      // NOT (m.id = ANY(...)) 形式を使用し、uuid[]型を明示的にキャスト
+      whereConditions.push(`NOT (m.id = ANY($${paramIndex}::uuid[]))`);
+      queryParams.push(excludeIds); // UUID文字列の配列をそのまま渡す
       paramIndex++;
     }
 
