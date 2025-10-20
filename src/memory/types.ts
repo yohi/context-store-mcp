@@ -22,11 +22,12 @@ export type Result<T, E> =
   | { success: false; error: E };
 
 // Memory metadata structure
+// Note: memoryType is stored at top-level Memory.memoryType, not in metadata
+// to maintain single source of truth and prevent drift
 export interface MemoryMetadata {
   source?: string;
   timestamp?: Date;
   tags?: string[];
-  memoryType?: MemoryType;
   userId?: string;
   projectId?: string;
 }
@@ -50,15 +51,32 @@ export interface Memory {
 // Parameters for storing a new memory
 export interface StoreMemoryParams {
   content: string;
+  memoryType?: MemoryType; // Optional, defaults to 'semantic'
   metadata?: MemoryMetadata;
 }
+
+// Parameters for updating an existing memory
+// Excludes immutable fields (id, createdAt) and system-managed fields
+// (updatedAt, lastAccessedAt, accessCount) to prevent modification
+export type UpdateMemoryParams = Partial<
+  Pick<
+    Memory,
+    | 'content'
+    | 'memoryType'
+    | 'metadata'
+    | 'importanceScore'
+    | 'isDeleted'
+    | 'isProtected'
+    | 'deletedAt'
+  >
+>;
 
 // Memory Manager service interface
 export interface MemoryManagerService {
   storeMemory(params: StoreMemoryParams): Promise<Result<MemoryId, MemoryError>>;
   updateMemory(
     id: MemoryId,
-    updates: Partial<Memory>
+    updates: UpdateMemoryParams
   ): Promise<Result<boolean, MemoryError>>;
   deleteMemory(id: MemoryId): Promise<Result<boolean, MemoryError>>;
   mergeMemories(ids: MemoryId[]): Promise<Result<MemoryId, MemoryError>>;

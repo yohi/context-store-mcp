@@ -75,11 +75,11 @@
   - [ ] 類似記憶の自動検出 - 未実装
   - [x] ID指定による統合（mergeMemories）
   - [x] 関連性の維持機構（タグのマージ、コンテンツ結合）
-  - [ ] 不要データの自動整理（performGarbageCollection）- 未実装
+  - [x] 不要データの自動整理（performGarbageCollection）- **タスク3.3で実装完了**
   - [x] インメモリストレージ実装（PostgreSQL統合は後続タスク）
   - [x] 基本ユニットテスト35件パス
   - _Requirements: 1.3, 1.4, 1.5_
-  - **TODO**: Issue作成 - バージョン履歴、類似性検出、GC実装
+  - **TODO**: Issue作成 - バージョン履歴、類似性検出
 
 - [x] 3.3 ストレージ自動整理システムの実装
   - ガベージコレクション機能（24時間以上前のソフト削除記憶を物理削除）
@@ -101,16 +101,17 @@
   - 分類信頼度の算出
   - _Requirements: 3.1, 3.2, 3.3, 3.4_
 
-- [x] 4.2 分類精度の測定と改善システム
-  - 評価データセットの管理（LabeledSample型）
-  - 分類精度の測定ロジック（evaluateAccuracy）
-  - 混同行列（Confusion Matrix）の計算
-  - 全体精度とタイプ別精度の算出
-  - ユーザーフィードバックの収集（ClassificationStats）
-  - 分類モデルの学習機構（trainClassifier、プレースホルダー実装）
-  - 精度レポート生成（AccuracyMetrics、ClassificationStats）
-  - 13ユニットテスト全パス
+- [ ] 4.2 分類精度の測定と改善システム **[部分実装]**
+  - [x] 評価データセットの管理（LabeledSample型）
+  - [x] 分類精度の測定ロジック（evaluateAccuracy）
+  - [x] 混同行列（Confusion Matrix）の計算
+  - [x] 全体精度とタイプ別精度の算出
+  - [x] ユーザーフィードバックの収集（ClassificationStats）
+  - [ ] 分類モデルの学習機構（trainClassifier） - プレースホルダー実装のみ → **Issue #22**
+  - [x] 精度レポート生成（AccuracyMetrics、ClassificationStats）
+  - [x] 13ユニットテスト全パス
   - _Requirements: 3.4_
+  - **TODO**: [Issue #22](https://github.com/yohi/context-store-mcp/issues/22) - trainClassifierの完全実装（機械学習モデルの統合）
 
 - [x] 4.3 記憶タイプ間の関連付けと管理
   - タイプ間リンクの生成と維持

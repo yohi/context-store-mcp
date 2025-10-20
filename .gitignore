@@ -41,8 +41,12 @@ temp/
 # Docker volumes (persistent data should not be committed)
 docker/volumes/
 
-# Backup files (excluding init scripts)
-*.sql.bak
-*.dump.bak
-backup.*
+# Backup files (narrow exclusion to backup directories only)
+# Allow legitimate SQL/dump files in repository (migrations, init scripts)
 !docker/init-scripts/**/*.sql
+!migrations/**/*.sql
+backup.*
+**/backups/**/*.sql
+**/backups/**/*.dump
+**/dumps/**/*.sql
+**/dumps/**/*.dump

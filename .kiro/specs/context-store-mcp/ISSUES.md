@@ -98,14 +98,24 @@
   - `isProtected = true` の記憶は除外
 - [ ] ストレージ使用率の監視
   ```typescript
+  // 環境変数 DB_SIZE_LIMIT_BYTES からデータベースサイズの上限を読み取る
+  // 例: DB_SIZE_LIMIT_BYTES=10737418240 (10GB)
   async function getStorageUsageRatio(): Promise<number> {
+    const limitBytes = process.env.DB_SIZE_LIMIT_BYTES;
+    if (!limitBytes || isNaN(Number(limitBytes)) || Number(limitBytes) <= 0 || !isFinite(Number(limitBytes))) {
+      throw new Error('DB_SIZE_LIMIT_BYTES must be a positive finite number');
+    }
+    const limit = Number(limitBytes);
+
     const result = await db.query(`
-      SELECT pg_database_size(current_database()) as used,
-             current_setting('block_size')::bigint * pg_database.datallowconn as max
-      FROM pg_database WHERE datname = current_database()
+      SELECT pg_database_size(current_database()) as used
     `);
-    return result.rows[0].used / result.rows[0].max;
+    const used = Number(result.rows[0].used);
+
+    return used / limit;
   }
+  // 注: テーブルスペースレベルやテーブルレベルのサイズを使用する場合は
+  // pg_tablespace_size() や pg_total_relation_size() を使用できます
   ```
 - [ ] 重要度スコアに基づく自動削除
   - `importanceScore < 0.3` かつ `lastAccessedAt < NOW() - INTERVAL '30 days'`

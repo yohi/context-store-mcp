@@ -73,6 +73,12 @@ export class PerformanceMetrics {
    * @param latency レイテンシ（ミリ秒）
    */
   recordLatency(operationName: string, latency: number): void {
+    // Defensive validation: ignore invalid latency values
+    // This prevents NaN, Infinity, or negative values from corrupting metrics
+    if (!Number.isFinite(latency) || latency < 0) {
+      return;
+    }
+
     const stats = this.getOrCreateStats(operationName);
     const timestamp = Date.now();
 
@@ -213,16 +219,22 @@ export class PerformanceMetrics {
   }
 
   /**
-   * オペレーションのスループットを取得（リクエスト/秒）
+   * オペレーションのスループットを取得（リクエスト/秒）【破壊的】
    *
    * NOTE: このメソッドは指定されたウィンドウ期間外の古いタイムスタンプを
-   * 自動的に削除してメモリ使用量を削減します。
+   * 自動的に削除してメモリ使用量を削減します（破壊的操作）。
+   * メトリクスのエクスポートなど読み取り専用の用途には peekThroughput() を使用してください。
    *
    * @param operationName オペレーション名
    * @param windowMs ウィンドウ期間（ミリ秒）デフォルト: 1000ms (1秒)
    * @returns スループット（req/sec）
    */
   getThroughput(operationName: string, windowMs = 1000): number {
+    // windowMsの妥当性チェック
+    if (!Number.isFinite(windowMs) || windowMs <= 0) {
+      return 0;
+    }
+
     const stats = this.operations.get(operationName);
     if (!stats || stats.timestamps.length === 0) {
       return 0;
@@ -233,6 +245,36 @@ export class PerformanceMetrics {
 
     // ウィンドウ期間内のリクエスト数を取得
     const requestsInWindow = stats.timestamps.length;
+
+    // req/sec に変換
+    return (requestsInWindow / windowMs) * 1000;
+  }
+
+  /**
+   * スループット（req/sec）を取得（非破壊的）
+   * exportMetrics用の読み取り専用メソッド
+   *
+   * @param operationName オペレーション名
+   * @param windowMs ウィンドウ期間（ミリ秒）デフォルト: 1000ms (1秒)
+   * @returns スループット（req/sec）
+   */
+  peekThroughput(operationName: string, windowMs = 1000): number {
+    // windowMsの妥当性チェック
+    if (!Number.isFinite(windowMs) || windowMs <= 0) {
+      return 0;
+    }
+
+    const stats = this.operations.get(operationName);
+    if (!stats || stats.timestamps.length === 0) {
+      return 0;
+    }
+
+    // 非破壊的にウィンドウ期間内のタイムスタンプをカウント
+    const now = Date.now();
+    const windowStart = now - windowMs;
+    const requestsInWindow = stats.timestamps.filter(
+      (timestamp) => timestamp >= windowStart
+    ).length;
 
     // req/sec に変換
     return (requestsInWindow / windowMs) * 1000;
@@ -275,7 +317,7 @@ export class PerformanceMetrics {
         p95Latency: this.getP95Latency(operationName),
         p99Latency: this.getP99Latency(operationName),
         errorRate,
-        throughput: this.getThroughput(operationName),
+        throughput: this.peekThroughput(operationName),
         lastUpdated: Date.now(),
       };
     }
