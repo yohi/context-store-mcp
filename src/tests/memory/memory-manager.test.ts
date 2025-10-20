@@ -207,6 +207,62 @@ describe('MemoryManager - Basic Functionality (Task 3.1)', () => {
 
       expect(result.success).toBe(true);
     });
+
+    it('should prefer top-level memoryType over metadata.memoryType', async () => {
+      const params: StoreMemoryParams = {
+        content: 'Test memory type precedence',
+        memoryType: 'episodic', // Top-level memoryType
+        metadata: {
+          memoryType: 'procedural' as any, // This should be ignored
+        },
+      };
+
+      const result = await memoryManager.storeMemory(params);
+      expect(result.success).toBe(true);
+
+      if (result.success) {
+        const memory = memoryManager.getMemoryForTest(result.value);
+        expect(memory).toBeDefined();
+        expect(memory?.memoryType).toBe('episodic'); // Should use top-level value
+        expect(memory?.metadata.memoryType).toBeUndefined(); // Should be removed from metadata
+      }
+    });
+
+    it('should use metadata.memoryType when top-level is not provided', async () => {
+      const params: StoreMemoryParams = {
+        content: 'Test fallback to metadata memoryType',
+        // No top-level memoryType
+        metadata: {
+          memoryType: 'procedural' as any,
+        },
+      };
+
+      const result = await memoryManager.storeMemory(params);
+      expect(result.success).toBe(true);
+
+      if (result.success) {
+        const memory = memoryManager.getMemoryForTest(result.value);
+        expect(memory).toBeDefined();
+        expect(memory?.memoryType).toBe('procedural'); // Should fall back to metadata value
+        expect(memory?.metadata.memoryType).toBeUndefined(); // Should still be removed from metadata
+      }
+    });
+
+    it('should default to semantic when neither top-level nor metadata memoryType provided', async () => {
+      const params: StoreMemoryParams = {
+        content: 'Test default memoryType',
+        // No memoryType at all
+      };
+
+      const result = await memoryManager.storeMemory(params);
+      expect(result.success).toBe(true);
+
+      if (result.success) {
+        const memory = memoryManager.getMemoryForTest(result.value);
+        expect(memory).toBeDefined();
+        expect(memory?.memoryType).toBe('semantic'); // Should default to semantic
+      }
+    });
   });
 
   describe('ID Generation', () => {
@@ -583,6 +639,25 @@ describe('MemoryManager - Update, Delete, Merge (Task 3.2)', () => {
 
       expect(result.success).toBe(true);
       // Metadata should remain unchanged - verify in integration tests
+    });
+
+    it('should remove memoryType from metadata to maintain single source of truth', async () => {
+      // Update memory with metadata containing memoryType
+      const result = await memoryManager.updateMemory(storedMemoryId, {
+        metadata: {
+          tags: ['test'],
+          memoryType: 'episodic' as any, // TypeScript doesn't allow this, but test runtime behavior
+        },
+      });
+
+      expect(result.success).toBe(true);
+
+      // Verify that metadata.memoryType was removed
+      const memory = memoryManager.getMemoryForTest(storedMemoryId);
+      expect(memory).toBeDefined();
+      expect(memory?.metadata).toBeDefined();
+      expect(memory?.metadata.memoryType).toBeUndefined(); // Must be removed
+      expect(memory?.metadata.tags).toEqual(['test']); // Other metadata should remain
     });
   });
 
@@ -1486,6 +1561,38 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
       memory = memoryManager.getMemoryForTest(episodicMemoryId);
       expect(memory?.memoryType).toBe('procedural');
       expect(memory?.metadata.memoryType).toBeUndefined();
+    });
+
+    it('should remove metadata.memoryType if it exists before override', async () => {
+      // Create a memory with metadata.memoryType (simulate legacy data)
+      const params: StoreMemoryParams = {
+        content: 'Test memory with metadata.memoryType',
+        memoryType: 'episodic',
+        metadata: {
+          memoryType: 'semantic' as any, // This should be removed
+          tags: ['test'],
+        },
+      };
+
+      const storeResult = await memoryManager.storeMemory(params);
+      expect(storeResult.success).toBe(true);
+
+      if (storeResult.success) {
+        const memoryId = storeResult.value;
+
+        // Verify metadata.memoryType was removed during store
+        let memory = memoryManager.getMemoryForTest(memoryId);
+        expect(memory?.metadata.memoryType).toBeUndefined();
+
+        // Override the type
+        await memoryManager.overrideMemoryType(memoryId, 'procedural');
+
+        // Verify metadata.memoryType is still undefined after override
+        memory = memoryManager.getMemoryForTest(memoryId);
+        expect(memory?.memoryType).toBe('procedural');
+        expect(memory?.metadata.memoryType).toBeUndefined();
+        expect(memory?.metadata.tags).toEqual(['test']); // Other metadata should remain
+      }
     });
   });
 });

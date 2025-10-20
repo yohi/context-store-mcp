@@ -118,14 +118,31 @@ export class MemoryClassifier implements MemoryClassifierService {
 
     scores.sort((a, b) => b.score - a.score);
 
-    const primaryType = scores[0].type;
-    const confidence = scores[0].score;
+    // scores[0] は常に存在する（3つの要素を持つ配列）
+    const { type: primaryType, score: confidence } = scores[0]!;
 
-    // 代替タイプの提案（主要タイプ以外の上位2つ）
-    const suggestedTypes = scores.slice(1).map((s) => ({
-      type: s.type,
-      confidence: s.score,
-    }));
+    // 低信頼度(<0.6)は仕様通り semantic へフォールバック
+    if (confidence < 0.6) {
+      const fallback = this.createLowConfidenceClassification();
+      // 透過性のため検出情報を引き継ぐ
+      fallback.features = {
+        ruleBasedScore: features.ruleBasedScore,
+        embeddingScore: features.embeddingScore,
+        detectedKeywords: features.detectedKeywords,
+      };
+      this.classificationHistory.push({
+        content,
+        classification: fallback,
+        timestamp: new Date(),
+      });
+      return fallback;
+    }
+
+    // 推奨タイプはしきい値(>=0.6)のみ提示
+    const suggestedTypes = scores
+      .slice(1)
+      .filter((s) => s.score >= 0.6)
+      .map((s) => ({ type: s.type, confidence: s.score }));
 
     const classification: MemoryClassification = {
       primaryType,

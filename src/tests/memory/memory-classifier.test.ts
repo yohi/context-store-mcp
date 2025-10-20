@@ -118,6 +118,19 @@ describe('MemoryClassifier', () => {
 
       expect(result.confidence).toBeLessThan(0.6);
     });
+
+    it('should fallback to semantic type for low confidence (< 0.6)', async () => {
+      const content = 'あいうえお。'; // 意味不明なコンテンツ
+      const result = await classifier.classifyContent(content);
+
+      // 低信頼度はsemanticにフォールバック
+      expect(result.confidence).toBeLessThan(0.6);
+      expect(result.primaryType).toBe('semantic');
+
+      // 検出情報は保持される（透過性のため）
+      expect(result.features).toBeDefined();
+      expect(result.features.ruleBasedScore).toBeGreaterThanOrEqual(0);
+    });
   });
 
   describe('代替タイプの提案', () => {
@@ -125,18 +138,35 @@ describe('MemoryClassifier', () => {
       const content = 'APIの使い方を説明した。';
       const result = await classifier.classifyContent(content);
 
-      expect(result.suggestedTypes).toHaveLength(2);
-      expect(result.suggestedTypes[0].confidence).toBeGreaterThanOrEqual(
-        result.suggestedTypes[1].confidence
-      );
+      // 新仕様: 0.6以上のスコアのみが提案される
+      // suggestedTypesは0個以上（全て0.6未満の場合は空配列）
+      expect(result.suggestedTypes.length).toBeGreaterThanOrEqual(0);
+
+      // 提案がある場合、信頼度順にソートされていることを確認
+      if (result.suggestedTypes.length >= 2) {
+        expect(result.suggestedTypes[0].confidence).toBeGreaterThanOrEqual(
+          result.suggestedTypes[1].confidence
+        );
+      }
+
+      // 全ての提案は0.6以上のスコアを持つ
+      result.suggestedTypes.forEach((suggestion) => {
+        expect(suggestion.confidence).toBeGreaterThanOrEqual(0.6);
+      });
     });
 
-    it('should include all three memory types in suggestions', async () => {
+    it('should only include types with confidence >= 0.6 in suggestions', async () => {
       const content = 'プロジェクトの要件について。';
       const result = await classifier.classifyContent(content);
 
+      // 新仕様: 0.6未満のスコアは除外される
+      result.suggestedTypes.forEach((suggestion) => {
+        expect(suggestion.confidence).toBeGreaterThanOrEqual(0.6);
+      });
+
+      // 主要タイプは含まれない
       const types = result.suggestedTypes.map((s: { type: MemoryType }) => s.type);
-      expect(types).toHaveLength(2); // 主要タイプ以外の2つ
+      expect(types).not.toContain(result.primaryType);
     });
   });
 

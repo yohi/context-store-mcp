@@ -50,15 +50,16 @@ export class MemoryManager implements MemoryManagerService {
     // Auto-generate timestamps
     const timestamps = this.createTimestamps();
 
-    // Normalize memoryType: prefer top-level, drop from metadata to avoid drift
-    const { memoryType: metadataType, ...metadataWithoutType } = processedMetadata;
+    // Normalize memoryType: prefer top-level params.memoryType, then metadata.memoryType, finally default to 'semantic'
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { memoryType: metadataType, ...metadataWithoutType } = processedMetadata as MemoryMetadata & { memoryType?: MemoryType };
 
     // Create memory entity
     // memoryType is now exclusively managed at top-level (single source of truth)
     const memory: Memory = {
       id: memoryId,
       content: params.content,
-      memoryType: metadataType || 'semantic', // Default to semantic
+      memoryType: params.memoryType || metadataType || 'semantic', // Prefer params.memoryType, then metadata, then default
       metadata: metadataWithoutType,
       ...timestamps,
       accessCount: 0,
@@ -108,10 +109,14 @@ export class MemoryManager implements MemoryManagerService {
       }
     }
 
-    // Normalize metadata if being updated
-    const normalizedMetadata = updates.metadata !== undefined
-      ? this.processMetadata(updates.metadata)
-      : undefined;
+    // Normalize metadata if being updated, removing memoryType to maintain single source of truth
+    let normalizedMetadata: MemoryMetadata | undefined = undefined;
+    if (updates.metadata !== undefined) {
+      const processed = this.processMetadata(updates.metadata);
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { memoryType: _ignore, ...withoutType } = processed as MemoryMetadata & { memoryType?: MemoryType };
+      normalizedMetadata = withoutType;
+    }
 
     // Create updated memory, filtering out protected fields
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -263,7 +268,7 @@ export class MemoryManager implements MemoryManagerService {
       metadata: {
         tags: Array.from(allTags).sort(), // Sorted for stable ordering
         source: 'merged',
-        memoryType: memories[0]?.memoryType || 'semantic', // Use first memory's type (will be extracted to top-level)
+        // Note: memoryType is managed at top-level only (single source of truth)
       },
     };
 
@@ -705,9 +710,14 @@ export class MemoryManager implements MemoryManagerService {
     }
 
     // Update memory type (single source of truth: top-level memoryType only)
+    // Remove memoryType from metadata to maintain single source of truth
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { memoryType: _ignore, ...metadataWithoutType } = memory.metadata as MemoryMetadata & { memoryType?: MemoryType };
+
     const updated: Memory = {
       ...memory,
       memoryType: newType,
+      metadata: metadataWithoutType, // Ensure metadata.memoryType is removed
       updatedAt: new Date(),
     };
 
