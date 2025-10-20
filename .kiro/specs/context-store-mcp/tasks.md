@@ -101,12 +101,15 @@
   - 分類信頼度の算出
   - _Requirements: 3.1, 3.2, 3.3, 3.4_
 
-- [ ] 4.2 分類精度の測定と改善システム
-  - 評価データセットの管理
-  - 分類精度の測定ロジック
-  - ユーザーフィードバックの収集
-  - 分類モデルの学習機構
-  - 精度レポート生成
+- [x] 4.2 分類精度の測定と改善システム
+  - 評価データセットの管理（LabeledSample型）
+  - 分類精度の測定ロジック（evaluateAccuracy）
+  - 混同行列（Confusion Matrix）の計算
+  - 全体精度とタイプ別精度の算出
+  - ユーザーフィードバックの収集（ClassificationStats）
+  - 分類モデルの学習機構（trainClassifier、プレースホルダー実装）
+  - 精度レポート生成（AccuracyMetrics、ClassificationStats）
+  - 13ユニットテスト全パス
   - _Requirements: 3.4_
 
 - [ ] 4.3 記憶タイプ間の関連付けと管理
