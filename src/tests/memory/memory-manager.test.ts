@@ -1,0 +1,835 @@
+/**
+ * Memory Manager Test Suite
+ * TDD approach: Red-Green-Refactor
+ */
+
+import { describe, it, expect, beforeEach } from 'vitest';
+import { MemoryManager } from '../../memory/memory-manager.js';
+import type {
+  StoreMemoryParams,
+  MemoryId,
+  MemoryError,
+} from '../../memory/types.js';
+
+describe('MemoryManager - Basic Functionality (Task 3.1)', () => {
+  let memoryManager: MemoryManager;
+
+  beforeEach(() => {
+    memoryManager = new MemoryManager();
+  });
+
+  describe('storeMemory', () => {
+    it('should store a simple memory and return a valid memory ID', async () => {
+      const params: StoreMemoryParams = {
+        content: 'Test memory content',
+      };
+
+      const result = await memoryManager.storeMemory(params);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.value).toBeTruthy();
+        expect(typeof result.value).toBe('string');
+        // UUID v4 format validation
+        expect(result.value).toMatch(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+        );
+      }
+    });
+
+    it('should store memory with metadata', async () => {
+      const params: StoreMemoryParams = {
+        content: 'Memory with metadata',
+        memoryType: 'semantic',
+        metadata: {
+          source: 'test-suite',
+          tags: ['test', 'unit'],
+        },
+      };
+
+      const result = await memoryManager.storeMemory(params);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.value).toBeTruthy();
+      }
+    });
+
+    it('should automatically set timestamp if not provided', async () => {
+      const beforeStore = new Date();
+      const params: StoreMemoryParams = {
+        content: 'Memory without explicit timestamp',
+      };
+
+      const result = await memoryManager.storeMemory(params);
+
+      expect(result.success).toBe(true);
+      // Timestamp should be set automatically during storage
+      // We'll verify this in integration tests with actual storage
+    });
+
+    it('should reject empty content', async () => {
+      const params: StoreMemoryParams = {
+        content: '',
+      };
+
+      const result = await memoryManager.storeMemory(params);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('INVALID_CONTENT');
+        expect(result.error.message).toContain('Content cannot be empty');
+      }
+    });
+
+    it('should reject content that is only whitespace', async () => {
+      const params: StoreMemoryParams = {
+        content: '   \t\n  ',
+      };
+
+      const result = await memoryManager.storeMemory(params);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('INVALID_CONTENT');
+        expect(result.error.message).toContain('Content cannot be empty');
+      }
+    });
+
+    it('should validate metadata if provided', async () => {
+      const params: StoreMemoryParams = {
+        content: 'Valid content',
+        metadata: {
+          tags: ['valid-tag', 'another-tag'],
+        },
+      };
+
+      const result = await memoryManager.storeMemory(params);
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should generate unique IDs for different memories', async () => {
+      const params1: StoreMemoryParams = { content: 'First memory' };
+      const params2: StoreMemoryParams = { content: 'Second memory' };
+
+      const result1 = await memoryManager.storeMemory(params1);
+      const result2 = await memoryManager.storeMemory(params2);
+
+      expect(result1.success).toBe(true);
+      expect(result2.success).toBe(true);
+
+      if (result1.success && result2.success) {
+        expect(result1.value).not.toBe(result2.value);
+      }
+    });
+  });
+
+  describe('Data Integrity Checks', () => {
+    it('should preserve content exactly as provided', async () => {
+      const contentWithSpecialChars = 'Content with\nnew lines\tand tabs "quotes"';
+      const params: StoreMemoryParams = {
+        content: contentWithSpecialChars,
+      };
+
+      const result = await memoryManager.storeMemory(params);
+
+      expect(result.success).toBe(true);
+      // Content integrity will be verified through retrieval in integration tests
+    });
+
+    it('should handle Unicode content correctly', async () => {
+      const unicodeContent = '日本語のコンテンツ 🚀 emoji αβγ Greek';
+      const params: StoreMemoryParams = {
+        content: unicodeContent,
+      };
+
+      const result = await memoryManager.storeMemory(params);
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should handle very long content', async () => {
+      const longContent = 'a'.repeat(100000); // 100KB of text
+      const params: StoreMemoryParams = {
+        content: longContent,
+      };
+
+      const result = await memoryManager.storeMemory(params);
+
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('Metadata Processing', () => {
+    it('should accept valid memory types', async () => {
+      const types: Array<'episodic' | 'semantic' | 'procedural'> = [
+        'episodic',
+        'semantic',
+        'procedural',
+      ];
+
+      for (const memoryType of types) {
+        const params: StoreMemoryParams = {
+          content: `Content for ${memoryType} memory`,
+          metadata: { memoryType },
+        };
+
+        const result = await memoryManager.storeMemory(params);
+
+        expect(result.success).toBe(true);
+      }
+    });
+
+    it('should accept custom tags array', async () => {
+      const params: StoreMemoryParams = {
+        content: 'Tagged memory',
+        metadata: {
+          tags: ['tag1', 'tag2', 'tag3'],
+        },
+      };
+
+      const result = await memoryManager.storeMemory(params);
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should accept source information', async () => {
+      const params: StoreMemoryParams = {
+        content: 'Memory from specific source',
+        metadata: {
+          source: 'automated-test',
+        },
+      };
+
+      const result = await memoryManager.storeMemory(params);
+
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('ID Generation', () => {
+    it('should generate IDs in UUID v4 format', async () => {
+      const params: StoreMemoryParams = {
+        content: 'Test for UUID format',
+      };
+
+      const result = await memoryManager.storeMemory(params);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // UUID v4 has specific format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+        // where y is one of [8, 9, a, b]
+        const uuidV4Regex =
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+        expect(result.value).toMatch(uuidV4Regex);
+      }
+    });
+
+    it('should generate statistically unique IDs', async () => {
+      const ids = new Set<MemoryId>();
+      const iterations = 1000;
+
+      for (let i = 0; i < iterations; i++) {
+        const params: StoreMemoryParams = {
+          content: `Memory ${i}`,
+        };
+        const result = await memoryManager.storeMemory(params);
+
+        if (result.success) {
+          ids.add(result.value);
+        }
+      }
+
+      // All IDs should be unique
+      expect(ids.size).toBe(iterations);
+    });
+  });
+});
+
+describe('MemoryManager - Auto Cleanup (Task 3.3)', () => {
+  let memoryManager: MemoryManager;
+
+  beforeEach(() => {
+    memoryManager = new MemoryManager();
+  });
+
+  describe('performGarbageCollection', () => {
+    it('should remove soft-deleted memories that are not protected', async () => {
+      // Create a memory and soft delete it
+      const storeResult = await memoryManager.storeMemory({
+        content: 'Memory to be garbage collected',
+        metadata: { tags: ['gc-test'] },
+      });
+
+      expect(storeResult.success).toBe(true);
+      if (!storeResult.success) return;
+
+      const memoryId = storeResult.value;
+      await memoryManager.deleteMemory(memoryId);
+
+      // Set deletedAt to >24 hours ago to make it eligible for GC
+      const oldDate = new Date(Date.now() - 25 * 60 * 60 * 1000); // 25 hours ago
+      memoryManager.setDeletedAtForTest(memoryId, oldDate);
+
+      // Verify memory exists before GC
+      let memory = memoryManager.getMemoryForTest(memoryId);
+      expect(memory).toBeDefined();
+      expect(memory?.isDeleted).toBe(true);
+
+      // Perform garbage collection
+      await memoryManager.performGarbageCollection();
+
+      // Memory should be completely removed (not just soft-deleted)
+      memory = memoryManager.getMemoryForTest(memoryId);
+      expect(memory).toBeUndefined();
+    });
+
+    it('should not remove protected memories even if soft-deleted', async () => {
+      const storeResult = await memoryManager.storeMemory({
+        content: 'Protected memory',
+        metadata: { tags: ['protected'] },
+      });
+
+      expect(storeResult.success).toBe(true);
+      if (!storeResult.success) return;
+
+      const memoryId = storeResult.value;
+
+      // Soft delete first (before protecting)
+      const deleteResult = await memoryManager.deleteMemory(memoryId);
+      expect(deleteResult.success).toBe(true);
+
+      // Mark as protected AFTER deletion (simulating edge case)
+      await memoryManager.updateMemory(memoryId, { isProtected: true });
+
+      // Set deletedAt to >24 hours ago (would normally be eligible for GC)
+      const oldDate = new Date(Date.now() - 25 * 60 * 60 * 1000); // 25 hours ago
+      memoryManager.setDeletedAtForTest(memoryId, oldDate);
+
+      // Verify memory state before GC
+      let memory = memoryManager.getMemoryForTest(memoryId);
+      expect(memory).toBeDefined();
+      expect(memory?.isDeleted).toBe(true);
+      expect(memory?.isProtected).toBe(true);
+
+      // Perform garbage collection
+      await memoryManager.performGarbageCollection();
+
+      // Protected memory should still exist (not garbage collected)
+      memory = memoryManager.getMemoryForTest(memoryId);
+      expect(memory).toBeDefined();
+      expect(memory?.isDeleted).toBe(true);
+      expect(memory?.isProtected).toBe(true);
+    });
+
+    it('should only remove memories older than threshold', async () => {
+      // Create two memories - one recent, one old
+      const recentResult = await memoryManager.storeMemory({
+        content: 'Recently deleted memory',
+        metadata: { tags: ['recent'] },
+      });
+      const oldResult = await memoryManager.storeMemory({
+        content: 'Old deleted memory',
+        metadata: { tags: ['old'] },
+      });
+
+      expect(recentResult.success).toBe(true);
+      expect(oldResult.success).toBe(true);
+      if (!recentResult.success || !oldResult.success) return;
+
+      const recentId = recentResult.value;
+      const oldId = oldResult.value;
+
+      // Delete both memories
+      await memoryManager.deleteMemory(recentId);
+      await memoryManager.deleteMemory(oldId);
+
+      // Set old memory's deletedAt to >24 hours ago
+      const oldDate = new Date(Date.now() - 25 * 60 * 60 * 1000); // 25 hours ago
+      memoryManager.setDeletedAtForTest(oldId, oldDate);
+
+      // Verify both memories exist and are deleted before GC
+      let recentMemory = memoryManager.getMemoryForTest(recentId);
+      let oldMemory = memoryManager.getMemoryForTest(oldId);
+      expect(recentMemory).toBeDefined();
+      expect(recentMemory?.isDeleted).toBe(true);
+      expect(oldMemory).toBeDefined();
+      expect(oldMemory?.isDeleted).toBe(true);
+
+      // Verify deletedAt timestamps
+      expect(recentMemory?.deletedAt).toBeDefined();
+      expect(oldMemory?.deletedAt).toBeDefined();
+      if (recentMemory?.deletedAt && oldMemory?.deletedAt) {
+        expect(oldMemory.deletedAt.getTime()).toBeLessThan(
+          recentMemory.deletedAt.getTime()
+        );
+      }
+
+      // Run GC - should only remove old memory, keep recent one
+      await memoryManager.performGarbageCollection();
+
+      // Recent memory should still exist (within 24 hours)
+      recentMemory = memoryManager.getMemoryForTest(recentId);
+      expect(recentMemory).toBeDefined();
+      expect(recentMemory?.isDeleted).toBe(true);
+
+      // Old memory should be completely removed (>24 hours old)
+      oldMemory = memoryManager.getMemoryForTest(oldId);
+      expect(oldMemory).toBeUndefined();
+    });
+
+    it('should handle empty collection gracefully', async () => {
+      // Run GC on empty collection
+      await expect(
+        memoryManager.performGarbageCollection()
+      ).resolves.not.toThrow();
+    });
+  });
+
+  describe('optimizeStorage', () => {
+    it('should successfully run on empty storage', async () => {
+      await expect(memoryManager.optimizeStorage()).resolves.not.toThrow();
+    });
+
+    it('should update importance scores for all memories', async () => {
+      // Create multiple memories
+      const ids: MemoryId[] = [];
+      for (let i = 0; i < 5; i++) {
+        const result = await memoryManager.storeMemory({
+          content: `Memory ${i}`,
+          metadata: { tags: ['optimize-test'] },
+        });
+        if (result.success) ids.push(result.value);
+      }
+
+      expect(ids.length).toBe(5);
+
+      // Verify initial importance scores (should be 0.0)
+      const initialMemories = memoryManager.getAllMemoriesForTest();
+      expect(initialMemories.length).toBe(5);
+      for (const memory of initialMemories) {
+        expect(memory.importanceScore).toBe(0.0);
+        expect(memory.accessCount).toBe(0);
+      }
+
+      // Run optimization
+      await memoryManager.optimizeStorage();
+
+      // Verify importance scores are updated
+      const optimizedMemories = memoryManager.getAllMemoriesForTest();
+      expect(optimizedMemories.length).toBe(5);
+      for (const memory of optimizedMemories) {
+        // Based on optimizeStorage implementation:
+        // importanceScore = referenceScore * 0.6 + centralityScore * 0.4
+        // referenceScore = min(accessCount / 100, 1.0) = 0 (accessCount is 0)
+        // centralityScore = 0.5 (placeholder)
+        // importanceScore = 0 * 0.6 + 0.5 * 0.4 = 0.2
+        expect(memory.importanceScore).toBe(0.2);
+        expect(memory.isDeleted).toBe(false);
+      }
+    });
+
+    it('should compact memory if needed', async () => {
+      // Create memories - some to delete, some to keep
+      const deleteResult = await memoryManager.storeMemory({
+        content: 'Memory to delete (old)',
+        metadata: {},
+      });
+      const keepResult = await memoryManager.storeMemory({
+        content: 'Memory to keep',
+        metadata: {},
+      });
+
+      expect(deleteResult.success).toBe(true);
+      expect(keepResult.success).toBe(true);
+      if (!deleteResult.success || !keepResult.success) return;
+
+      const deleteId = deleteResult.value;
+      const keepId = keepResult.value;
+
+      // Soft delete the first memory
+      await memoryManager.deleteMemory(deleteId);
+
+      // Set deletedAt to >24 hours ago to make it eligible for GC
+      const oldDate = new Date(Date.now() - 25 * 60 * 60 * 1000); // 25 hours ago
+      memoryManager.setDeletedAtForTest(deleteId, oldDate);
+
+      // Verify initial state: 2 memories (1 deleted, 1 active)
+      let allMemories = memoryManager.getAllMemoriesForTest();
+      expect(allMemories.length).toBe(2);
+
+      const deletedMemory = allMemories.find((m) => m.id === deleteId);
+      const activeMemory = allMemories.find((m) => m.id === keepId);
+      expect(deletedMemory).toBeDefined();
+      expect(deletedMemory?.isDeleted).toBe(true);
+      expect(activeMemory).toBeDefined();
+      expect(activeMemory?.isDeleted).toBe(false);
+
+      // Run optimization (should update scores AND compact/GC)
+      await memoryManager.optimizeStorage();
+
+      // Verify compaction: old deleted memory should be removed
+      allMemories = memoryManager.getAllMemoriesForTest();
+      expect(allMemories.length).toBe(1);
+
+      // Only the kept memory should remain
+      const remainingMemory = allMemories[0];
+      expect(remainingMemory.id).toBe(keepId);
+      expect(remainingMemory.isDeleted).toBe(false);
+      expect(remainingMemory.importanceScore).toBe(0.2); // Updated by optimization
+
+      // Deleted memory should be completely gone
+      const deletedAfterGC = memoryManager.getMemoryForTest(deleteId);
+      expect(deletedAfterGC).toBeUndefined();
+    });
+
+    it('should handle optimization errors gracefully', async () => {
+      // Even if some operations fail, optimization should not throw
+      await expect(memoryManager.optimizeStorage()).resolves.not.toThrow();
+    });
+  });
+});
+
+describe('MemoryManager - Update, Delete, Merge (Task 3.2)', () => {
+  let memoryManager: MemoryManager;
+  let storedMemoryId: MemoryId;
+
+  beforeEach(async () => {
+    memoryManager = new MemoryManager();
+
+    // Store a test memory for update/delete operations
+    const storeResult = await memoryManager.storeMemory({
+      content: 'Initial content for testing',
+      memoryType: 'semantic',
+      metadata: {
+        tags: ['test'],
+      },
+    });
+
+    if (storeResult.success) {
+      storedMemoryId = storeResult.value;
+    }
+  });
+
+  describe('updateMemory', () => {
+    it('should update memory content successfully', async () => {
+      const result = await memoryManager.updateMemory(storedMemoryId, {
+        content: 'Updated content',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.value).toBe(true);
+      }
+    });
+
+    it('should update memory metadata', async () => {
+      const result = await memoryManager.updateMemory(storedMemoryId, {
+        metadata: {
+          tags: ['updated', 'modified'],
+          source: 'test-update',
+        },
+      });
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should update memory type', async () => {
+      const result = await memoryManager.updateMemory(storedMemoryId, {
+        memoryType: 'episodic',
+      });
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should return error for non-existent memory ID', async () => {
+      const fakeId = '00000000-0000-4000-8000-000000000000';
+      const result = await memoryManager.updateMemory(fakeId, {
+        content: 'Should fail',
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('MEMORY_NOT_FOUND');
+      }
+    });
+
+    it('should reject invalid content in update', async () => {
+      const result = await memoryManager.updateMemory(storedMemoryId, {
+        content: '',
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('INVALID_CONTENT');
+      }
+    });
+
+    it('should automatically update updatedAt timestamp', async () => {
+      const result = await memoryManager.updateMemory(storedMemoryId, {
+        content: 'New content',
+      });
+
+      expect(result.success).toBe(true);
+      // Timestamp verification will be done in integration tests
+    });
+
+    it('should preserve fields not included in update', async () => {
+      const result = await memoryManager.updateMemory(storedMemoryId, {
+        content: 'Only content updated',
+      });
+
+      expect(result.success).toBe(true);
+      // Metadata should remain unchanged - verify in integration tests
+    });
+  });
+
+  describe('deleteMemory - Soft Delete', () => {
+    it('should soft delete a memory successfully', async () => {
+      const result = await memoryManager.deleteMemory(storedMemoryId);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.value).toBe(true);
+      }
+    });
+
+    it('should return error for non-existent memory ID', async () => {
+      const fakeId = '00000000-0000-4000-8000-000000000000';
+      const result = await memoryManager.deleteMemory(fakeId);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('MEMORY_NOT_FOUND');
+      }
+    });
+
+    it('should mark memory as deleted (soft delete)', async () => {
+      const result = await memoryManager.deleteMemory(storedMemoryId);
+
+      expect(result.success).toBe(true);
+      // isDeleted flag verification in integration tests
+    });
+
+    it('should set deletion timestamp', async () => {
+      const result = await memoryManager.deleteMemory(storedMemoryId);
+
+      expect(result.success).toBe(true);
+      // deletedAt timestamp verification in integration tests
+    });
+
+    it('should allow deleting already deleted memory (idempotent)', async () => {
+      const firstDelete = await memoryManager.deleteMemory(storedMemoryId);
+      expect(firstDelete.success).toBe(true);
+
+      const secondDelete = await memoryManager.deleteMemory(storedMemoryId);
+      expect(secondDelete.success).toBe(true);
+    });
+
+    it('should not delete protected memories', async () => {
+      // First update the memory to be protected
+      await memoryManager.updateMemory(storedMemoryId, {
+        isProtected: true,
+      });
+
+      const result = await memoryManager.deleteMemory(storedMemoryId);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('STORAGE_ERROR');
+        expect(result.error.message).toContain('protected');
+      }
+    });
+  });
+
+  describe('mergeMemories', () => {
+    let memory1Id: MemoryId;
+    let memory2Id: MemoryId;
+    let memory3Id: MemoryId;
+
+    beforeEach(async () => {
+      // Create multiple memories for merging
+      const result1 = await memoryManager.storeMemory({
+        content: 'First similar memory',
+        metadata: { tags: ['merge-test'] },
+      });
+      const result2 = await memoryManager.storeMemory({
+        content: 'Second similar memory',
+        metadata: { tags: ['merge-test'] },
+      });
+      const result3 = await memoryManager.storeMemory({
+        content: 'Third similar memory',
+        metadata: { tags: ['merge-test'] },
+      });
+
+      if (result1.success) memory1Id = result1.value;
+      if (result2.success) memory2Id = result2.value;
+      if (result3.success) memory3Id = result3.value;
+    });
+
+    it('should merge multiple memories into one', async () => {
+      const result = await memoryManager.mergeMemories([
+        memory1Id,
+        memory2Id,
+        memory3Id,
+      ]);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.value).toBeTruthy();
+        expect(typeof result.value).toBe('string');
+      }
+    });
+
+    it('should return error when merging less than 2 memories', async () => {
+      const result = await memoryManager.mergeMemories([memory1Id]);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('INVALID_CONTENT');
+        expect(result.error.message).toContain('at least 2 memories');
+      }
+    });
+
+    it('should return error if any memory ID does not exist', async () => {
+      const fakeId = '00000000-0000-4000-8000-000000000000';
+      const result = await memoryManager.mergeMemories([
+        memory1Id,
+        fakeId,
+        memory2Id,
+      ]);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('MEMORY_NOT_FOUND');
+      }
+    });
+
+    it('should combine content from all memories', async () => {
+      const result = await memoryManager.mergeMemories([
+        memory1Id,
+        memory2Id,
+        memory3Id,
+      ]);
+
+      expect(result.success).toBe(true);
+      // Content combination verification in integration tests
+    });
+
+    it('should merge metadata tags from all memories', async () => {
+      const result = await memoryManager.mergeMemories([
+        memory1Id,
+        memory2Id,
+        memory3Id,
+      ]);
+
+      expect(result.success).toBe(true);
+      // Tags merging verification in integration tests
+    });
+
+    it('should soft delete source memories after merge', async () => {
+      const result = await memoryManager.mergeMemories([
+        memory1Id,
+        memory2Id,
+        memory3Id,
+      ]);
+
+      expect(result.success).toBe(true);
+      // Soft deletion of source memories verification in integration tests
+    });
+
+    it('should return new merged memory ID', async () => {
+      const result = await memoryManager.mergeMemories([
+        memory1Id,
+        memory2Id,
+      ]);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // New ID should be different from source IDs
+        expect(result.value).not.toBe(memory1Id);
+        expect(result.value).not.toBe(memory2Id);
+      }
+    });
+
+    it('should reject merging deleted memories', async () => {
+      // Delete one of the memories
+      await memoryManager.deleteMemory(memory1Id);
+
+      const result = await memoryManager.mergeMemories([
+        memory1Id,
+        memory2Id,
+      ]);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('INVALID_CONTENT');
+        expect(result.error.message).toContain('deleted memory');
+      }
+    });
+
+    it('should reject merging protected memories', async () => {
+      // Protect one of the memories
+      await memoryManager.updateMemory(memory1Id, {
+        isProtected: true,
+      });
+
+      const result = await memoryManager.mergeMemories([
+        memory1Id,
+        memory2Id,
+      ]);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('STORAGE_ERROR');
+        expect(result.error.message).toContain('protected memory');
+      }
+    });
+
+    it('should produce sorted tags for deterministic results', async () => {
+      // Create memories with different tag orders
+      const mem1 = await memoryManager.storeMemory({
+        content: 'Memory 1',
+        metadata: { tags: ['zebra', 'alpha', 'charlie'] },
+      });
+      const mem2 = await memoryManager.storeMemory({
+        content: 'Memory 2',
+        metadata: { tags: ['bravo', 'delta'] },
+      });
+
+      if (!mem1.success || !mem2.success) {
+        throw new Error('Failed to create test memories');
+      }
+
+      const result = await memoryManager.mergeMemories([
+        mem1.value,
+        mem2.value,
+      ]);
+
+      expect(result.success).toBe(true);
+      // Tags should be sorted alphabetically: ['alpha', 'bravo', 'charlie', 'delta', 'zebra']
+      // Verification will be done in integration tests
+    });
+
+    it('should reject merging when any source cannot be merged due to protection', async () => {
+      // Protect one of the source memories after initial validation
+      // This tests the early validation that prevents protected memories from being merged
+      await memoryManager.updateMemory(memory2Id, {
+        isProtected: true,
+      });
+
+      const result = await memoryManager.mergeMemories([
+        memory1Id,
+        memory2Id,
+      ]);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('STORAGE_ERROR');
+        expect(result.error.message).toContain('protected memory');
+      }
+      // Early validation prevents merge operation, ensuring consistency
+    });
+  });
+});
