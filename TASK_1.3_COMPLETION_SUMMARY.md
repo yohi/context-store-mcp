@@ -248,16 +248,16 @@ coderabbit --prompt-only
 ### スキーマ検証（Docker起動後に実行）
 ```bash
 # PostgreSQL接続確認
-docker exec -it postgres psql -U postgres -d context_store -c "\dt"
-docker exec -it postgres psql -U postgres -d context_store -c "\di"
+docker exec -it context-store-postgres psql -U context_store_user -d context_store -c "\dt"
+docker exec -it context-store-postgres psql -U context_store_user -d context_store -c "\di"
 
 # Neo4j接続確認
-docker exec -it neo4j cypher-shell -u neo4j -p password "SHOW CONSTRAINTS"
-docker exec -it neo4j cypher-shell -u neo4j -p password "SHOW INDEXES"
+docker exec -it context-store-neo4j cypher-shell -u neo4j -p password "SHOW CONSTRAINTS"
+docker exec -it context-store-neo4j cypher-shell -u neo4j -p password "SHOW INDEXES"
 
 # テストデータ確認
-docker exec -it postgres psql -U postgres -d context_store -c "SELECT COUNT(*) FROM memories"
-docker exec -it postgres psql -U postgres -d context_store -c "SELECT COUNT(*) FROM memory_vectors"
+docker exec -it context-store-postgres psql -U context_store_user -d context_store -c "SELECT COUNT(*) FROM memories"
+docker exec -it context-store-postgres psql -U context_store_user -d context_store -c "SELECT COUNT(*) FROM memory_vectors"
 ```
 
 ### テスト実行
