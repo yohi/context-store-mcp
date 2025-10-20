@@ -1007,6 +1007,44 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
       }
     });
 
+    it('should reject link creation when source memory is deleted', async () => {
+      // Delete the source memory
+      await memoryManager.deleteMemory(episodicMemoryId);
+
+      // Try to create a link from deleted memory
+      const result = await memoryManager.createLink(
+        episodicMemoryId,
+        semanticMemoryId,
+        'REFERENCES'
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('MEMORY_NOT_FOUND');
+        expect(result.error.message).toContain('source memory');
+        expect(result.error.message).toContain('deleted');
+      }
+    });
+
+    it('should reject link creation when target memory is deleted', async () => {
+      // Delete the target memory
+      await memoryManager.deleteMemory(semanticMemoryId);
+
+      // Try to create a link to deleted memory
+      const result = await memoryManager.createLink(
+        proceduralMemoryId,
+        semanticMemoryId,
+        'REFERENCES'
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe('MEMORY_NOT_FOUND');
+        expect(result.error.message).toContain('target memory');
+        expect(result.error.message).toContain('deleted');
+      }
+    });
+
     it('should return existing link ID for duplicate links', async () => {
       // Create first link
       const result1 = await memoryManager.createLink(

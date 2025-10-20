@@ -462,6 +462,27 @@ export class MemoryManager implements MemoryManagerService {
       };
     }
 
+    // Check if either memory is deleted
+    if (fromMemory.isDeleted) {
+      return {
+        success: false,
+        error: {
+          type: 'MEMORY_NOT_FOUND',
+          message: `Cannot create link: source memory ${from} is deleted`,
+        },
+      };
+    }
+
+    if (toMemory.isDeleted) {
+      return {
+        success: false,
+        error: {
+          type: 'MEMORY_NOT_FOUND',
+          message: `Cannot create link: target memory ${to} is deleted`,
+        },
+      };
+    }
+
     // Validate strength range
     if (strength < 0 || strength > 1) {
       return {
