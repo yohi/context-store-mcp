@@ -11,7 +11,7 @@
  * TDD: RED Phase - 失敗するテストを作成
  */
 
-import { describe, test, expect, beforeEach } from 'vitest';
+import { describe, test, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest';
 import { QueryProcessor } from '../../query/query-processor';
 import type {
   SearchQuery,
@@ -23,6 +23,16 @@ import type {
 
 describe('QueryProcessor', () => {
   let processor: QueryProcessor;
+
+  // フェイクタイマーで固定時刻を設定(タイムゾーン/DST非依存)
+  beforeAll(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2023-03-15T12:00:00Z'));
+  });
+
+  afterAll(() => {
+    vi.useRealTimers();
+  });
 
   beforeEach(() => {
     processor = new QueryProcessor();
@@ -106,12 +116,17 @@ describe('QueryProcessor', () => {
       expect(range.start).toBeDefined();
       expect(range.end).toBeDefined();
 
-      // 昨日の日付を検証
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      yesterday.setHours(0, 0, 0, 0);
+      // 固定日時(2023-03-15 12:00:00 UTC)から昨日を計算
+      // 昨日 = 2023-03-14 00:00:00 UTC ~ 2023-03-15 00:00:00 UTC
+      const expectedStart = new Date('2023-03-14T00:00:00.000Z');
+      const expectedEnd = new Date('2023-03-15T00:00:00.000Z');
 
-      expect(range.start.getDate()).toBe(yesterday.getDate());
+      expect(range.start.toISOString()).toBe(expectedStart.toISOString());
+      expect(range.end.toISOString()).toBe(expectedEnd.toISOString());
+
+      // 期間が正確に24時間(1日)であることを検証
+      const diffHours = (range.end.getTime() - range.start.getTime()) / (1000 * 60 * 60);
+      expect(diffHours).toBe(24);
     });
 
     test('「先週」を正しい日時範囲に変換できる', () => {
