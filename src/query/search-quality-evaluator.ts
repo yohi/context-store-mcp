@@ -324,7 +324,7 @@ export class SearchQualityEvaluator {
     // 検索結果を記録
     for (const result of results) {
       const logEntry: SearchLogEntry = {
-        id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
         memoryId: result.id,
         query,
         relevanceScore: result.relevanceScore,
@@ -336,7 +336,7 @@ export class SearchQualityEvaluator {
     // ユーザーフィードバックを記録
     if (feedback) {
       const feedbackLog: UserFeedbackLog = {
-        id: `feedback-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        id: `feedback-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
         userId: feedback.userId,
         query,
         judgments: feedback.relevanceJudgments,
