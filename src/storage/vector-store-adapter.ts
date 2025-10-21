@@ -374,6 +374,44 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
   }
 
   /**
+   * pgvectorの文字列表現や配列をnumber[]に正規化
+   * DB環境によってembeddingが文字列 "[...]" または配列として返される可能性があるため、
+   * 両方のケースに対応してnumber[]に変換する
+   *
+   * @param value - パース対象の値（文字列または配列）
+   * @returns 正規化されたnumber配列
+   * @throws pgvectorの形式が不正な場合
+   */
+  private parsePgvector(value: unknown): number[] {
+    // 既に配列の場合は各要素を数値に変換
+    if (Array.isArray(value)) {
+      return (value as unknown[]).map((n) => Number(n));
+    }
+
+    // 文字列の場合はパース
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      // "[1,2,3]" 形式から配列部分を取り出す
+      const body =
+        trimmed.startsWith('[') && trimmed.endsWith(']')
+          ? trimmed.slice(1, -1)
+          : trimmed;
+
+      if (!body) return [];
+
+      return body.split(',').map((x) => {
+        const num = Number(x.trim());
+        if (isNaN(num)) {
+          throw new Error(`Invalid number in pgvector string: ${x}`);
+        }
+        return num;
+      });
+    }
+
+    throw new Error(`Invalid embedding type from database: ${typeof value}`);
+  }
+
+  /**
    * 候補プールサイズを計算
    * 再ランキングで真のトップ結果を逃さないため、要求サイズより大きな候補プールを取得
    *
@@ -751,7 +789,8 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
     });
 
     // embeddings配列を別途保持（MMR用）
-    const embeddings = result.rows.map((row) => row.embedding);
+    // DB環境によって文字列または配列で返される可能性があるため、parsePgvectorで正規化
+    const embeddings = result.rows.map((row) => this.parsePgvector(row.embedding));
 
     // スコアリング戦略を適用
     const enhancedResults: EnhancedSearchResult[] = baseResults.map((baseResult, index) => {
@@ -762,8 +801,9 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
       );
       const finalScore = this.calculateFinalScore(scoreBreakdown, scoringStrategy);
 
-      // MMR用にembeddingを含める（pgvectorの配列をそのまま使用）
-      const embedding = embeddings[index];
+      // MMR用にembeddingを含める（pgvectorの配列を正規化済み）
+      // baseResultsとembeddingsは同じrowsから生成されているため、indexは常に有効
+      const embedding = embeddings[index]!;
 
       return {
         ...baseResult,

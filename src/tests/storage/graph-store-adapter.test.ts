@@ -90,8 +90,10 @@ describe('GraphStoreAdapter', () => {
       // クローズを実行
       await tempAdapter.close();
 
-      // クローズ後に操作を試みるとエラー
-      await expect(tempAdapter.createNode('Test', { name: 'test' })).rejects.toThrow();
+      // クローズ後に操作を試みるとエラー (idを含めてバリデーションを通過させる)
+      await expect(
+        tempAdapter.createNode('Test', { id: 'test-id', name: 'test' })
+      ).rejects.toThrow('GraphStoreAdapter has been closed');
     });
 
     it('無効な接続設定でエラーをスローする', async () => {
@@ -104,8 +106,10 @@ describe('GraphStoreAdapter', () => {
 
       const invalidAdapter = new GraphStoreAdapter(invalidConfig);
 
-      // 接続試行時にエラーをスロー
-      await expect(invalidAdapter.createNode('Test', { name: 'test' })).rejects.toThrow();
+      // 接続試行時にエラーをスロー (idを含めてバリデーションを通過させる)
+      await expect(
+        invalidAdapter.createNode('Test', { id: 'test-id', name: 'test' })
+      ).rejects.toThrow();
 
       await invalidAdapter.close();
     });
@@ -337,6 +341,147 @@ describe('GraphStoreAdapter', () => {
     it('永続的なエラーで即座に失敗する', async () => {
       // 無効なラベル名（数字で開始）でエラーをスロー
       await expect(adapter.createNode('123InvalidLabel', { id: 'test-id' })).rejects.toThrow();
+    });
+  });
+
+  describe('ラベルバリデーション（Cypherインジェクション防止）', () => {
+    describe('有効なラベル', () => {
+      it('英字で始まるラベルを受け入れる', async () => {
+        const properties: NodeProperties = { id: 'test-valid-1' };
+        const nodeId = await adapter.createNode('ValidLabel', properties);
+        expect(nodeId).toBe(properties.id);
+      });
+
+      it('アンダースコアで始まるラベルを受け入れる', async () => {
+        const properties: NodeProperties = { id: 'test-valid-2' };
+        const nodeId = await adapter.createNode('_ValidLabel', properties);
+        expect(nodeId).toBe(properties.id);
+      });
+
+      it('英数字とアンダースコアを含むラベルを受け入れる', async () => {
+        const properties: NodeProperties = { id: 'test-valid-3' };
+        const nodeId = await adapter.createNode('Valid_Label_123', properties);
+        expect(nodeId).toBe(properties.id);
+      });
+
+      it('複数の有効なラベルを受け入れる', async () => {
+        const properties: NodeProperties = { id: 'test-valid-4' };
+        const nodeId = await adapter.createNode(['Memory', 'Episodic_2023'], properties);
+        expect(nodeId).toBe(properties.id);
+      });
+
+      it('大文字小文字混在のラベルを受け入れる', async () => {
+        const properties: NodeProperties = { id: 'test-valid-5' };
+        const nodeId = await adapter.createNode('CamelCaseLabel', properties);
+        expect(nodeId).toBe(properties.id);
+      });
+    });
+
+    describe('無効なラベル（Cypherインジェクション対策）', () => {
+      it('数字で始まるラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('123Invalid', { id: 'test-invalid-1' })
+        ).rejects.toThrow(/Invalid label.*123Invalid/);
+      });
+
+      it('ハイフンを含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('Invalid-Label', { id: 'test-invalid-2' })
+        ).rejects.toThrow(/Invalid label.*Invalid-Label/);
+      });
+
+      it('スペースを含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('Invalid Label', { id: 'test-invalid-3' })
+        ).rejects.toThrow(/Invalid label.*Invalid Label/);
+      });
+
+      it('特殊文字を含むラベルを拒否する（Cypherインジェクション防止）', async () => {
+        await expect(
+          adapter.createNode('Label;DROP TABLE', { id: 'test-invalid-4' })
+        ).rejects.toThrow(/Invalid label/);
+      });
+
+      it('引用符を含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode("Label'OR'1'='1", { id: 'test-invalid-5' })
+        ).rejects.toThrow(/Invalid label/);
+      });
+
+      it('バッククォートを含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('Label`malicious`', { id: 'test-invalid-6' })
+        ).rejects.toThrow(/Invalid label/);
+      });
+
+      it('コロンを含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('Label:Injection', { id: 'test-invalid-7' })
+        ).rejects.toThrow(/Invalid label/);
+      });
+
+      it('カンマを含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('Label,Another', { id: 'test-invalid-8' })
+        ).rejects.toThrow(/Invalid label/);
+      });
+
+      it('括弧を含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('Label()', { id: 'test-invalid-9' })
+        ).rejects.toThrow(/Invalid label/);
+      });
+
+      it('ドットを含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('Label.Property', { id: 'test-invalid-10' })
+        ).rejects.toThrow(/Invalid label/);
+      });
+
+      it('空文字列ラベルを拒否する', async () => {
+        await expect(adapter.createNode('', { id: 'test-invalid-11' })).rejects.toThrow(
+          /Invalid label/
+        );
+      });
+
+      it('複数ラベルに1つでも無効なものがあれば拒否する', async () => {
+        await expect(
+          adapter.createNode(['ValidLabel', 'Invalid-Label'], { id: 'test-invalid-12' })
+        ).rejects.toThrow(/Invalid label.*Invalid-Label/);
+      });
+
+      it('Cypherコマンドを含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('Label MATCH (n) DELETE n', { id: 'test-invalid-13' })
+        ).rejects.toThrow(/Invalid label/);
+      });
+
+      it('改行文字を含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('Label\nMATCH', { id: 'test-invalid-14' })
+        ).rejects.toThrow(/Invalid label/);
+      });
+
+      it('タブ文字を含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('Label\tInjection', { id: 'test-invalid-15' })
+        ).rejects.toThrow(/Invalid label/);
+      });
+    });
+
+    describe('エラーメッセージの明確性', () => {
+      it('無効なラベルに対して明確なエラーメッセージを返す', async () => {
+        try {
+          await adapter.createNode('123Invalid', { id: 'test-error-msg' });
+          expect.fail('Should have thrown an error');
+        } catch (error) {
+          const err = error as Error;
+          expect(err.message).toContain('Invalid label');
+          expect(err.message).toContain('123Invalid');
+          expect(err.message).toContain('must start with a letter or underscore');
+          expect(err.message).toContain('contain only letters, numbers, and underscores');
+        }
+      });
     });
   });
 });

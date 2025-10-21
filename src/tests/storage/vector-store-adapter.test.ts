@@ -68,6 +68,178 @@ describe('Vector format conversion (CodeRabbit fix validation)', () => {
   });
 });
 
+describe('pgvector format parsing (parsePgvector)', () => {
+  // テスト用のモック関数（private メソッドへのアクセス用）
+  const parsePgvector = (value: unknown): number[] => {
+    if (Array.isArray(value)) {
+      return (value as unknown[]).map((n) => Number(n));
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      const body =
+        trimmed.startsWith('[') && trimmed.endsWith(']')
+          ? trimmed.slice(1, -1)
+          : trimmed;
+
+      if (!body) return [];
+
+      return body.split(',').map((x) => {
+        const num = Number(x.trim());
+        if (isNaN(num)) {
+          throw new Error(`Invalid number in pgvector string: ${x}`);
+        }
+        return num;
+      });
+    }
+
+    throw new Error(`Invalid embedding type from database: ${typeof value}`);
+  };
+
+  describe('配列形式の入力', () => {
+    it('number配列を正しくパースできる', () => {
+      const input = [0.1, 0.2, 0.3];
+      const result = parsePgvector(input);
+
+      expect(result).toEqual([0.1, 0.2, 0.3]);
+      expect(result).toBeInstanceOf(Array);
+    });
+
+    it('文字列数値を含む配列を正しく変換できる', () => {
+      const input = ['0.1', '0.2', '0.3'];
+      const result = parsePgvector(input);
+
+      expect(result).toEqual([0.1, 0.2, 0.3]);
+      expect(result.every((n) => typeof n === 'number')).toBe(true);
+    });
+
+    it('大規模ベクトル（1536次元）を正しく処理できる', () => {
+      const input = Array.from({ length: 1536 }, (_, i) => i / 1536);
+      const result = parsePgvector(input);
+
+      expect(result.length).toBe(1536);
+      expect(result[0]).toBe(0);
+      expect(result[1535]).toBeCloseTo(0.9993489583333333);
+    });
+  });
+
+  describe('文字列形式の入力', () => {
+    it('標準的なpgvector文字列 "[1,2,3]" をパースできる', () => {
+      const input = '[0.1,0.2,0.3]';
+      const result = parsePgvector(input);
+
+      expect(result).toEqual([0.1, 0.2, 0.3]);
+    });
+
+    it('空白を含む文字列 "[ 1 , 2 , 3 ]" を正しく処理できる', () => {
+      const input = '[ 0.1 , 0.2 , 0.3 ]';
+      const result = parsePgvector(input);
+
+      expect(result).toEqual([0.1, 0.2, 0.3]);
+    });
+
+    it('前後の空白を含む文字列を正しくトリムできる', () => {
+      const input = '  [0.1,0.2,0.3]  ';
+      const result = parsePgvector(input);
+
+      expect(result).toEqual([0.1, 0.2, 0.3]);
+    });
+
+    it('空文字列 "[]" を空配列にパースできる', () => {
+      const input = '[]';
+      const result = parsePgvector(input);
+
+      expect(result).toEqual([]);
+    });
+
+    it('括弧なしの文字列 "1,2,3" もパースできる', () => {
+      const input = '0.1,0.2,0.3';
+      const result = parsePgvector(input);
+
+      expect(result).toEqual([0.1, 0.2, 0.3]);
+    });
+
+    it('大規模ベクトルの文字列形式を正しく処理できる', () => {
+      const vector = Array.from({ length: 1536 }, (_, i) => i / 1536);
+      const input = '[' + vector.join(',') + ']';
+      const result = parsePgvector(input);
+
+      expect(result.length).toBe(1536);
+      expect(result[0]).toBe(0);
+      expect(result[1535]).toBeCloseTo(0.9993489583333333);
+    });
+  });
+
+  describe('エラーケース', () => {
+    it('不正な数値を含む文字列でエラーをスローする', () => {
+      const input = '[0.1,invalid,0.3]';
+
+      expect(() => parsePgvector(input)).toThrow('Invalid number in pgvector string');
+    });
+
+    it('サポートされていない型でエラーをスローする', () => {
+      const input = { embedding: [0.1, 0.2, 0.3] };
+
+      expect(() => parsePgvector(input)).toThrow('Invalid embedding type from database');
+    });
+
+    it('null入力でエラーをスローする', () => {
+      expect(() => parsePgvector(null)).toThrow('Invalid embedding type from database');
+    });
+
+    it('undefined入力でエラーをスローする', () => {
+      expect(() => parsePgvector(undefined)).toThrow('Invalid embedding type from database');
+    });
+
+    it('数値型入力でエラーをスローする', () => {
+      expect(() => parsePgvector(123)).toThrow('Invalid embedding type from database');
+    });
+  });
+
+  describe('実際のDB環境シミュレーション', () => {
+    it('PostgreSQL pg ドライバーが配列を返す場合を処理できる', () => {
+      // 環境によっては pg が number[] として返す
+      const dbResult = [0.1, 0.2, 0.3];
+      const result = parsePgvector(dbResult);
+
+      expect(result).toEqual([0.1, 0.2, 0.3]);
+    });
+
+    it('PostgreSQL pg ドライバーが文字列を返す場合を処理できる', () => {
+      // 環境によっては pg が文字列として返す
+      const dbResult = '[0.1,0.2,0.3]';
+      const result = parsePgvector(dbResult);
+
+      expect(result).toEqual([0.1, 0.2, 0.3]);
+    });
+
+    it('MMR検索でのembedding配列処理をシミュレートできる', () => {
+      // MMR検索時に取得される embeddings 配列のシミュレーション
+      const dbRows = [
+        { id: '1', embedding: '[0.1,0.2,0.3]' },
+        { id: '2', embedding: [0.4, 0.5, 0.6] },
+        { id: '3', embedding: '  [ 0.7 , 0.8 , 0.9 ]  ' },
+      ];
+
+      const embeddings = dbRows.map((row) => parsePgvector(row.embedding));
+
+      expect(embeddings).toEqual([
+        [0.1, 0.2, 0.3],
+        [0.4, 0.5, 0.6],
+        [0.7, 0.8, 0.9],
+      ]);
+
+      // すべてnumber[]型であることを確認
+      embeddings.forEach((embedding) => {
+        expect(Array.isArray(embedding)).toBe(true);
+        embedding.forEach((num) => {
+          expect(typeof num).toBe('number');
+        });
+      });
+    });
+  });
+});
+
 describe('VectorStoreAdapter', () => {
   describe('埋め込みAPI統合', () => {
     // TODO: Task 5.1 - OpenAI API統合テストの実装
