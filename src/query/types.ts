@@ -274,3 +274,170 @@ export interface CacheStats {
   size: number;
   maxSize: number;
 }
+
+/**
+ * Task 7.3: 検索品質評価システムの型定義
+ */
+
+/**
+ * 検索評価データセット (design.md の SearchEvaluationDataset に準拠)
+ */
+export interface SearchEvaluationDataset {
+  /** クエリリスト */
+  queries: Array<{
+    /** クエリ文字列 */
+    query: string;
+    /** 正解となる関連記憶のID */
+    relevantMemoryIds: string[];
+    /** アノテーター一覧 */
+    annotators: string[];
+    /** アノテーター間一致度 (Fleiss' Kappa) */
+    interAnnotatorAgreement?: number;
+  }>;
+  /** メタデータ */
+  metadata: {
+    /** 作成日時 */
+    createdAt: Date;
+    /** バージョン */
+    version: string;
+    /** 総クエリ数 */
+    totalQueries: number;
+    /** 最低クエリ数 (要件: 100) */
+    minimumQueries: number;
+  };
+}
+
+/**
+ * 検索品質メトリクス (design.md の SearchQualityMetrics に準拠)
+ */
+export interface SearchQualityMetrics {
+  /** Precision@10 (目標: ≥ 0.8) */
+  precisionAt10: number;
+  /** Recall@50 (目標: ≥ 0.7) */
+  recallAt50: number;
+  /** F1スコア (目標: ≥ 0.75) */
+  f1Score: number;
+  /** Mean Average Precision */
+  meanAveragePrecision: number;
+  /** 評価実施日時 */
+  evaluatedAt: Date;
+  /** テストセットサイズ */
+  testSetSize: number;
+  /** 閾値合格判定 */
+  passedThresholds: {
+    /** Precision@10 ≥ 0.8 */
+    precisionAt10Passed: boolean;
+    /** Recall@50 ≥ 0.7 */
+    recallAt50Passed: boolean;
+    /** F1スコア ≥ 0.75 */
+    f1ScorePassed: boolean;
+  };
+}
+
+/**
+ * アノテーションタスク
+ */
+export interface AnnotationTask {
+  /** クエリID */
+  queryId: string;
+  /** クエリ文字列 */
+  query: string;
+  /** 候補記憶一覧 */
+  candidateMemories: Memory[];
+  /** アノテーター別判定 */
+  annotatorJudgments: Array<{
+    /** アノテーター名 */
+    annotator: string;
+    /** 判定結果 */
+    judgments: Array<{
+      /** 記憶ID */
+      memoryId: string;
+      /** 関連性レベル (0: 無関係, 1: やや関連, 2: 関連, 3: 高関連) */
+      relevanceLevel: 0 | 1 | 2 | 3;
+    }>;
+  }>;
+}
+
+/**
+ * 関連性フィードバック (design.md の RelevanceFeedback に準拠)
+ */
+export interface RelevanceFeedback {
+  /** ユーザーID */
+  userId: string;
+  /** 関連性判定 */
+  relevanceJudgments: Array<{
+    /** 記憶ID */
+    memoryId: string;
+    /** 関連性フラグ */
+    isRelevant: boolean;
+    /** 関連性レベル (0: 無関係, 1: やや関連, 2: 関連, 3: 高関連) */
+    relevanceLevel?: 0 | 1 | 2 | 3;
+  }>;
+  /** フィードバック時刻 */
+  timestamp: Date;
+}
+
+/**
+ * 検索バリアント (A/Bテスト用)
+ */
+export interface SearchVariant {
+  /** バリアント名 */
+  name: string;
+  /** 埋め込みモデル */
+  embeddingModel?: string;
+  /** 類似度閾値 */
+  similarityThreshold?: number;
+  /** ハイブリッド検索の重み */
+  hybridSearchWeights?: {
+    semantic: number;
+    structural: number;
+  };
+}
+
+/**
+ * A/Bテスト結果
+ */
+export interface ABTestResult {
+  /** 勝利バリアント */
+  winner: SearchVariant;
+  /** コントロールバリアントのメトリクス */
+  controlMetrics: SearchQualityMetrics;
+  /** 実験バリアントのメトリクス */
+  experimentMetrics: SearchQualityMetrics;
+  /** p値 (統計的有意性) */
+  pValue: number;
+  /** 有意水準 (デフォルト: 0.05) */
+  significanceLevel?: number;
+}
+
+/**
+ * 検索ログエントリ
+ */
+export interface SearchLogEntry {
+  /** ログID */
+  id: string;
+  /** 記憶ID */
+  memoryId: string;
+  /** クエリ */
+  query: string;
+  /** 関連性スコア */
+  relevanceScore?: number;
+  /** 検索日時 */
+  searchedAt: Date;
+}
+
+/**
+ * ユーザーフィードバックログ
+ */
+export interface UserFeedbackLog {
+  /** ログID */
+  id: string;
+  /** ユーザーID */
+  userId: string;
+  /** クエリ */
+  query: string;
+  /** 判定結果 (JSON) */
+  judgments: RelevanceFeedback['relevanceJudgments'];
+  /** フィードバック日時 */
+  feedbackAt: Date;
+}

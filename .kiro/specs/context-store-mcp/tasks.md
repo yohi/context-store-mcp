@@ -195,14 +195,22 @@
   - _Requirements: 2.1, 2.3, 2.5_
   - **残作業: hybridSearchの実装、VectorStoreAdapterとGraphStoreAdapterの統合、実装に基づくテストの更新**
 
-- [ ] 7.3 検索品質評価システムの実装
-  - 評価データセットの構築
-  - Precision/Recall/F1スコアの計算
-  - 人間アノテーションの管理
-  - 検索ログの記録
-  - A/Bテストフレームワーク
-  - 継続的な品質モニタリング
+- [x] 7.3 検索品質評価システムの実装
+  - 評価データセット管理 (SearchEvaluationDataset型)
+  - Precision@K、Recall@K、F1スコア計算機能
+  - Average Precision、MAP (Mean Average Precision) 計算
+  - **Fleiss' Kappa係数によるアノテーター間一致度計算 (簡易実装)** - モード比率平均による近似、真のFleiss' Kappaではない
+  - **データセット検証** (最低100クエリ、2名以上のアノテーター、Kappa ≥ 0.6) - **注意: 簡易実装のため本番判定には使用不可**
+  - 検索ログ記録機能 (SearchLogEntry、UserFeedbackLog)
+  - ユーザーフィードバック収集 (RelevanceFeedback)
+  - **A/Bテストフレームワーク (統計的有意性検定、p値計算) (簡易実装)** - 段階的z-scoreしきい値、真の統計検定ではない
+  - 改善計画自動生成機能
+  - 30ユニットテスト全パス
   - _Requirements: 2.1_
+  - **TODO/Issue: 本番品質評価への統計実装の置き換え**
+    - 真のFleiss' Kappa実装 (カテゴリカル評価の正確な一致度計算)
+    - 適切な統計的有意性検定 (ブートストラップ法またはtwo-sample tests)
+    - 現在の評価ゲート (Kappa ≥ 0.6, p < 0.05) は簡易実装による近似値のため、本番意思決定には正式な統計検証とレビューが必須
 
 ## セキュリティとアクセス制御
 
