@@ -5,7 +5,7 @@
  * design.md の Query Processor 仕様に基づく型定義
  */
 
-import type { MemoryType, MemoryId, Memory } from '../memory/types';
+import type { MemoryType, Memory } from '../memory/types';
 
 /**
  * 検索クエリ
@@ -207,3 +207,70 @@ export type QueryError =
   | { type: 'UNSUPPORTED_FILTER'; message: string }
   | { type: 'SEARCH_FAILED'; message: string }
   | { type: 'TIMEOUT'; message: string };
+
+/**
+ * Task 7.2: ハイブリッド検索とキャッシングの型定義
+ */
+
+/**
+ * ハイブリッド検索のオプション (design.md の HybridSearchParams に準拠)
+ */
+export interface HybridSearchOptions {
+  /** セマンティック検索クエリ */
+  semanticQuery?: string;
+  /** グラフパターンクエリ */
+  graphPattern?: string;
+  /** フィルタ条件 */
+  filters?: SearchFilters;
+  /** 重み設定 */
+  weights?: {
+    semantic: number; // デフォルト: 0.7
+    structural: number; // デフォルト: 0.3
+  };
+  /** スコアリング設定 */
+  scoringConfig?: {
+    alpha?: number; // グラフスコア減衰率（デフォルト: 1.0）
+    epsilon?: number; // タイブレーク許容誤差（デフォルト: 1e-6）
+  };
+  /** 最大結果件数 */
+  limit?: number;
+}
+
+/**
+ * ハイブリッド検索結果 (design.md の HybridSearchResult に準拠)
+ */
+export interface HybridSearchResult {
+  /** 記憶 */
+  memory: Memory;
+  /** スコア情報 */
+  scores: {
+    semantic: number; // 0.0 - 1.0
+    structural: number; // 0.0 - 1.0
+    final: number; // 0.0 - 1.0
+  };
+  /** メタデータ */
+  metadata: {
+    pathLength?: number; // グラフ検索時のホップ数
+    cosineSimilarity?: number; // ベクトル検索時の生スコア
+  };
+}
+
+/**
+ * キャッシュキーの生成に使用するクエリ情報
+ */
+export interface CacheableQuery {
+  query: string;
+  filters?: SearchFilters;
+  strategy?: SearchStrategy;
+}
+
+/**
+ * キャッシュ統計情報
+ */
+export interface CacheStats {
+  hits: number;
+  misses: number;
+  hitRate: number; // 0.0 - 1.0
+  size: number;
+  maxSize: number;
+}
