@@ -198,9 +198,7 @@ export class MemoryClassifier implements MemoryClassifierService {
    * 分類精度の評価
    * Requirements: 3.4 (分類精度目標70%以上)
    */
-  async evaluateAccuracy(
-    testSamples: LabeledSample[]
-  ): Promise<AccuracyMetrics> {
+  async evaluateAccuracy(testSamples: LabeledSample[]): Promise<AccuracyMetrics> {
     if (testSamples.length === 0) {
       return {
         overall: 0,
@@ -263,18 +261,10 @@ export class MemoryClassifier implements MemoryClassifierService {
 
     // タイプ別精度
     const perType: Record<MemoryType, number> = {
-      episodic:
-        perTypeTotal.episodic > 0
-          ? perTypeCorrect.episodic / perTypeTotal.episodic
-          : 0,
-      semantic:
-        perTypeTotal.semantic > 0
-          ? perTypeCorrect.semantic / perTypeTotal.semantic
-          : 0,
+      episodic: perTypeTotal.episodic > 0 ? perTypeCorrect.episodic / perTypeTotal.episodic : 0,
+      semantic: perTypeTotal.semantic > 0 ? perTypeCorrect.semantic / perTypeTotal.semantic : 0,
       procedural:
-        perTypeTotal.procedural > 0
-          ? perTypeCorrect.procedural / perTypeTotal.procedural
-          : 0,
+        perTypeTotal.procedural > 0 ? perTypeCorrect.procedural / perTypeTotal.procedural : 0,
     };
 
     return {
@@ -328,21 +318,15 @@ export class MemoryClassifier implements MemoryClassifierService {
     const detectedKeywords: string[] = [];
 
     // エピソード記憶のキーワード検出
-    const episodicMatches = EPISODIC_KEYWORDS.filter((keyword) =>
-      content.includes(keyword)
-    );
+    const episodicMatches = EPISODIC_KEYWORDS.filter((keyword) => content.includes(keyword));
     detectedKeywords.push(...episodicMatches);
 
     // 意味記憶のキーワード検出
-    const semanticMatches = SEMANTIC_KEYWORDS.filter((keyword) =>
-      content.includes(keyword)
-    );
+    const semanticMatches = SEMANTIC_KEYWORDS.filter((keyword) => content.includes(keyword));
     detectedKeywords.push(...semanticMatches);
 
     // 手続き記憶のキーワード検出
-    const proceduralMatches = PROCEDURAL_KEYWORDS.filter((keyword) =>
-      content.includes(keyword)
-    );
+    const proceduralMatches = PROCEDURAL_KEYWORDS.filter((keyword) => content.includes(keyword));
     detectedKeywords.push(...proceduralMatches);
 
     // ルールベーススコアの計算（キーワードマッチ度）

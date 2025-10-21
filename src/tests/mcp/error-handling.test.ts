@@ -13,10 +13,7 @@ import { PerformanceMetrics } from '../../mcp/performance-metrics';
 describe('MCP Error Handling', () => {
   describe('McpError - MCP標準エラーコード', () => {
     it('should create an error with INVALID_PARAMS code', () => {
-      const error = new McpError(
-        ErrorCode.INVALID_PARAMS,
-        'Missing required parameter: content'
-      );
+      const error = new McpError(ErrorCode.INVALID_PARAMS, 'Missing required parameter: content');
 
       expect(error.code).toBe(ErrorCode.INVALID_PARAMS);
       expect(error.message).toBe('Missing required parameter: content');
@@ -24,31 +21,24 @@ describe('MCP Error Handling', () => {
     });
 
     it('should create an error with INTERNAL_ERROR code', () => {
-      const error = new McpError(
-        ErrorCode.INTERNAL_ERROR,
-        'Database connection failed'
-      );
+      const error = new McpError(ErrorCode.INTERNAL_ERROR, 'Database connection failed');
 
       expect(error.code).toBe(ErrorCode.INTERNAL_ERROR);
       expect(error.message).toBe('Database connection failed');
     });
 
     it('should create an error with METHOD_NOT_FOUND code', () => {
-      const error = new McpError(
-        ErrorCode.METHOD_NOT_FOUND,
-        'Unknown tool: unknown_tool'
-      );
+      const error = new McpError(ErrorCode.METHOD_NOT_FOUND, 'Unknown tool: unknown_tool');
 
       expect(error.code).toBe(ErrorCode.METHOD_NOT_FOUND);
       expect(error.message).toBe('Unknown tool: unknown_tool');
     });
 
     it('should include additional data in error', () => {
-      const error = new McpError(
-        ErrorCode.INVALID_PARAMS,
-        'Validation failed',
-        { field: 'content', reason: 'Too long' }
-      );
+      const error = new McpError(ErrorCode.INVALID_PARAMS, 'Validation failed', {
+        field: 'content',
+        reason: 'Too long',
+      });
 
       expect(error.data).toEqual({ field: 'content', reason: 'Too long' });
     });
@@ -79,9 +69,7 @@ describe('MCP Error Handling', () => {
         return 'success';
       };
 
-      await expect(timeoutController.execute(operation)).rejects.toThrow(
-        'Operation timeout'
-      );
+      await expect(timeoutController.execute(operation)).rejects.toThrow('Operation timeout');
     });
 
     it('should allow custom timeout per operation', async () => {

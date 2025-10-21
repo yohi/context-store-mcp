@@ -359,7 +359,7 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
     if (norm === 0) {
       throw new Error('Cannot normalize zero vector');
     }
-    return vector.map(val => val / norm);
+    return vector.map((val) => val / norm);
   }
 
   /**
@@ -371,6 +371,51 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
    */
   private toPgvector(vector: number[]): string {
     return `[${vector.join(',')}]`;
+  }
+
+  /**
+   * pgvectorの文字列表現や配列をnumber[]に正規化
+   * DB環境によってembeddingが文字列 "[...]" または配列として返される可能性があるため、
+   * 両方のケースに対応してnumber[]に変換する
+   *
+   * @param value - パース対象の値（文字列または配列）
+   * @returns 正規化されたnumber配列
+   * @throws pgvectorの形式が不正な場合
+   */
+  /** @internal テスト用にエクスポート */
+  public static parsePgvector(value: unknown): number[] {
+    // 既に配列の場合は各要素を数値に変換し、バリデーションを実施
+    if (Array.isArray(value)) {
+      return (value as unknown[]).map((n) => {
+        const num = Number(n);
+        if (!Number.isFinite(num)) {
+          throw new Error(`Invalid number in pgvector array: ${n}`);
+        }
+        return num;
+      });
+    }
+
+    // 文字列の場合はパース
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      // "[1,2,3]" 形式から配列部分を取り出す
+      const body =
+        trimmed.startsWith('[') && trimmed.endsWith(']')
+          ? trimmed.slice(1, -1)
+          : trimmed;
+
+      if (!body) return [];
+
+      return body.split(',').map((x) => {
+        const num = Number(x.trim());
+        if (!Number.isFinite(num)) {
+          throw new Error(`Invalid number in pgvector string: ${x}`);
+        }
+        return num;
+      });
+    }
+
+    throw new Error(`Invalid embedding type from database: ${typeof value}`);
   }
 
   /**
@@ -474,7 +519,7 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
       [this.toPgvector(normalizedQuery), this.similarityThreshold, limit]
     );
 
-    return result.rows.map(row => ({
+    return result.rows.map((row) => ({
       id: row.id,
       content: row.content,
       similarity: parseFloat(row.similarity),
@@ -494,9 +539,9 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
   async bulkStore(items: VectorItem[]): Promise<VectorId[]> {
     // Step 1: Generate all embeddings in parallel BEFORE opening transaction
     // This avoids holding DB connection while waiting for OpenAI API
-    const embeddingPromises = items.map(item => this.generateEmbedding(item.content));
+    const embeddingPromises = items.map((item) => this.generateEmbedding(item.content));
     const embeddings = await Promise.all(embeddingPromises);
-    const normalizedEmbeddings = embeddings.map(emb => this.normalizeVector(emb));
+    const normalizedEmbeddings = embeddings.map((emb) => this.normalizeVector(emb));
 
     // Step 2: Generate UUIDs upfront
     const ids: VectorId[] = items.map(() => randomUUID());
@@ -591,15 +636,9 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
         );
 
         if (invalidIndexResult.rows.length > 0) {
-          const invalidIndexes = invalidIndexResult.rows
-            .map((row) => row.index_name)
-            .join(', ');
-          console.error(
-            `Detected invalid indexes that need manual cleanup: ${invalidIndexes}`
-          );
-          console.error(
-            `To cleanup, run: DROP INDEX CONCURRENTLY IF EXISTS <invalid_index_name>;`
-          );
+          const invalidIndexes = invalidIndexResult.rows.map((row) => row.index_name).join(', ');
+          console.error(`Detected invalid indexes that need manual cleanup: ${invalidIndexes}`);
+          console.error(`To cleanup, run: DROP INDEX CONCURRENTLY IF EXISTS <invalid_index_name>;`);
         }
       } catch (checkError) {
         // インデックスチェック自体が失敗した場合も記録
@@ -619,7 +658,10 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
    *
    * メタデータフィルタ、スコアリング戦略、ランキング機能を提供
    */
-  async searchSimilarAdvanced(query: string, options: SearchOptions = {}): Promise<EnhancedSearchResult[]> {
+  async searchSimilarAdvanced(
+    query: string,
+    options: SearchOptions = {}
+  ): Promise<EnhancedSearchResult[]> {
     // パラメータの検証とデフォルト値の設定
     const {
       limit = 10,
@@ -733,7 +775,7 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
     );
 
     // 基本検索結果を取得し、embeddingも保持
-    const baseResults: VectorSearchResult[] = result.rows.map(row => {
+    const baseResults: VectorSearchResult[] = result.rows.map((row) => {
       // metadataをパース（文字列の場合はJSON.parse）
       const parsedMetadata =
         typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata;
@@ -754,15 +796,21 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
     });
 
     // embeddings配列を別途保持（MMR用）
-    const embeddings = result.rows.map(row => row.embedding);
+    // DB環境によって文字列または配列で返される可能性があるため、parsePgvectorで正規化
+    const embeddings = result.rows.map((row) => VectorStoreAdapter.parsePgvector(row.embedding));
 
     // スコアリング戦略を適用
     const enhancedResults: EnhancedSearchResult[] = baseResults.map((baseResult, index) => {
-      const scoreBreakdown = this.calculateScoreBreakdown(baseResult, scoringStrategy, baseResult.metadata);
+      const scoreBreakdown = this.calculateScoreBreakdown(
+        baseResult,
+        scoringStrategy,
+        baseResult.metadata
+      );
       const finalScore = this.calculateFinalScore(scoreBreakdown, scoringStrategy);
 
-      // MMR用にembeddingを含める（pgvectorの配列をそのまま使用）
-      const embedding = embeddings[index];
+      // MMR用にembeddingを含める（pgvectorの配列を正規化済み）
+      // baseResultsとembeddingsは同じrowsから生成されているため、indexは常に有効
+      const embedding = embeddings[index]!;
 
       return {
         ...baseResult,

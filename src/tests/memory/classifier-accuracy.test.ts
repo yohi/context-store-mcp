@@ -34,7 +34,8 @@ describe('MemoryClassifier Accuracy Measurement', () => {
 
         // Semantic samples (3 samples)
         {
-          content: 'REST APIは、HTTPメソッドを使用してリソースを操作する標準的なアーキテクチャパターンである。',
+          content:
+            'REST APIは、HTTPメソッドを使用してリソースを操作する標準的なアーキテクチャパターンである。',
           trueType: 'semantic',
         },
         {
@@ -48,7 +49,8 @@ describe('MemoryClassifier Accuracy Measurement', () => {
 
         // Procedural samples (3 samples)
         {
-          content: 'バグを修正する方法: 1. エラーログを確認する。2. デバッグする。3. テストを実行する。',
+          content:
+            'バグを修正する方法: 1. エラーログを確認する。2. デバッグする。3. テストを実行する。',
           trueType: 'procedural',
         },
         {
@@ -189,22 +191,28 @@ describe('MemoryClassifier Accuracy Measurement', () => {
       // Create a balanced dataset with clear examples
       const balancedDataset: LabeledSample[] = [
         // 10 episodic samples
-        ...Array(10).fill(null).map((_, i) => ({
-          content: `昨日、チームミーティングで話し合った件について${i + 1}。`,
-          trueType: 'episodic' as MemoryType,
-        })),
+        ...Array(10)
+          .fill(null)
+          .map((_, i) => ({
+            content: `昨日、チームミーティングで話し合った件について${i + 1}。`,
+            trueType: 'episodic' as MemoryType,
+          })),
 
         // 10 semantic samples
-        ...Array(10).fill(null).map((_, i) => ({
-          content: `API仕様とは、リソースを操作する標準的なパターンである${i + 1}。`,
-          trueType: 'semantic' as MemoryType,
-        })),
+        ...Array(10)
+          .fill(null)
+          .map((_, i) => ({
+            content: `API仕様とは、リソースを操作する標準的なパターンである${i + 1}。`,
+            trueType: 'semantic' as MemoryType,
+          })),
 
         // 10 procedural samples
-        ...Array(10).fill(null).map((_, i) => ({
-          content: `この問題を解決する方法: 1. 確認する。2. 修正する。3. テストする${i + 1}。`,
-          trueType: 'procedural' as MemoryType,
-        })),
+        ...Array(10)
+          .fill(null)
+          .map((_, i) => ({
+            content: `この問題を解決する方法: 1. 確認する。2. 修正する。3. テストする${i + 1}。`,
+            trueType: 'procedural' as MemoryType,
+          })),
       ];
 
       const metrics = await classifier.evaluateAccuracy(balancedDataset);
@@ -271,9 +279,7 @@ describe('MemoryClassifier Accuracy Measurement', () => {
       ];
 
       // Should not throw (Phase 4.2 implementation is placeholder)
-      await expect(
-        classifier.trainClassifier(trainingSamples)
-      ).resolves.not.toThrow();
+      await expect(classifier.trainClassifier(trainingSamples)).resolves.toBeUndefined();
     });
 
     it('should log training sample count', async () => {
@@ -286,9 +292,7 @@ describe('MemoryClassifier Accuracy Measurement', () => {
         },
       ]);
 
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Training with 1 samples')
-      );
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Training with 1 samples'));
 
       consoleSpy.mockRestore();
     });

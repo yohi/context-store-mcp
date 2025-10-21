@@ -43,16 +43,16 @@ function validateTestDatabase(databaseName: string): void {
   if (isProductionDb) {
     throw new Error(
       `FATAL: Tests are attempting to connect to production database "${databaseName}". ` +
-      'Tests must use a test-specific database (e.g., "context_store_test"). ' +
-      'Set POSTGRES_DB environment variable to a test database name containing "test".'
+        'Tests must use a test-specific database (e.g., "context_store_test"). ' +
+        'Set POSTGRES_DB environment variable to a test database name containing "test".'
     );
   }
 
   if (!isTestDb) {
     throw new Error(
       `FATAL: Database name "${databaseName}" does not appear to be a test database. ` +
-      'For safety, test database names must contain "test" or end with "_test". ' +
-      'Set POSTGRES_DB=context_store_test or another test-specific name.'
+        'For safety, test database names must contain "test" or end with "_test". ' +
+        'Set POSTGRES_DB=context_store_test or another test-specific name.'
     );
   }
 
@@ -60,7 +60,7 @@ function validateTestDatabase(databaseName: string): void {
   if (process.env.CI && !process.env.POSTGRES_DB) {
     throw new Error(
       'FATAL: Running in CI environment without explicit POSTGRES_DB set. ' +
-      'For safety, CI must explicitly set POSTGRES_DB to prevent accidental production database access.'
+        'For safety, CI must explicitly set POSTGRES_DB to prevent accidental production database access.'
     );
   }
 }

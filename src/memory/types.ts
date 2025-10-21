@@ -17,9 +17,7 @@ export type MemoryError =
   | { type: 'QUOTA_EXCEEDED'; message: string };
 
 // Result type for operations that can fail
-export type Result<T, E> =
-  | { success: true; value: T }
-  | { success: false; error: E };
+export type Result<T, E> = { success: true; value: T } | { success: false; error: E };
 
 // Memory metadata structure
 // Note: memoryType is stored at top-level Memory.memoryType, not in metadata
@@ -74,10 +72,7 @@ export type UpdateMemoryParams = Partial<
 // Memory Manager service interface
 export interface MemoryManagerService {
   storeMemory(params: StoreMemoryParams): Promise<Result<MemoryId, MemoryError>>;
-  updateMemory(
-    id: MemoryId,
-    updates: UpdateMemoryParams
-  ): Promise<Result<boolean, MemoryError>>;
+  updateMemory(id: MemoryId, updates: UpdateMemoryParams): Promise<Result<boolean, MemoryError>>;
   deleteMemory(id: MemoryId): Promise<Result<boolean, MemoryError>>;
   mergeMemories(ids: MemoryId[]): Promise<Result<MemoryId, MemoryError>>;
 
