@@ -81,6 +81,8 @@ load_secrets() {
 
   # Load secrets from .env file
   # Only export variables that match our expected secret pattern
+  # Pattern matches: *PASSWORD, *KEY, *SECRET (aligned with cleanup_secrets)
+  # Must start with uppercase letter, can contain alphanumerics and underscores
   if [[ -f "${env_file}" ]]; then
     # Safely load environment variables from file
     # This approach correctly handles values with spaces and special characters
@@ -91,7 +93,7 @@ load_secrets() {
       val="${line#*=}"
       # Export with proper quoting to preserve value integrity
       export "$key=$val"
-    done < <(grep -E '^[A-Z_]+PASSWORD=' "${env_file}")
+    done < <(grep -E '^[A-Z][A-Z0-9_]*(PASSWORD|KEY|SECRET)=' "${env_file}")
 
     log_info "Test secrets loaded successfully"
     log_info "Secrets will be automatically cleared after tests"
