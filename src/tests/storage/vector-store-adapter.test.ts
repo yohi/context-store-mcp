@@ -99,6 +99,38 @@ describe('pgvector format parsing (parsePgvector)', () => {
       expect(result[0]).toBe(0);
       expect(result[1535]).toBeCloseTo(0.9993489583333333);
     });
+
+    it('配列にNaNが含まれる場合にエラーをスローする', () => {
+      const input = [0.1, NaN, 0.3];
+
+      expect(() => VectorStoreAdapter.parsePgvector(input)).toThrow(
+        'Invalid number in pgvector array'
+      );
+    });
+
+    it('配列にInfinityが含まれる場合にエラーをスローする', () => {
+      const input = [0.1, Infinity, 0.3];
+
+      expect(() => VectorStoreAdapter.parsePgvector(input)).toThrow(
+        'Invalid number in pgvector array'
+      );
+    });
+
+    it('配列に-Infinityが含まれる場合にエラーをスローする', () => {
+      const input = [0.1, -Infinity, 0.3];
+
+      expect(() => VectorStoreAdapter.parsePgvector(input)).toThrow(
+        'Invalid number in pgvector array'
+      );
+    });
+
+    it('配列に不正な文字列が含まれる場合にエラーをスローする', () => {
+      const input = [0.1, 'invalid', 0.3];
+
+      expect(() => VectorStoreAdapter.parsePgvector(input)).toThrow(
+        'Invalid number in pgvector array'
+      );
+    });
   });
 
   describe('文字列形式の入力', () => {
@@ -151,6 +183,18 @@ describe('pgvector format parsing (parsePgvector)', () => {
   describe('エラーケース', () => {
     it('不正な数値を含む文字列でエラーをスローする', () => {
       const input = '[0.1,invalid,0.3]';
+
+      expect(() => VectorStoreAdapter.parsePgvector(input)).toThrow('Invalid number in pgvector string');
+    });
+
+    it('文字列にInfinityが含まれる場合にエラーをスローする', () => {
+      const input = '[0.1,Infinity,0.3]';
+
+      expect(() => VectorStoreAdapter.parsePgvector(input)).toThrow('Invalid number in pgvector string');
+    });
+
+    it('文字列に-Infinityが含まれる場合にエラーをスローする', () => {
+      const input = '[0.1,-Infinity,0.3]';
 
       expect(() => VectorStoreAdapter.parsePgvector(input)).toThrow('Invalid number in pgvector string');
     });

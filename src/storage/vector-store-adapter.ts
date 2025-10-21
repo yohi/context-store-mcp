@@ -384,9 +384,15 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
    */
   /** @internal テスト用にエクスポート */
   public static parsePgvector(value: unknown): number[] {
-    // 既に配列の場合は各要素を数値に変換
+    // 既に配列の場合は各要素を数値に変換し、バリデーションを実施
     if (Array.isArray(value)) {
-      return (value as unknown[]).map((n) => Number(n));
+      return (value as unknown[]).map((n) => {
+        const num = Number(n);
+        if (!Number.isFinite(num)) {
+          throw new Error(`Invalid number in pgvector array: ${n}`);
+        }
+        return num;
+      });
     }
 
     // 文字列の場合はパース
@@ -402,7 +408,7 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
 
       return body.split(',').map((x) => {
         const num = Number(x.trim());
-        if (isNaN(num)) {
+        if (!Number.isFinite(num)) {
           throw new Error(`Invalid number in pgvector string: ${x}`);
         }
         return num;
