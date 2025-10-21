@@ -4,7 +4,7 @@
  * リレーションシップ作成時のバリデーションとセキュリティテスト
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { GraphStoreAdapter } from '../../storage/graph-store-adapter';
 import { randomUUID } from 'crypto';
 
@@ -27,16 +27,31 @@ describe('Relationship Validation and Security', () => {
 
   describe('Relationship type validation', () => {
     let validNodeId: string;
+    let createdNodeIds: string[] = [];
 
     beforeEach(async () => {
       // テスト用の有効なノードを作成
       validNodeId = randomUUID();
       await adapter.createNode('Memory', { id: validNodeId, name: 'Test Node' });
+      createdNodeIds.push(validNodeId);
+    });
+
+    afterEach(async () => {
+      // 作成されたすべてのノードを削除
+      for (const nodeId of createdNodeIds) {
+        try {
+          await adapter.deleteNode(nodeId);
+        } catch (error) {
+          // ノードが既に削除されている場合は無視
+        }
+      }
+      createdNodeIds = [];
     });
 
     it('有効なリレーションシップタイプ（大文字）を受け付ける', async () => {
       const node2Id = randomUUID();
       await adapter.createNode('Memory', { id: node2Id, name: 'Node 2' });
+      createdNodeIds.push(node2Id);
 
       // 大文字のタイプは成功する
       await expect(
@@ -47,6 +62,7 @@ describe('Relationship Validation and Security', () => {
     it('有効なリレーションシップタイプ（アンダースコア付き）を受け付ける', async () => {
       const node2Id = randomUUID();
       await adapter.createNode('Memory', { id: node2Id, name: 'Node 2' });
+      createdNodeIds.push(node2Id);
 
       await expect(
         adapter.createRelationship(validNodeId, node2Id, 'DERIVED_FROM')
@@ -56,6 +72,7 @@ describe('Relationship Validation and Security', () => {
     it('有効なリレーションシップタイプ（数字を含む）を受け付ける', async () => {
       const node2Id = randomUUID();
       await adapter.createNode('Memory', { id: node2Id, name: 'Node 2' });
+      createdNodeIds.push(node2Id);
 
       await expect(
         adapter.createRelationship(validNodeId, node2Id, 'VERSION_2_COMPATIBLE')
@@ -65,6 +82,7 @@ describe('Relationship Validation and Security', () => {
     it('小文字のタイプを拒否する', async () => {
       const node2Id = randomUUID();
       await adapter.createNode('Memory', { id: node2Id, name: 'Node 2' });
+      createdNodeIds.push(node2Id);
 
       await expect(adapter.createRelationship(validNodeId, node2Id, 'references')).rejects.toThrow(
         /Invalid relationship type/
@@ -74,6 +92,7 @@ describe('Relationship Validation and Security', () => {
     it('ハイフンを含むタイプを拒否する', async () => {
       const node2Id = randomUUID();
       await adapter.createNode('Memory', { id: node2Id, name: 'Node 2' });
+      createdNodeIds.push(node2Id);
 
       await expect(
         adapter.createRelationship(validNodeId, node2Id, 'DERIVED-FROM')
@@ -83,6 +102,7 @@ describe('Relationship Validation and Security', () => {
     it('スペースを含むタイプを拒否する', async () => {
       const node2Id = randomUUID();
       await adapter.createNode('Memory', { id: node2Id, name: 'Node 2' });
+      createdNodeIds.push(node2Id);
 
       await expect(
         adapter.createRelationship(validNodeId, node2Id, 'DERIVED FROM')
@@ -92,6 +112,7 @@ describe('Relationship Validation and Security', () => {
     it('特殊文字を含むタイプを拒否する（SQLインジェクション対策）', async () => {
       const node2Id = randomUUID();
       await adapter.createNode('Memory', { id: node2Id, name: 'Node 2' });
+      createdNodeIds.push(node2Id);
 
       const maliciousTypes = [
         "REFS'; DROP TABLE memories; --",
@@ -111,6 +132,7 @@ describe('Relationship Validation and Security', () => {
     it('空のタイプを拒否する', async () => {
       const node2Id = randomUUID();
       await adapter.createNode('Memory', { id: node2Id, name: 'Node 2' });
+      createdNodeIds.push(node2Id);
 
       await expect(adapter.createRelationship(validNodeId, node2Id, '')).rejects.toThrow(
         /cannot be empty/
@@ -120,6 +142,7 @@ describe('Relationship Validation and Security', () => {
     it('長すぎるタイプを拒否する（100文字超）', async () => {
       const node2Id = randomUUID();
       await adapter.createNode('Memory', { id: node2Id, name: 'Node 2' });
+      createdNodeIds.push(node2Id);
 
       const longType = 'A'.repeat(101);
       await expect(adapter.createRelationship(validNodeId, node2Id, longType)).rejects.toThrow(
@@ -129,6 +152,20 @@ describe('Relationship Validation and Security', () => {
   });
 
   describe('Node existence validation', () => {
+    let createdNodeIds: string[] = [];
+
+    afterEach(async () => {
+      // 作成されたすべてのノードを削除
+      for (const nodeId of createdNodeIds) {
+        try {
+          await adapter.deleteNode(nodeId);
+        } catch (error) {
+          // ノードが既に削除されている場合は無視
+        }
+      }
+      createdNodeIds = [];
+    });
+
     it('両ノードが存在しない場合にエラーを投げる', async () => {
       const fakeNode1 = randomUUID();
       const fakeNode2 = randomUUID();
@@ -142,6 +179,7 @@ describe('Relationship Validation and Security', () => {
       const fakeNode = randomUUID();
       const validNode = randomUUID();
       await adapter.createNode('Memory', { id: validNode, name: 'Valid' });
+      createdNodeIds.push(validNode);
 
       await expect(
         adapter.createRelationship(fakeNode, validNode, 'REFERENCES')
@@ -151,6 +189,7 @@ describe('Relationship Validation and Security', () => {
     it('送信先ノードが存在しない場合にエラーを投げる', async () => {
       const validNode = randomUUID();
       await adapter.createNode('Memory', { id: validNode, name: 'Valid' });
+      createdNodeIds.push(validNode);
       const fakeNode = randomUUID();
 
       await expect(
@@ -163,6 +202,7 @@ describe('Relationship Validation and Security', () => {
       const node2 = randomUUID();
       await adapter.createNode('Memory', { id: node1, name: 'Node 1' });
       await adapter.createNode('Memory', { id: node2, name: 'Node 2' });
+      createdNodeIds.push(node1, node2);
 
       const edgeId = await adapter.createRelationship(node1, node2, 'REFERENCES');
       expect(edgeId).toBeDefined();
@@ -183,6 +223,20 @@ describe('Relationship Validation and Security', () => {
       node2Id = randomUUID();
       await adapter.createNode('Memory', { id: node1Id, name: 'Node 1' });
       await adapter.createNode('Memory', { id: node2Id, name: 'Node 2' });
+    });
+
+    afterEach(async () => {
+      // 作成されたすべてのノードを削除
+      try {
+        await adapter.deleteNode(node1Id);
+      } catch (error) {
+        // ノードが既に削除されている場合は無視
+      }
+      try {
+        await adapter.deleteNode(node2Id);
+      } catch (error) {
+        // ノードが既に削除されている場合は無視
+      }
     });
 
     it('undefined プロパティを除去する', async () => {

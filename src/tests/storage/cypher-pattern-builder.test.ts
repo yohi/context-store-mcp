@@ -12,35 +12,35 @@ describe('CypherPatternBuilder', () => {
     it('リレーションシップタイプなしのパターンを構築できる', () => {
       const pattern = new CypherPatternBuilder().build();
 
-      expect(pattern.pattern).toBe('-[*1..5]-()');
+      expect(pattern.pattern).toBe('-[*1..5]-(end)');
       expect(pattern.parameters).toEqual({});
     });
 
     it('outgoing方向のリレーションシップパターンを構築できる', () => {
       const pattern = new CypherPatternBuilder().relationship('REFERENCES', 'outgoing').build();
 
-      expect(pattern.pattern).toBe('-[:REFERENCES*1..5]->()');
+      expect(pattern.pattern).toBe('-[:REFERENCES*1..5]->(end)');
       expect(pattern.parameters).toEqual({});
     });
 
     it('incoming方向のリレーションシップパターンを構築できる', () => {
       const pattern = new CypherPatternBuilder().relationship('DERIVED_FROM', 'incoming').build();
 
-      expect(pattern.pattern).toBe('<-[:DERIVED_FROM*1..5]-()');
+      expect(pattern.pattern).toBe('<-[:DERIVED_FROM*1..5]-(end)');
       expect(pattern.parameters).toEqual({});
     });
 
     it('both方向のリレーションシップパターンを構築できる', () => {
       const pattern = new CypherPatternBuilder().relationship('SUPPORTS', 'both').build();
 
-      expect(pattern.pattern).toBe('-[:SUPPORTS*1..5]-()');
+      expect(pattern.pattern).toBe('-[:SUPPORTS*1..5]-(end)');
       expect(pattern.parameters).toEqual({});
     });
 
     it('デフォルトの方向はbothである', () => {
       const pattern = new CypherPatternBuilder().relationship('REFERENCES').build();
 
-      expect(pattern.pattern).toBe('-[:REFERENCES*1..5]-()');
+      expect(pattern.pattern).toBe('-[:REFERENCES*1..5]-(end)');
     });
   });
 
@@ -48,7 +48,7 @@ describe('CypherPatternBuilder', () => {
     it('単一のノードラベルを設定できる', () => {
       const pattern = new CypherPatternBuilder().nodeLabel('Memory').build();
 
-      expect(pattern.pattern).toBe('-[*1..5]-(:Memory)');
+      expect(pattern.pattern).toBe('-[*1..5]-(end:Memory)');
       expect(pattern.parameters).toEqual({});
     });
 
@@ -58,7 +58,7 @@ describe('CypherPatternBuilder', () => {
         .nodeLabel('Episodic')
         .build();
 
-      expect(pattern.pattern).toBe('-[*1..5]-(:Memory:Episodic)');
+      expect(pattern.pattern).toBe('-[*1..5]-(end:Memory:Episodic)');
       expect(pattern.parameters).toEqual({});
     });
 
@@ -68,7 +68,7 @@ describe('CypherPatternBuilder', () => {
         .nodeLabel('Memory')
         .build();
 
-      expect(pattern.pattern).toBe('-[:REFERENCES*1..5]->(:Memory)');
+      expect(pattern.pattern).toBe('-[:REFERENCES*1..5]->(end:Memory)');
       expect(pattern.parameters).toEqual({});
     });
   });
@@ -77,7 +77,7 @@ describe('CypherPatternBuilder', () => {
     it('単一のWHERE条件を設定できる', () => {
       const pattern = new CypherPatternBuilder().where({ type: 'semantic' }).build();
 
-      expect(pattern.pattern).toBe('-[*1..5]-()');
+      expect(pattern.pattern).toBe('-[*1..5]-(end)');
       expect(pattern.parameters).toEqual({ type: 'semantic' });
     });
 
@@ -86,7 +86,7 @@ describe('CypherPatternBuilder', () => {
         .where({ type: 'semantic', category: 'knowledge' })
         .build();
 
-      expect(pattern.pattern).toBe('-[*1..5]-()');
+      expect(pattern.pattern).toBe('-[*1..5]-(end)');
       expect(pattern.parameters).toEqual({
         type: 'semantic',
         category: 'knowledge',
@@ -99,7 +99,7 @@ describe('CypherPatternBuilder', () => {
         .where({ category: 'knowledge' })
         .build();
 
-      expect(pattern.pattern).toBe('-[*1..5]-()');
+      expect(pattern.pattern).toBe('-[*1..5]-(end)');
       expect(pattern.parameters).toEqual({
         type: 'semantic',
         category: 'knowledge',
@@ -111,19 +111,19 @@ describe('CypherPatternBuilder', () => {
     it('最大探索深度を設定できる', () => {
       const pattern = new CypherPatternBuilder().maxDepth(3).build();
 
-      expect(pattern.pattern).toBe('-[*1..3]-()');
+      expect(pattern.pattern).toBe('-[*1..3]-(end)');
     });
 
     it('最小探索深度を設定できる', () => {
       const pattern = new CypherPatternBuilder().minDepth(2).build();
 
-      expect(pattern.pattern).toBe('-[*2..5]-()');
+      expect(pattern.pattern).toBe('-[*2..5]-(end)');
     });
 
     it('最小と最大の探索深度を両方設定できる', () => {
       const pattern = new CypherPatternBuilder().minDepth(2).maxDepth(8).build();
 
-      expect(pattern.pattern).toBe('-[*2..8]-()');
+      expect(pattern.pattern).toBe('-[*2..8]-(end)');
     });
 
     it('最大深度は1から15の範囲である必要がある', () => {
@@ -153,6 +153,22 @@ describe('CypherPatternBuilder', () => {
         'minDepth must be an integer between 1 and 15'
       );
     });
+
+    it('minDepthがmaxDepthより大きい場合はエラーをスローする', () => {
+      expect(() => new CypherPatternBuilder().minDepth(10).maxDepth(5).build()).toThrow(
+        'minDepthValue (10) cannot be greater than maxDepthValue (5)'
+      );
+
+      expect(() => new CypherPatternBuilder().minDepth(8).maxDepth(3).build()).toThrow(
+        'minDepthValue (8) cannot be greater than maxDepthValue (3)'
+      );
+    });
+
+    it('minDepthとmaxDepthが同じ値の場合は許容される', () => {
+      const pattern = new CypherPatternBuilder().minDepth(3).maxDepth(3).build();
+
+      expect(pattern.pattern).toBe('-[*3..3]-(end)');
+    });
   });
 
   describe('複合パターンの構築', () => {
@@ -166,11 +182,23 @@ describe('CypherPatternBuilder', () => {
         .maxDepth(4)
         .build();
 
-      expect(pattern.pattern).toBe('-[:REFERENCES*2..4]->(:Memory:Semantic)');
+      expect(pattern.pattern).toBe('-[:REFERENCES*2..4]->(end:Memory:Semantic)');
       expect(pattern.parameters).toEqual({
         type: 'concept',
         importance: 'high',
       });
+    });
+
+    it('ノードにendエイリアスが付与される', () => {
+      const pattern = new CypherPatternBuilder().build();
+
+      expect(pattern.pattern).toContain('(end)');
+    });
+
+    it('ラベル付きノードにもendエイリアスが付与される', () => {
+      const pattern = new CypherPatternBuilder().nodeLabel('Memory').build();
+
+      expect(pattern.pattern).toContain('(end:Memory)');
     });
   });
 

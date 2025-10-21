@@ -6,8 +6,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { GraphStoreAdapter } from '../../storage/graph-store-adapter';
-import type { NodeId } from '../../types';
+import { GraphStoreAdapter, type NodeId } from '../../storage/graph-store-adapter';
 
 describe('findShortestPath - maxDepthバリデーション', () => {
   let adapter: GraphStoreAdapter;
@@ -22,26 +21,15 @@ describe('findShortestPath - maxDepthバリデーション', () => {
       database: process.env.NEO4J_DATABASE || 'context_store_test',
     });
 
-    await adapter.connect();
-
     // テスト用ノードを作成
-    node1Id = await adapter.createNode({
-      labels: ['TestNode'],
-      properties: { name: 'Node1' },
-    });
+    const id1 = 'test-node-1-' + Date.now();
+    const id2 = 'test-node-2-' + Date.now();
 
-    node2Id = await adapter.createNode({
-      labels: ['TestNode'],
-      properties: { name: 'Node2' },
-    });
+    node1Id = await adapter.createNode('TestNode', { id: id1, name: 'Node1' });
+    node2Id = await adapter.createNode('TestNode', { id: id2, name: 'Node2' });
 
     // ノード間にリレーションシップを作成
-    await adapter.createRelationship({
-      fromNodeId: node1Id,
-      toNodeId: node2Id,
-      type: 'CONNECTED',
-      properties: {},
-    });
+    await adapter.createRelationship(node1Id, node2Id, 'CONNECTED', {});
   });
 
   afterAll(async () => {

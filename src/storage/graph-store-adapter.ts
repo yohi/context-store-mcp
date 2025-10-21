@@ -237,6 +237,13 @@ export class CypherPatternBuilder {
    * @returns パターン文字列とパラメータを含む検証済みオブジェクト
    */
   build(): ValidatedCypherPattern {
+    // 深度の境界検証: minDepthがmaxDepthより大きい場合は失敗
+    if (this.minDepthValue > this.maxDepthValue) {
+      throw new Error(
+        `minDepthValue (${this.minDepthValue}) cannot be greater than maxDepthValue (${this.maxDepthValue})`
+      );
+    }
+
     // パターン文字列を構築
     let pattern = '';
 
@@ -265,12 +272,12 @@ export class CypherPatternBuilder {
       }
     }
 
-    // ノードラベル
+    // ノードラベル (エイリアス "end" を追加してWHERE句で参照可能にする)
     if (this.nodeLabels.length > 0) {
       const labelStr = this.nodeLabels.map((l) => `:${l}`).join('');
-      pattern += `(${labelStr})`;
+      pattern += `(end${labelStr})`;
     } else {
-      pattern += '()';
+      pattern += '(end)';
     }
 
     // パラメータを構築 (WHERE条件)
@@ -926,6 +933,7 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
           `
           MATCH (a)-[r]->(b)
           WHERE r.edgeId = $edgeId
+             OR ((r.edgeId IS NULL OR r.edgeId = '') AND elementId(r) = $edgeId)
           RETURN r, type(r) AS relType, a.id AS fromId, b.id AS toId
           LIMIT 1
           `,
@@ -1009,14 +1017,14 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
           const toId = record.get('toId');
 
           // すべてのエッジにはedgeIdプロパティが必須（UUID v4）
-          // 存在しない場合は古いデータなので警告を出す
+          // 存在しない場合は古いデータなので警告を出し、elementIdをフォールバックとして使用
           let edgeId = rel.properties.edgeId;
           if (!edgeId) {
             console.warn(
               `Legacy edge without edgeId detected: ${fromId} -[${relType}]-> ${toId}. ` +
-                `Generating temporary UUID. Please migrate data.`
+                `Using elementId as fallback. Please migrate data.`
             );
-            edgeId = this.generateEdgeId();
+            edgeId = rel.elementId;
           }
 
           return {
@@ -1040,13 +1048,17 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
       const session = this.driver.session({ database: this.database });
       try {
         // 削除前にマッチ数をカウントし、その後削除する
+        // edgeIdプロパティが存在する場合はそれでマッチング
+        // edgeIdが存在しない（nullまたは空文字列）場合はelementIdでマッチング
         const result = await session.run(
           `
           MATCH ()-[r]->()
           WHERE r.edgeId = $edgeId
+             OR ((r.edgeId IS NULL OR r.edgeId = '') AND elementId(r) = $edgeId)
           WITH count(r) AS cnt
           MATCH ()-[r]->()
           WHERE r.edgeId = $edgeId
+             OR ((r.edgeId IS NULL OR r.edgeId = '') AND elementId(r) = $edgeId)
           DELETE r
           RETURN cnt
           `,
