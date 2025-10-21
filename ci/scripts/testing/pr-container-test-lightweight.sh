@@ -82,8 +82,16 @@ load_secrets() {
   # Load secrets from .env file
   # Only export variables that match our expected secret pattern
   if [[ -f "${env_file}" ]]; then
-    # shellcheck disable=SC2046
-    export $(grep -E '^[A-Z_]+PASSWORD=' "${env_file}" | xargs)
+    # Safely load environment variables from file
+    # This approach correctly handles values with spaces and special characters
+    while IFS= read -r line; do
+      # Extract key (everything before first '=')
+      key="${line%%=*}"
+      # Extract value (everything after first '=')
+      val="${line#*=}"
+      # Export with proper quoting to preserve value integrity
+      export "$key=$val"
+    done < <(grep -E '^[A-Z_]+PASSWORD=' "${env_file}")
 
     log_info "Test secrets loaded successfully"
     log_info "Secrets will be automatically cleared after tests"

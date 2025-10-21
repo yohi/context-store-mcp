@@ -805,15 +805,16 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
       const session = this.driver.session({ database: this.database });
       try {
         // DETACH DELETE でノードとその関連するエッジを削除
+        // 削除前にカウントを取得してから削除を実行
         const result = await session.run(
-          'MATCH (n {id: $id}) DETACH DELETE n RETURN count(n) AS count',
+          'MATCH (n {id: $id}) WITH count(n) AS cnt, collect(n) AS nodes WHERE cnt > 0 FOREACH (node IN nodes | DETACH DELETE node) RETURN cnt',
           {
             id,
           }
         );
 
-        const count = result.records[0]?.get('count');
-        return count && count.toNumber() > 0;
+        const cnt = result.records[0]?.get('cnt');
+        return cnt && cnt.toNumber() > 0;
       } finally {
         await session.close();
       }
@@ -1145,8 +1146,15 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
               const fromNodeId = elementIdToNodeId.get(r.startNodeElementId) || '';
               const toNodeId = elementIdToNodeId.get(r.endNodeElementId) || '';
 
+              // edgeIdプロパティが存在しない場合はelementIdをフォールバックとして使用
+              // (getNodeRelationshipsと同じロジック)
+              let edgeId = r.properties.edgeId;
+              if (!edgeId) {
+                edgeId = r.elementId || '';
+              }
+
               return {
-                id: r.properties.edgeId || '',
+                id: edgeId,
                 fromNodeId,
                 toNodeId,
                 type: r.type,
@@ -1210,8 +1218,15 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
             const fromNodeId = elementIdToNodeId.get(r.startNodeElementId) || '';
             const toNodeId = elementIdToNodeId.get(r.endNodeElementId) || '';
 
+            // edgeIdプロパティが存在しない場合はelementIdをフォールバックとして使用
+            // (getNodeRelationships, traverseGraphと同じロジック)
+            let edgeId = r.properties.edgeId;
+            if (!edgeId) {
+              edgeId = r.elementId || '';
+            }
+
             return {
-              id: r.properties.edgeId || '',
+              id: edgeId,
               fromNodeId,
               toNodeId,
               type: r.type,
@@ -1284,14 +1299,17 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
         // 本格的な実装には Neo4j Graph Data Science ライブラリが必要だが、
         // 基本的な連結成分分析でコミュニティを近似
         //
-        // APOCなし環境のため、sorted()関数でmemberIdsをソートし、
+        // APOCなし環境のため、UNWIND + ORDER BY + COLLECTでmemberIdsをソートし、
         // コミュニティIDと memberIds の安定化を実現
         const result = await session.run(`
           MATCH (n)
           OPTIONAL MATCH path = (n)-[*]-(m)
           WITH n, collect(DISTINCT m.id) AS connectedIds
           WITH n.id AS nodeId, connectedIds + [n.id] AS allIds
-          WITH sorted(allIds) AS memberIds
+          UNWIND allIds AS memberId
+          WITH allIds, memberId
+          ORDER BY memberId
+          WITH allIds, collect(memberId) AS memberIds
           WITH memberIds
           ORDER BY size(memberIds) DESC, memberIds
           WITH collect(memberIds) AS allCommunities
