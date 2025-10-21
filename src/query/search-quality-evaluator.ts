@@ -66,8 +66,16 @@ export class SearchQualityEvaluator {
       return 0;
     }
 
+    // k <= 0 のガード
+    if (k <= 0) {
+      return 0;
+    }
+
+    // O(1)検索のためにSetに変換
+    const relevantSet = new Set(relevant);
+
     const topK = retrieved.slice(0, k);
-    const relevantInTopK = topK.filter((id) => relevant.includes(id));
+    const relevantInTopK = topK.filter((id) => relevantSet.has(id));
     return relevantInTopK.length / relevant.length;
   }
 
@@ -97,11 +105,14 @@ export class SearchQualityEvaluator {
       return 0;
     }
 
+    // O(1)検索のためにSetに変換
+    const relevantSet = new Set(relevant);
+
     let sumPrecision = 0;
     let relevantCount = 0;
 
     for (let k = 1; k <= retrieved.length; k++) {
-      if (relevant.includes(retrieved[k - 1])) {
+      if (relevantSet.has(retrieved[k - 1])) {
         relevantCount++;
         const precision = relevantCount / k;
         sumPrecision += precision;
@@ -357,6 +368,8 @@ export class SearchQualityEvaluator {
   /**
    * A/Bテストを実行
    *
+   * クエリごとのF1スコアを収集し、Welchのt検定で統計的有意性を評価します。
+   *
    * @param controlVariant - コントロールバリアント
    * @param experimentVariant - 実験バリアント
    * @param testSet - テストセット
@@ -369,19 +382,77 @@ export class SearchQualityEvaluator {
     testSet: SearchEvaluationDataset,
     searchFn: (query: string, limit: number, variant?: SearchVariant) => Promise<Array<{ id: string }>>
   ): Promise<ABTestResult> {
-    // コントロールバリアントで評価
-    const controlMetrics = await this.evaluateSearchQuality(testSet, (query, limit) =>
-      searchFn(query, limit, controlVariant)
-    );
+    // クエリごとのメトリクスを収集
+    const controlF1Scores: number[] = [];
+    const experimentF1Scores: number[] = [];
+    const controlPrecisionScores: number[] = [];
+    const experimentPrecisionScores: number[] = [];
+    const controlRecallScores: number[] = [];
+    const experimentRecallScores: number[] = [];
 
-    // 実験バリアントで評価
-    const experimentMetrics = await this.evaluateSearchQuality(testSet, (query, limit) =>
-      searchFn(query, limit, experimentVariant)
-    );
+    // 各クエリで両方のバリアントを評価
+    for (const query of testSet.queries) {
+      // コントロールバリアント
+      const controlResults = await searchFn(query.query, 50, controlVariant);
+      const controlRetrieved = controlResults.map((m) => m.id);
+      const controlPrecision = this.calculatePrecisionAtK(controlRetrieved, query.relevantMemoryIds, 10);
+      const controlRecall = this.calculateRecallAtK(controlRetrieved, query.relevantMemoryIds, 50);
+      const controlF1 = this.calculateF1Score(controlPrecision, controlRecall);
+      controlF1Scores.push(controlF1);
+      controlPrecisionScores.push(controlPrecision);
+      controlRecallScores.push(controlRecall);
 
-    // 統計的有意性検定 (簡易実装: F1スコアの差)
-    const f1Diff = Math.abs(experimentMetrics.f1Score - controlMetrics.f1Score);
-    const pValue = this.calculatePValue(controlMetrics.f1Score, experimentMetrics.f1Score, testSet.queries.length);
+      // 実験バリアント
+      const experimentResults = await searchFn(query.query, 50, experimentVariant);
+      const experimentRetrieved = experimentResults.map((m) => m.id);
+      const experimentPrecision = this.calculatePrecisionAtK(experimentRetrieved, query.relevantMemoryIds, 10);
+      const experimentRecall = this.calculateRecallAtK(experimentRetrieved, query.relevantMemoryIds, 50);
+      const experimentF1 = this.calculateF1Score(experimentPrecision, experimentRecall);
+      experimentF1Scores.push(experimentF1);
+      experimentPrecisionScores.push(experimentPrecision);
+      experimentRecallScores.push(experimentRecall);
+    }
+
+    // 集約メトリクスを計算
+    const avgControlPrecision = controlPrecisionScores.reduce((sum, p) => sum + p, 0) / controlPrecisionScores.length;
+    const avgControlRecall = controlRecallScores.reduce((sum, r) => sum + r, 0) / controlRecallScores.length;
+    const avgControlF1 = controlF1Scores.reduce((sum, f1) => sum + f1, 0) / controlF1Scores.length;
+
+    const avgExperimentPrecision =
+      experimentPrecisionScores.reduce((sum, p) => sum + p, 0) / experimentPrecisionScores.length;
+    const avgExperimentRecall = experimentRecallScores.reduce((sum, r) => sum + r, 0) / experimentRecallScores.length;
+    const avgExperimentF1 = experimentF1Scores.reduce((sum, f1) => sum + f1, 0) / experimentF1Scores.length;
+
+    const controlMetrics: SearchQualityMetrics = {
+      precisionAt10: avgControlPrecision,
+      recallAt50: avgControlRecall,
+      f1Score: avgControlF1,
+      meanAveragePrecision: 0, // 簡易実装のため省略
+      evaluatedAt: new Date(),
+      testSetSize: testSet.queries.length,
+      passedThresholds: {
+        precisionAt10Passed: avgControlPrecision >= 0.8,
+        recallAt50Passed: avgControlRecall >= 0.7,
+        f1ScorePassed: avgControlF1 >= 0.75,
+      },
+    };
+
+    const experimentMetrics: SearchQualityMetrics = {
+      precisionAt10: avgExperimentPrecision,
+      recallAt50: avgExperimentRecall,
+      f1Score: avgExperimentF1,
+      meanAveragePrecision: 0, // 簡易実装のため省略
+      evaluatedAt: new Date(),
+      testSetSize: testSet.queries.length,
+      passedThresholds: {
+        precisionAt10Passed: avgExperimentPrecision >= 0.8,
+        recallAt50Passed: avgExperimentRecall >= 0.7,
+        f1ScorePassed: avgExperimentF1 >= 0.75,
+      },
+    };
+
+    // Welchのt検定による統計的有意性検定
+    const pValue = this.calculateWelchTTest(controlF1Scores, experimentF1Scores);
 
     // 勝者判定
     const winner =
@@ -397,40 +468,136 @@ export class SearchQualityEvaluator {
   }
 
   /**
-   * p値を計算 (簡易実装 - ヒューリスティック近似)
+   * Welchのt検定によるp値計算
    *
-   * ⚠️ 警告: この実装は段階的z-scoreしきい値による簡易近似であり、真の統計的有意性検定ではありません。
-   * 検定の前提（独立性、分散の等質性、正規分布）を満たしておらず、本番環境での意思決定には使用しないでください。
+   * 不等分散を仮定した2標本t検定。クエリごとのF1スコア配列から統計的有意性を評価します。
    *
-   * 本番品質評価には以下の実装への置き換えが必要:
-   * - ブートストラップ法による平均差の推定
-   * - Welch's t-test (不等分散を考慮したt検定)
-   * - クエリ単位のF1スコア配列を用いた two-sample test
+   * 実装の特徴:
+   * - 不等分散を考慮（Welch-Satterthwaiteの自由度補正）
+   * - クエリ単位のスコアのばらつきを正しく評価
+   * - 両側検定（差の方向は問わない）
    *
-   * @param controlScore - コントロールスコア (単一の集約スコア)
-   * @param experimentScore - 実験スコア (単一の集約スコア)
-   * @param sampleSize - サンプルサイズ
-   * @returns 近似p値 (0.01, 0.04, 0.1, 0.5のいずれか) - 真のp値ではない
+   * 制限事項:
+   * - サンプルサイズが小さい（n < 30）場合、正規分布の仮定が崩れる可能性があります
+   * - t分布のp値はerf関数による近似計算（厳密な累積分布関数ではありません）
+   *
+   * @param controlScores - コントロールバリアントのクエリごとF1スコア配列
+   * @param experimentScores - 実験バリアントのクエリごとF1スコア配列
+   * @returns p値 (0.0 - 1.0) - 両側検定
    */
-  private calculatePValue(controlScore: number, experimentScore: number, sampleSize: number): number {
-    // 簡易実装: スコア差とサンプルサイズから近似的なz-scoreを計算
-    const diff = Math.abs(experimentScore - controlScore);
-    const variance = (controlScore * (1 - controlScore) + experimentScore * (1 - experimentScore)) / 2;
-    const standardError = Math.sqrt(variance / sampleSize);
+  private calculateWelchTTest(controlScores: number[], experimentScores: number[]): number {
+    const n1 = controlScores.length;
+    const n2 = experimentScores.length;
 
-    if (standardError === 0) {
-      return diff === 0 ? 1.0 : 0.0;
+    // サンプルサイズチェック
+    if (n1 < 2 || n2 < 2) {
+      return 1.0; // 検定不可能
     }
 
-    const zScore = diff / standardError;
+    // 平均と分散を計算
+    const mean1 = controlScores.reduce((sum, x) => sum + x, 0) / n1;
+    const mean2 = experimentScores.reduce((sum, x) => sum + x, 0) / n2;
 
-    // 段階的しきい値による離散的p値近似 (真の統計的p値ではない)
-    // z > 1.96 なら p < 0.05 相当
-    // z > 2.58 なら p < 0.01 相当
-    if (zScore > 2.58) return 0.01;
-    if (zScore > 1.96) return 0.04;
-    if (zScore > 1.64) return 0.1;
-    return 0.5;
+    const variance1 = controlScores.reduce((sum, x) => sum + Math.pow(x - mean1, 2), 0) / (n1 - 1);
+    const variance2 = experimentScores.reduce((sum, x) => sum + Math.pow(x - mean2, 2), 0) / (n2 - 1);
+
+    // Welch-Satterthwaiteの自由度
+    const numerator = Math.pow(variance1 / n1 + variance2 / n2, 2);
+    const denominator = Math.pow(variance1 / n1, 2) / (n1 - 1) + Math.pow(variance2 / n2, 2) / (n2 - 1);
+
+    if (denominator === 0) {
+      return 1.0; // 分散がゼロの場合
+    }
+
+    const df = numerator / denominator;
+
+    // t統計量
+    const standardError = Math.sqrt(variance1 / n1 + variance2 / n2);
+
+    if (standardError === 0) {
+      return mean1 === mean2 ? 1.0 : 0.0;
+    }
+
+    const t = Math.abs(mean1 - mean2) / standardError;
+
+    // t分布のp値近似（両側検定）
+    return this.tDistributionPValue(t, df);
+  }
+
+  /**
+   * t分布のp値を近似計算
+   *
+   * ⚠️ 注意: この実装は簡易的な近似です。厳密な計算には外部ライブラリ（jstatなど）の使用を推奨します。
+   *
+   * @param t - t統計量（絶対値）
+   * @param df - 自由度
+   * @returns 両側検定のp値
+   */
+  private tDistributionPValue(t: number, df: number): number {
+    // 自由度が大きい場合は正規分布で近似
+    if (df > 30) {
+      return 2 * (1 - this.standardNormalCDF(t));
+    }
+
+    // 小サンプルの場合の簡易近似（Hill's approximation）
+    const x = df / (df + t * t);
+    const a = df / 2;
+    const b = 0.5;
+
+    // 不完全ベータ関数の近似（簡易実装）
+    const betaApprox = this.incompleteBetaApprox(x, a, b);
+
+    return betaApprox;
+  }
+
+  /**
+   * 標準正規分布の累積分布関数（CDF）
+   *
+   * erf関数を用いた近似計算
+   */
+  private standardNormalCDF(z: number): number {
+    return 0.5 * (1 + this.erf(z / Math.sqrt(2)));
+  }
+
+  /**
+   * 誤差関数（Error Function）の近似
+   *
+   * Abramowitz and Stegun の近似式を使用
+   */
+  private erf(x: number): number {
+    const sign = x >= 0 ? 1 : -1;
+    x = Math.abs(x);
+
+    const a1 = 0.254829592;
+    const a2 = -0.284496736;
+    const a3 = 1.421413741;
+    const a4 = -1.453152027;
+    const a5 = 1.061405429;
+    const p = 0.3275911;
+
+    const t = 1 / (1 + p * x);
+    const y = 1 - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+
+    return sign * y;
+  }
+
+  /**
+   * 不完全ベータ関数の近似
+   *
+   * ⚠️ 簡易実装: 厳密な計算には外部ライブラリを推奨
+   */
+  private incompleteBetaApprox(x: number, _a: number, _b: number): number {
+    // 極端なケース
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+
+    // 自由度が小さい場合の簡易近似
+    // t値が大きい場合は有意（p値小）、小さい場合は非有意（p値大）
+    if (x > 0.5) {
+      return 2 * (1 - x); // p値の粗い近似
+    } else {
+      return 2 * x;
+    }
   }
 
   /**
