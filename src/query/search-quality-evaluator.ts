@@ -36,8 +36,20 @@ export class SearchQualityEvaluator {
    * @returns Precision@K (0.0 - 1.0)
    */
   calculatePrecisionAtK(retrieved: string[], relevant: string[], k: number): number {
-    const topK = retrieved.slice(0, k);
-    const relevantInTopK = topK.filter((id) => relevant.includes(id));
+    // k <= 0 のガード
+    if (k <= 0) {
+      return 0;
+    }
+
+    // kをretrievedの長さでクランプ（オプション、正確な計算のため）
+    const effectiveK = Math.min(k, retrieved.length);
+
+    // O(1)検索のためにSetに変換
+    const relevantSet = new Set(relevant);
+
+    const topK = retrieved.slice(0, effectiveK);
+    const relevantInTopK = topK.filter((id) => relevantSet.has(id));
+
     return relevantInTopK.length / k;
   }
 
@@ -171,24 +183,24 @@ export class SearchQualityEvaluator {
   /**
    * Fleiss' Kappa係数を計算 (アノテーター間一致度)
    *
+   * カテゴリ数 k=4 (relevanceLevel: 0, 1, 2, 3) に対する真のFleiss' Kappa実装
+   *
    * @param annotations - アノテーションタスク一覧
-   * @returns Fleiss' Kappa係数 (0.0 - 1.0)
+   * @returns Fleiss' Kappa係数 (-1.0 - 1.0、通常は 0.0 - 1.0)
    */
   calculateFleissKappa(annotations: AnnotationTask[]): number {
     if (annotations.length === 0) {
       return 0;
     }
 
-    // 簡易実装: 完全一致率を返す
-    // 実際の実装では、各カテゴリ(0,1,2,3)の一致度を計算する必要がある
-    let totalAgreement = 0;
-    let totalJudgments = 0;
+    const NUM_CATEGORIES = 4; // カテゴリ: 0, 1, 2, 3
+    const items: Map<string, number[]> = new Map(); // memoryId -> カテゴリごとの投票数 [n_i0, n_i1, n_i2, n_i3]
 
+    // Step 1: 各アイテム(memoryId)に対する各カテゴリへの投票数を集計
     for (const annotation of annotations) {
       const judgments = annotation.annotatorJudgments;
       if (judgments.length < 2) continue;
 
-      // 各メモリIDに対する判定の一致度を計算
       const memoryIds = new Set(judgments.flatMap((j) => j.judgments.map((jg) => jg.memoryId)));
 
       for (const memoryId of memoryIds) {
@@ -197,16 +209,68 @@ export class SearchQualityEvaluator {
           .filter((level): level is number => level !== undefined);
 
         if (levels.length >= 2) {
-          // 最頻値との一致度
-          const mode = this.mode(levels);
-          const agreementCount = levels.filter((l) => l === mode).length;
-          totalAgreement += agreementCount / levels.length;
-          totalJudgments++;
+          const categoryCounts = new Array(NUM_CATEGORIES).fill(0);
+          for (const level of levels) {
+            if (level >= 0 && level < NUM_CATEGORIES) {
+              categoryCounts[level]++;
+            }
+          }
+          items.set(memoryId, categoryCounts);
         }
       }
     }
 
-    return totalJudgments > 0 ? totalAgreement / totalJudgments : 0;
+    if (items.size === 0) {
+      return 0;
+    }
+
+    const N = items.size; // アイテム数
+    let totalAnnotatorAssignments = 0;
+
+    // Step 2: 各カテゴリの周辺比率 p_j = (1/(N*n)) * sum_i n_ij を計算
+    const categoryTotals = new Array(NUM_CATEGORIES).fill(0);
+
+    for (const categoryCounts of items.values()) {
+      const n_i = categoryCounts.reduce((sum, count) => sum + count, 0);
+      totalAnnotatorAssignments += n_i;
+
+      for (let j = 0; j < NUM_CATEGORIES; j++) {
+        categoryTotals[j] += categoryCounts[j];
+      }
+    }
+
+    const marginalProportions = categoryTotals.map((total) => total / totalAnnotatorAssignments);
+
+    // Step 3: 各アイテムの観測一致度 P_i を計算
+    let sumP_i = 0;
+
+    for (const categoryCounts of items.values()) {
+      const n_i = categoryCounts.reduce((sum, count) => sum + count, 0);
+
+      if (n_i <= 1) continue; // アノテーター1人以下の場合はスキップ
+
+      let sumPairwiseAgreement = 0;
+      for (let j = 0; j < NUM_CATEGORIES; j++) {
+        sumPairwiseAgreement += categoryCounts[j] * (categoryCounts[j] - 1);
+      }
+
+      const P_i = sumPairwiseAgreement / (n_i * (n_i - 1));
+      sumP_i += P_i;
+    }
+
+    const P_bar = sumP_i / N; // 平均観測一致度
+
+    // Step 4: 期待一致度 P_e = sum_j p_j^2 を計算
+    const P_e = marginalProportions.reduce((sum, p_j) => sum + p_j * p_j, 0);
+
+    // Step 5: Kappa = (P_bar - P_e) / (1 - P_e)
+    if (1 - P_e === 0) {
+      // 完全にランダムな場合（ゼロ除算回避）
+      return 0;
+    }
+
+    const kappa = (P_bar - P_e) / (1 - P_e);
+    return kappa;
   }
 
   /**
@@ -297,7 +361,6 @@ export class SearchQualityEvaluator {
    * @param experimentVariant - 実験バリアント
    * @param testSet - テストセット
    * @param searchFn - 検索関数
-   * @param trafficSplitPercent - トラフィック分割率 (デフォルト: 10%)
    * @returns A/Bテスト結果
    */
   async runABTest(
@@ -334,15 +397,23 @@ export class SearchQualityEvaluator {
   }
 
   /**
-   * p値を計算 (簡易実装)
+   * p値を計算 (簡易実装 - ヒューリスティック近似)
    *
-   * @param controlScore - コントロールスコア
-   * @param experimentScore - 実験スコア
+   * ⚠️ 警告: この実装は段階的z-scoreしきい値による簡易近似であり、真の統計的有意性検定ではありません。
+   * 検定の前提（独立性、分散の等質性、正規分布）を満たしておらず、本番環境での意思決定には使用しないでください。
+   *
+   * 本番品質評価には以下の実装への置き換えが必要:
+   * - ブートストラップ法による平均差の推定
+   * - Welch's t-test (不等分散を考慮したt検定)
+   * - クエリ単位のF1スコア配列を用いた two-sample test
+   *
+   * @param controlScore - コントロールスコア (単一の集約スコア)
+   * @param experimentScore - 実験スコア (単一の集約スコア)
    * @param sampleSize - サンプルサイズ
-   * @returns p値
+   * @returns 近似p値 (0.01, 0.04, 0.1, 0.5のいずれか) - 真のp値ではない
    */
   private calculatePValue(controlScore: number, experimentScore: number, sampleSize: number): number {
-    // 簡易実装: スコア差とサンプルサイズから近似
+    // 簡易実装: スコア差とサンプルサイズから近似的なz-scoreを計算
     const diff = Math.abs(experimentScore - controlScore);
     const variance = (controlScore * (1 - controlScore) + experimentScore * (1 - experimentScore)) / 2;
     const standardError = Math.sqrt(variance / sampleSize);
@@ -353,9 +424,9 @@ export class SearchQualityEvaluator {
 
     const zScore = diff / standardError;
 
-    // 簡易的な正規分布近似
-    // z > 1.96 なら p < 0.05
-    // z > 2.58 なら p < 0.01
+    // 段階的しきい値による離散的p値近似 (真の統計的p値ではない)
+    // z > 1.96 なら p < 0.05 相当
+    // z > 2.58 なら p < 0.01 相当
     if (zScore > 2.58) return 0.01;
     if (zScore > 1.96) return 0.04;
     if (zScore > 1.64) return 0.1;
