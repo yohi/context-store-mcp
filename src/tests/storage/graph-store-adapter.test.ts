@@ -15,6 +15,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import neo4j, { Driver, Session } from 'neo4j-driver';
 import {
   GraphStoreAdapter,
+  CypherPatternBuilder,
   type GraphStoreConfig,
   type NodeId,
   type NodeProperties,
@@ -531,7 +532,8 @@ describe('GraphStoreAdapter', () => {
 
     it('Cypherパターンでグラフを探索できる', async () => {
       // node1から1ホップの関係を取得
-      const results = await adapter.traverseGraph(node1Id, '-[r]->');
+      const pattern = new CypherPatternBuilder().maxDepth(1).build();
+      const results = await adapter.traverseGraph(node1Id, pattern);
 
       expect(results).toHaveLength(2); // node2 と node4
       expect(results.some((r) => r.nodes.some((n) => n.id === node2Id))).toBe(true);
@@ -540,7 +542,8 @@ describe('GraphStoreAdapter', () => {
 
     it('2ホップのグラフ探索ができる', async () => {
       // node1から2ホップの関係を取得
-      const results = await adapter.traverseGraph(node1Id, '-[*1..2]->');
+      const pattern = new CypherPatternBuilder().minDepth(1).maxDepth(2).build();
+      const results = await adapter.traverseGraph(node1Id, pattern);
 
       expect(results.length).toBeGreaterThanOrEqual(2);
       expect(results.some((r) => r.nodes.some((n) => n.id === node3Id))).toBe(true);
