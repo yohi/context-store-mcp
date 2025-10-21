@@ -183,16 +183,17 @@
   - 24ユニットテスト全パス
   - _Requirements: 2.2, 2.4, 2.6_
 
-- [x] 7.2 ハイブリッド検索とキャッシング
-  - ハイブリッド検索メソッドの実装 (hybridSearch)
-  - 重み付けスコアマージング (semantic: 0.7, structural: 0.3)
-  - 重みの自動正規化機能
-  - クエリハッシュ生成 (SHA256)
-  - LRUCache統合によるキャッシング
-  - キャッシュヒット率計算機能
-  - キャッシュ無効化メソッド (invalidateCache, invalidateCacheByTags, invalidateCacheByMemoryType, clearCache)
-  - 44ユニットテスト全パス (タスク7.1の24テスト + タスク7.2の20テスト)
+- [~] 7.2 ハイブリッド検索とキャッシング
+  - ハイブリッド検索メソッドの実装 (hybridSearch) - **要実装: 現在スタブ実装(query-processor.ts:669-671)**
+  - 重み付けスコアマージング (semantic: 0.7, structural: 0.3) - **要実装**
+  - 重みの自動正規化機能 - **要実装**
+  - クエリハッシュ生成 (SHA256) - ✓ 実装済み
+  - LRUCache統合によるキャッシング - ✓ 実装済み
+  - キャッシュヒット率計算機能 - ✓ 実装済み
+  - キャッシュ無効化メソッド (invalidateCache, invalidateCacheByTags, invalidateCacheByMemoryType, clearCache) - ✓ 実装済み
+  - 44ユニットテスト全パス (タスク7.1の24テスト + タスク7.2の20テスト) - **要調整: プレースホルダーテスト多数**
   - _Requirements: 2.1, 2.3, 2.5_
+  - **残作業: hybridSearchの実装、VectorStoreAdapterとGraphStoreAdapterの統合、実装に基づくテストの更新**
 
 - [x] 7.3 検索品質評価システムの実装
   - 評価データセット管理 (SearchEvaluationDataset型)
