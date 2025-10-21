@@ -11,10 +11,11 @@
  * TDDアプローチ: RED → GREEN → REFACTOR
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import neo4j, { Driver, Session } from 'neo4j-driver';
 import {
   GraphStoreAdapter,
+  CypherPatternBuilder,
   type GraphStoreConfig,
   type NodeId,
   type NodeProperties,
@@ -29,7 +30,7 @@ describe('GraphStoreAdapter', () => {
   const testConfig: GraphStoreConfig = {
     uri: process.env.NEO4J_URI || 'neo4j://localhost:7687',
     username: process.env.NEO4J_USER || 'neo4j',
-    password: process.env.NEO4J_PASSWORD || 'testpassword',
+    password: process.env.NEO4J_PASSWORD || 'changeme',
     database: process.env.NEO4J_DATABASE || 'neo4j',
   };
 
@@ -90,8 +91,10 @@ describe('GraphStoreAdapter', () => {
       // クローズを実行
       await tempAdapter.close();
 
-      // クローズ後に操作を試みるとエラー
-      await expect(tempAdapter.createNode('Test', { name: 'test' })).rejects.toThrow();
+      // クローズ後に操作を試みるとエラー (idを含めてバリデーションを通過させる)
+      await expect(
+        tempAdapter.createNode('Test', { id: 'test-id', name: 'test' })
+      ).rejects.toThrow('GraphStoreAdapter has been closed');
     });
 
     it('無効な接続設定でエラーをスローする', async () => {
@@ -104,8 +107,10 @@ describe('GraphStoreAdapter', () => {
 
       const invalidAdapter = new GraphStoreAdapter(invalidConfig);
 
-      // 接続試行時にエラーをスロー
-      await expect(invalidAdapter.createNode('Test', { name: 'test' })).rejects.toThrow();
+      // 接続試行時にエラーをスロー (idを含めてバリデーションを通過させる)
+      await expect(
+        invalidAdapter.createNode('Test', { id: 'test-id', name: 'test' })
+      ).rejects.toThrow();
 
       await invalidAdapter.close();
     });
@@ -318,20 +323,65 @@ describe('GraphStoreAdapter', () => {
     it('一時的なエラーで自動リトライを実行する', async () => {
       let attemptCount = 0;
 
-      // リトライ機能をテストするため、最初の2回は失敗させる
       const properties: NodeProperties = {
         id: '123e4567-e89b-12d3-a456-426614174009',
         name: 'Retry Test Node',
       };
 
-      // createNodeは自動リトライを内蔵
-      // ここでは、リトライロジックが正常に動作することを確認する簡易テストを実施
-      const nodeId = await adapter.createNode('Memory', properties);
-      expect(nodeId).toBe(properties.id);
+      // session.run() をモック: 最初の2回は一時的なエラーをスロー、3回目で成功
+      const mockRun = vi.fn().mockImplementation(async () => {
+        attemptCount++;
+        if (attemptCount <= 2) {
+          // Neo4jドライバー互換の一時的なエラー（code, name プロパティ付き）
+          const err = Object.assign(
+            new Error('ServiceUnavailable: database unavailable - temporary connection issue'),
+            {
+              code: 'ServiceUnavailable',
+              name: 'Neo4jError',
+            }
+          );
+          throw err;
+        }
+        // 3回目は成功（CREATE クエリなので戻り値は空でOKだが、形状は実装に合わせる）
+        return Promise.resolve({ records: [], summary: {} });
+      });
 
-      // ノードが作成されたことを確認
-      const node = await adapter.getNode(properties.id);
-      expect(node).toBeDefined();
+      // driver.session() をモック
+      const mockClose = vi.fn().mockResolvedValue(undefined);
+      const mockSession = {
+        run: mockRun,
+        close: mockClose,
+      };
+
+      // テスト専用の新しいドライバーとアダプターを作成
+      const testDriver = neo4j.driver(
+        testConfig.uri,
+        neo4j.auth.basic(testConfig.username, testConfig.password)
+      );
+
+      // driver.session() をスパイ
+      const sessionSpy = vi.spyOn(testDriver, 'session').mockReturnValue(mockSession as unknown as Session);
+
+      // テスト専用アダプター(内部で testDriver を使う)
+      const testAdapter = new GraphStoreAdapter(testConfig);
+      // アダプターの内部ドライバーをモックしたドライバーに差し替え
+      // @ts-expect-error - private field access for testing
+      testAdapter.driver = testDriver;
+
+      try {
+        // createNode を実行 - 内部でリトライが発生するはず
+        const nodeId = await testAdapter.createNode('Memory', properties);
+
+        // 結果の検証
+        expect(nodeId).toBe(properties.id);
+        expect(attemptCount).toBe(3); // 3回試行されたことを確認
+        expect(mockRun).toHaveBeenCalledTimes(3); // session.run が3回呼ばれたことを確認
+        expect(sessionSpy).toHaveBeenCalledTimes(3); // session が3回作成されたことを確認
+      } finally {
+        // モックをクリーンアップ
+        sessionSpy.mockRestore();
+        await testDriver.close();
+      }
     });
 
     it('永続的なエラーで即座に失敗する', async () => {
@@ -482,7 +532,8 @@ describe('GraphStoreAdapter', () => {
 
     it('Cypherパターンでグラフを探索できる', async () => {
       // node1から1ホップの関係を取得
-      const results = await adapter.traverseGraph(node1Id, '-[r]->');
+      const pattern = new CypherPatternBuilder().maxDepth(1).build();
+      const results = await adapter.traverseGraph(node1Id, pattern);
 
       expect(results).toHaveLength(2); // node2 と node4
       expect(results.some((r) => r.nodes.some((n) => n.id === node2Id))).toBe(true);
@@ -491,7 +542,8 @@ describe('GraphStoreAdapter', () => {
 
     it('2ホップのグラフ探索ができる', async () => {
       // node1から2ホップの関係を取得
-      const results = await adapter.traverseGraph(node1Id, '-[*1..2]->');
+      const pattern = new CypherPatternBuilder().minDepth(1).maxDepth(2).build();
+      const results = await adapter.traverseGraph(node1Id, pattern);
 
       expect(results.length).toBeGreaterThanOrEqual(2);
       expect(results.some((r) => r.nodes.some((n) => n.id === node3Id))).toBe(true);
@@ -598,6 +650,147 @@ describe('GraphStoreAdapter', () => {
       expect(communities.length).toBeGreaterThanOrEqual(2);
       expect(communities.every((c) => c.size > 0)).toBe(true);
       expect(communities.every((c) => c.memberIds.length === c.size)).toBe(true);
+    });
+  });
+
+  describe('ラベルバリデーション（Cypherインジェクション防止）', () => {
+    describe('有効なラベル', () => {
+      it('英字で始まるラベルを受け入れる', async () => {
+        const properties: NodeProperties = { id: 'test-valid-1' };
+        const nodeId = await adapter.createNode('ValidLabel', properties);
+        expect(nodeId).toBe(properties.id);
+      });
+
+      it('アンダースコアで始まるラベルを受け入れる', async () => {
+        const properties: NodeProperties = { id: 'test-valid-2' };
+        const nodeId = await adapter.createNode('_ValidLabel', properties);
+        expect(nodeId).toBe(properties.id);
+      });
+
+      it('英数字とアンダースコアを含むラベルを受け入れる', async () => {
+        const properties: NodeProperties = { id: 'test-valid-3' };
+        const nodeId = await adapter.createNode('Valid_Label_123', properties);
+        expect(nodeId).toBe(properties.id);
+      });
+
+      it('複数の有効なラベルを受け入れる', async () => {
+        const properties: NodeProperties = { id: 'test-valid-4' };
+        const nodeId = await adapter.createNode(['Memory', 'Episodic_2023'], properties);
+        expect(nodeId).toBe(properties.id);
+      });
+
+      it('大文字小文字混在のラベルを受け入れる', async () => {
+        const properties: NodeProperties = { id: 'test-valid-5' };
+        const nodeId = await adapter.createNode('CamelCaseLabel', properties);
+        expect(nodeId).toBe(properties.id);
+      });
+    });
+
+    describe('無効なラベル（Cypherインジェクション対策）', () => {
+      it('数字で始まるラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('123Invalid', { id: 'test-invalid-1' })
+        ).rejects.toThrow(/Invalid label.*123Invalid/);
+      });
+
+      it('ハイフンを含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('Invalid-Label', { id: 'test-invalid-2' })
+        ).rejects.toThrow(/Invalid label.*Invalid-Label/);
+      });
+
+      it('スペースを含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('Invalid Label', { id: 'test-invalid-3' })
+        ).rejects.toThrow(/Invalid label.*Invalid Label/);
+      });
+
+      it('特殊文字を含むラベルを拒否する（Cypherインジェクション防止）', async () => {
+        await expect(
+          adapter.createNode('Label;DROP TABLE', { id: 'test-invalid-4' })
+        ).rejects.toThrow(/Invalid label/);
+      });
+
+      it('引用符を含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode("Label'OR'1'='1", { id: 'test-invalid-5' })
+        ).rejects.toThrow(/Invalid label/);
+      });
+
+      it('バッククォートを含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('Label`malicious`', { id: 'test-invalid-6' })
+        ).rejects.toThrow(/Invalid label/);
+      });
+
+      it('コロンを含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('Label:Injection', { id: 'test-invalid-7' })
+        ).rejects.toThrow(/Invalid label/);
+      });
+
+      it('カンマを含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('Label,Another', { id: 'test-invalid-8' })
+        ).rejects.toThrow(/Invalid label/);
+      });
+
+      it('括弧を含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('Label()', { id: 'test-invalid-9' })
+        ).rejects.toThrow(/Invalid label/);
+      });
+
+      it('ドットを含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('Label.Property', { id: 'test-invalid-10' })
+        ).rejects.toThrow(/Invalid label/);
+      });
+
+      it('空文字列ラベルを拒否する', async () => {
+        await expect(adapter.createNode('', { id: 'test-invalid-11' })).rejects.toThrow(
+          /Invalid label/
+        );
+      });
+
+      it('複数ラベルに1つでも無効なものがあれば拒否する', async () => {
+        await expect(
+          adapter.createNode(['ValidLabel', 'Invalid-Label'], { id: 'test-invalid-12' })
+        ).rejects.toThrow(/Invalid label.*Invalid-Label/);
+      });
+
+      it('Cypherコマンドを含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('Label MATCH (n) DELETE n', { id: 'test-invalid-13' })
+        ).rejects.toThrow(/Invalid label/);
+      });
+
+      it('改行文字を含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('Label\nMATCH', { id: 'test-invalid-14' })
+        ).rejects.toThrow(/Invalid label/);
+      });
+
+      it('タブ文字を含むラベルを拒否する', async () => {
+        await expect(
+          adapter.createNode('Label\tInjection', { id: 'test-invalid-15' })
+        ).rejects.toThrow(/Invalid label/);
+      });
+    });
+
+    describe('エラーメッセージの明確性', () => {
+      it('無効なラベルに対して明確なエラーメッセージを返す', async () => {
+        try {
+          await adapter.createNode('123Invalid', { id: 'test-error-msg' });
+          expect.fail('Should have thrown an error');
+        } catch (error) {
+          const err = error as Error;
+          expect(err.message).toContain('Invalid label');
+          expect(err.message).toContain('123Invalid');
+          expect(err.message).toContain('must start with a letter or underscore');
+          expect(err.message).toContain('contain only letters, numbers, and underscores');
+        }
+      });
     });
   });
 });

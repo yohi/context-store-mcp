@@ -50,3 +50,4 @@ backup.*
 **/backups/**/*.dump
 **/dumps/**/*.sql
 **/dumps/**/*.dump
+.env.test
