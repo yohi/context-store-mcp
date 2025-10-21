@@ -331,10 +331,17 @@ describe('GraphStoreAdapter', () => {
       const mockRun = vi.fn().mockImplementation(async () => {
         attemptCount++;
         if (attemptCount <= 2) {
-          // 一時的なエラーをシミュレート (Database Unavailable)
-          throw new Error('Neo4j: database unavailable - temporary connection issue');
+          // Neo4jドライバー互換の一時的なエラー（code, name プロパティ付き）
+          const err = Object.assign(
+            new Error('ServiceUnavailable: database unavailable - temporary connection issue'),
+            {
+              code: 'ServiceUnavailable',
+              name: 'Neo4jError',
+            }
+          );
+          throw err;
         }
-        // 3回目は成功
+        // 3回目は成功（CREATE クエリなので戻り値は空でOKだが、形状は実装に合わせる）
         return Promise.resolve({ records: [], summary: {} });
       });
 
