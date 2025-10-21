@@ -382,7 +382,8 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
    * @returns 正規化されたnumber配列
    * @throws pgvectorの形式が不正な場合
    */
-  private parsePgvector(value: unknown): number[] {
+  /** @internal テスト用にエクスポート */
+  public parsePgvector(value: unknown): number[] {
     // 既に配列の場合は各要素を数値に変換
     if (Array.isArray(value)) {
       return (value as unknown[]).map((n) => Number(n));
