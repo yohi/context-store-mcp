@@ -370,11 +370,18 @@ export class SearchQualityEvaluator {
    *
    * クエリごとのF1スコアを収集し、Welchのt検定で統計的有意性を評価します。
    *
+   * ⚠️ **重要な制限事項**:
+   * - サンプルサイズ（クエリ数）が30未満の場合、t分布の近似精度が低下します
+   * - n < 30の場合、p値の信頼性が低く、誤った判定につながる可能性があります
+   * - 本番環境での意思決定には n ≥ 30 のテストセットを使用することを強く推奨します
+   * - より正確な統計検定には外部ライブラリ（jstat, simple-statistics等）の使用を推奨します
+   *
    * @param controlVariant - コントロールバリアント
    * @param experimentVariant - 実験バリアント
    * @param testSet - テストセット
    * @param searchFn - 検索関数
    * @returns A/Bテスト結果
+   * @throws Error サンプルサイズが2未満の場合
    */
   async runABTest(
     controlVariant: SearchVariant,
@@ -382,6 +389,24 @@ export class SearchQualityEvaluator {
     testSet: SearchEvaluationDataset,
     searchFn: (query: string, limit: number, variant?: SearchVariant) => Promise<Array<{ id: string }>>
   ): Promise<ABTestResult> {
+    // サンプルサイズの検証
+    const sampleSize = testSet.queries.length;
+    if (sampleSize < 2) {
+      throw new Error(
+        `A/B test requires at least 2 queries, but got ${sampleSize}. Cannot perform statistical test.`
+      );
+    }
+
+    // 小サンプルの警告（n < 30）
+    if (sampleSize < 30) {
+      console.warn(
+        `⚠️  Warning: Sample size (n=${sampleSize}) is below the recommended minimum of 30 queries.\n` +
+          `   The t-distribution approximation may be inaccurate, leading to unreliable p-values.\n` +
+          `   For production decision-making, please use n ≥ 30 or consider external libraries (jstat, simple-statistics).\n` +
+          `   See: https://en.wikipedia.org/wiki/Student%27s_t-distribution#Confidence_intervals`
+      );
+    }
+
     // クエリごとのメトリクスを収集
     const controlF1Scores: number[] = [];
     const experimentF1Scores: number[] = [];
@@ -582,22 +607,130 @@ export class SearchQualityEvaluator {
   }
 
   /**
-   * 不完全ベータ関数の近似
+   * 正則化不完全ベータ関数 I_x(a, b)
    *
-   * ⚠️ 簡易実装: 厳密な計算には外部ライブラリを推奨
+   * 連分数展開（Lentz's algorithm）を使用した実装。
+   * t分布のCDF計算に必要な数値的精度を提供します。
+   *
+   * 参考文献:
+   * - Press et al., "Numerical Recipes" (3rd ed.), Section 6.4
+   * - Lentz (1976), "Generating Bessel functions in Mie scattering calculations using continued fractions"
+   *
+   * @param x - 評価点 (0 ≤ x ≤ 1)
+   * @param a - 第1パラメータ (a > 0)
+   * @param b - 第2パラメータ (b > 0)
+   * @returns 正則化不完全ベータ関数の値 I_x(a, b)
    */
-  private incompleteBetaApprox(x: number, _a: number, _b: number): number {
-    // 極端なケース
+  private incompleteBetaApprox(x: number, a: number, b: number): number {
+    // 境界条件
     if (x <= 0) return 0;
     if (x >= 1) return 1;
-
-    // 自由度が小さい場合の簡易近似
-    // t値が大きい場合は有意（p値小）、小さい場合は非有意（p値大）
-    if (x > 0.5) {
-      return 2 * (1 - x); // p値の粗い近似
-    } else {
-      return 2 * x;
+    if (a <= 0 || b <= 0) {
+      throw new Error(`Invalid beta parameters: a=${a}, b=${b}. Both must be positive.`);
     }
+
+    // 対称性を利用して収束を改善: x > (a+1)/(a+b+2) の場合は I_x(a,b) = 1 - I_{1-x}(b,a)
+    if (x > (a + 1) / (a + b + 2)) {
+      return 1 - this.incompleteBetaApprox(1 - x, b, a);
+    }
+
+    // ベータ関数 B(a,b) = Γ(a)Γ(b)/Γ(a+b) の対数を計算
+    const logBeta = this.logGamma(a) + this.logGamma(b) - this.logGamma(a + b);
+
+    // 連分数の前置因子: x^a * (1-x)^b / (a * B(a,b))
+    const logFront = a * Math.log(x) + b * Math.log(1 - x) - logBeta - Math.log(a);
+    const front = Math.exp(logFront);
+
+    // 連分数展開（Lentz's algorithm）
+    const cf = this.betaContinuedFraction(x, a, b);
+
+    return front * cf;
+  }
+
+  /**
+   * 不完全ベータ関数の連分数展開（Lentz's algorithm）
+   *
+   * 以下の連分数を評価:
+   * 1 + d_1/(1 + d_2/(1 + d_3/(1 + ...)))
+   *
+   * ここで d_m は不完全ベータ関数の連分数係数
+   */
+  private betaContinuedFraction(x: number, a: number, b: number, maxIter: number = 100): number {
+    const eps = 1e-15; // 収束判定閾値
+    const tiny = 1e-30; // ゼロ除算回避用の小さい値
+
+    // Modified Lentz's method
+    let c = 1;
+    let d = 1 - ((a + b) * x) / (a + 1);
+    if (Math.abs(d) < tiny) d = tiny;
+    d = 1 / d;
+    let h = d;
+
+    for (let m = 1; m <= maxIter; m++) {
+      const m2 = 2 * m;
+
+      // Even step (2m)
+      let aa = (m * (b - m) * x) / ((a + m2 - 1) * (a + m2));
+      d = 1 + aa * d;
+      if (Math.abs(d) < tiny) d = tiny;
+      c = 1 + aa / c;
+      if (Math.abs(c) < tiny) c = tiny;
+      d = 1 / d;
+      h *= d * c;
+
+      // Odd step (2m+1)
+      aa = -(((a + m) * (a + b + m) * x) / ((a + m2) * (a + m2 + 1)));
+      d = 1 + aa * d;
+      if (Math.abs(d) < tiny) d = tiny;
+      c = 1 + aa / c;
+      if (Math.abs(c) < tiny) c = tiny;
+      d = 1 / d;
+      const delta = d * c;
+      h *= delta;
+
+      // 収束判定
+      if (Math.abs(delta - 1) < eps) {
+        return h;
+      }
+    }
+
+    // 最大反復回数に達した場合でも現在の近似値を返す
+    console.warn(`Beta continued fraction did not converge after ${maxIter} iterations`);
+    return h;
+  }
+
+  /**
+   * 対数ガンマ関数 log(Γ(x))
+   *
+   * Lanczos近似を使用した実装。
+   * ベータ関数の計算に必要。
+   *
+   * 参考: Numerical Recipes, Section 6.1
+   */
+  private logGamma(x: number): number {
+    if (x <= 0) {
+      throw new Error(`logGamma: x must be positive, got ${x}`);
+    }
+
+    // Lanczos係数（g=7, n=9の場合）
+    const coef = [
+      0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059,
+      12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7,
+    ];
+
+    if (x < 0.5) {
+      // リフレクション公式: Γ(x) = π / (sin(πx) * Γ(1-x))
+      return Math.log(Math.PI) - Math.log(Math.abs(Math.sin(Math.PI * x))) - this.logGamma(1 - x);
+    }
+
+    x -= 1;
+    let sum = coef[0];
+    for (let i = 1; i < coef.length; i++) {
+      sum += coef[i] / (x + i);
+    }
+
+    const t = x + 7.5; // g + 0.5
+    return Math.log(Math.sqrt(2 * Math.PI)) + Math.log(sum) - t + (x + 0.5) * Math.log(t);
   }
 
   /**

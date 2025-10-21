@@ -128,6 +128,20 @@ Classification is **automatic** via content analysis (keywords, syntax, embeddin
 - Weights configurable per query
 - Results merged and ranked by combined score
 
+**A/B Testing & Statistical Validation**:
+- Welch's t-test for statistical significance (unequal variance support)
+- Regularized incomplete beta function via Lentz's continued fraction expansion
+- Log-gamma function via Lanczos approximation
+- **Sample size requirements**:
+  - Minimum: n ≥ 2 queries (enforced)
+  - Recommended: n ≥ 30 queries for reliable p-values
+  - Warning issued for n < 30 (t-distribution approximation accuracy degrades)
+- **Limitations**:
+  - Small sample (n < 30): Normal distribution assumption may not hold
+  - P-value approximation: Uses erf-based CDF (not exact)
+  - Production use: Consider external libraries (jstat, simple-statistics) for rigorous testing
+- See `src/query/search-quality-evaluator.ts:368-408` for implementation details
+
 ### Test Database Safety
 
 **Critical**: Tests use `context_store_test` database by default to prevent production data corruption.
