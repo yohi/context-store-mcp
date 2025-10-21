@@ -383,7 +383,7 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
    * @throws pgvectorの形式が不正な場合
    */
   /** @internal テスト用にエクスポート */
-  public parsePgvector(value: unknown): number[] {
+  public static parsePgvector(value: unknown): number[] {
     // 既に配列の場合は各要素を数値に変換
     if (Array.isArray(value)) {
       return (value as unknown[]).map((n) => Number(n));
@@ -791,7 +791,7 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
 
     // embeddings配列を別途保持（MMR用）
     // DB環境によって文字列または配列で返される可能性があるため、parsePgvectorで正規化
-    const embeddings = result.rows.map((row) => this.parsePgvector(row.embedding));
+    const embeddings = result.rows.map((row) => VectorStoreAdapter.parsePgvector(row.embedding));
 
     // スコアリング戦略を適用
     const enhancedResults: EnhancedSearchResult[] = baseResults.map((baseResult, index) => {
