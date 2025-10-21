@@ -299,10 +299,41 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
   }
 
   /**
+   * ラベル名が安全かどうかを検証
+   * Cypherインジェクション防止のため、ホワイトリスト方式で検証
+   * 有効なラベル: 英数字とアンダースコア、先頭は英字またはアンダースコア
+   *
+   * @param label 検証するラベル名
+   * @returns ラベルが安全な場合true
+   */
+  private isValidLabel(label: string): boolean {
+    // Cypher仕様に準拠: 先頭は英字またはアンダースコア、2文字目以降は英数字またはアンダースコア
+    const SAFE_LABEL_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+    return SAFE_LABEL_PATTERN.test(label);
+  }
+
+  /**
    * ノードラベルをCypherクエリ用の文字列に変換
+   * Cypherインジェクション防止のため、ラベルを検証してから変換
+   *
+   * @param label ラベル名（文字列または文字列配列）
+   * @returns Cypher形式のラベル文字列（例: `:Memory:Episodic`）
+   * @throws {Error} 不正なラベルが含まれている場合
    */
   private formatLabels(label: string | string[]): string {
     const labels = Array.isArray(label) ? label : [label];
+
+    // すべてのラベルを検証
+    for (const l of labels) {
+      if (!this.isValidLabel(l)) {
+        throw new Error(
+          `Invalid label: "${l}". Labels must start with a letter or underscore, ` +
+            `and contain only letters, numbers, and underscores.`
+        );
+      }
+    }
+
+    // 検証済みのラベルを安全に結合
     return labels.map((l) => `:${l}`).join('');
   }
 
@@ -386,6 +417,24 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
     }
   }
 
+  /**
+   * Neo4jクエリに渡す前にプロパティをサニタイズ
+   * undefined, null, NaN などの非シリアライズ可能な値を除去
+   */
+  private sanitizeProperties<T extends Record<string, unknown>>(properties: T): Partial<T> {
+    const sanitized: Partial<T> = {};
+
+    for (const [key, value] of Object.entries(properties)) {
+      // undefined, null, NaN を除外
+      if (value === undefined || value === null || (typeof value === 'number' && isNaN(value))) {
+        continue;
+      }
+      sanitized[key as keyof T] = value as T[keyof T];
+    }
+
+    return sanitized;
+  }
+
   async createNode(label: string | string[], properties: NodeProperties): Promise<NodeId> {
     this.checkConnection();
 
@@ -400,7 +449,9 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
       const session = this.driver.session({ database: this.database });
       try {
         const labelStr = this.formatLabels(label);
-        const props = this.formatProperties(properties);
+        // プロパティをサニタイズしてから formatProperties に渡す
+        const sanitizedProps = this.sanitizeProperties(properties);
+        const props = this.formatProperties(sanitizedProps as NodeProperties);
 
         await session.run(`CREATE (n${labelStr} $props)`, { props });
       } finally {
@@ -455,10 +506,13 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
     return await this.executeWithRetry(async () => {
       const session = this.driver.session({ database: this.database });
       try {
+        // プロパティをサニタイズしてから Neo4j に渡す
+        const sanitizedProps = this.sanitizeProperties(properties);
+
         // SET n += $props で部分更新を実行
         const result = await session.run('MATCH (n {id: $id}) SET n += $props RETURN n', {
           id,
-          props: properties,
+          props: sanitizedProps,
         });
 
         return result.records.length > 0;

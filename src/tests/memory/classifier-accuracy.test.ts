@@ -279,7 +279,7 @@ describe('MemoryClassifier Accuracy Measurement', () => {
       ];
 
       // Should not throw (Phase 4.2 implementation is placeholder)
-      await expect(classifier.trainClassifier(trainingSamples)).resolves.not.toThrow();
+      await expect(classifier.trainClassifier(trainingSamples)).resolves.toBeUndefined();
     });
 
     it('should log training sample count', async () => {
