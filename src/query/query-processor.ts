@@ -677,9 +677,29 @@ export class QueryProcessor {
    * 同一のクエリ + フィルタに対して決定的なハッシュを生成
    */
   generateQueryHash(query: string, filters?: any): string {
+    // 決定的なシリアライゼーションのためにオブジェクトキーを再帰的にソート
+    const canonicalize = (obj: any): any => {
+      if (obj === null || obj === undefined) {
+        return null;
+      }
+      if (typeof obj !== 'object') {
+        return obj;
+      }
+      if (Array.isArray(obj)) {
+        return obj.map(canonicalize);
+      }
+      // オブジェクトのキーをソートして新しいオブジェクトを作成
+      const sortedKeys = Object.keys(obj).sort();
+      const result: Record<string, any> = {};
+      for (const key of sortedKeys) {
+        result[key] = canonicalize(obj[key]);
+      }
+      return result;
+    };
+
     const queryData = JSON.stringify({
       query,
-      filters: filters || {},
+      filters: canonicalize(filters || {}),
     });
 
     return createHash('sha256').update(queryData).digest('hex');
