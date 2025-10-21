@@ -28,6 +28,25 @@ import type { MemoryType } from '../memory/types';
 
 import type { LRUCache } from '../mcp/lru-cache';
 import { createHash } from 'crypto';
+import type { VectorStoreAdapter } from '../storage/vector-store-adapter';
+
+// GraphStoreAdapter の型定義（暫定）
+interface GraphSearchResult {
+  id: string;
+  content?: string;
+  score: number;
+  distance?: number;
+  [key: string]: unknown;
+}
+
+interface GraphStoreAdapter {
+  search?(query: string, options?: { limit?: number }): Promise<GraphSearchResult[]>;
+  traverseGraph?(
+    startNode: string,
+    pattern: any,
+    params?: Record<string, unknown>
+  ): Promise<any[]>;
+}
 
 /**
  * クエリプロセッサー
@@ -38,15 +57,27 @@ export class QueryProcessor {
   private cache?: LRUCache<any>;
   private cacheHits: number = 0;
   private cacheMisses: number = 0;
+  private vectorAdapter?: VectorStoreAdapter;
+  private graphAdapter?: GraphStoreAdapter;
 
   /**
    * コンストラクタ
    *
    * @param options 設定オプション
    */
-  constructor(options?: { cache?: LRUCache<any> }) {
+  constructor(options?: {
+    cache?: LRUCache<any>;
+    vectorAdapter?: VectorStoreAdapter;
+    graphAdapter?: GraphStoreAdapter;
+  }) {
     if (options?.cache) {
       this.cache = options.cache;
+    }
+    if (options?.vectorAdapter) {
+      this.vectorAdapter = options.vectorAdapter;
+    }
+    if (options?.graphAdapter) {
+      this.graphAdapter = options.graphAdapter;
     }
   }
 
@@ -652,23 +683,135 @@ export class QueryProcessor {
    * - グラフスコア正規化: structural_score = exp(-α * path_length), α = 1.0
    */
   async hybridSearch(
-    _query: string,
+    query: string,
     options?: {
       weights?: { semantic: number; structural: number };
       limit?: number;
+      decay?: number; // グラフスコア減衰定数 (デフォルト: 1.0)
     }
   ): Promise<any[]> {
-    // デフォルトパラメータ
-    const weights = options?.weights || { semantic: 0.7, structural: 0.3 };
+    // 1. デフォルトパラメータと重みの正規化
+    const rawWeights = options?.weights || { semantic: 0.7, structural: 0.3 };
+    const limit = options?.limit || 10;
+    const decay = options?.decay ?? 1.0;
 
-    // 重みの正規化 (合計が1.0でない場合)
-    const totalWeight = weights.semantic + weights.structural;
-    // 将来の実装で使用予定
-    void totalWeight; // Suppress unused variable warning
+    // 重みの正規化 (合計が1.0になるように)
+    const totalWeight = rawWeights.semantic + rawWeights.structural;
+    const normalizedWeights = {
+      semantic: rawWeights.semantic / totalWeight,
+      structural: rawWeights.structural / totalWeight,
+    };
 
-    // TODO: VectorStoreAdapter と GraphStoreAdapter の統合
-    // 現在はスタブ実装
-    return [];
+    // 2. アダプターの可用性チェック
+    if (!this.vectorAdapter) {
+      throw new Error(
+        'VectorStoreAdapter is not available. Cannot perform hybrid search without vector adapter.'
+      );
+    }
+
+    // GraphAdapterが利用できない場合は、セマンティック検索のみで結果を返す
+    if (!this.graphAdapter) {
+      console.warn(
+        'GraphStoreAdapter is not available. Falling back to semantic search only.'
+      );
+      const semanticResults = await this.vectorAdapter.searchSimilar(query, limit);
+      return semanticResults.map((result) => ({
+        id: result.id,
+        content: result.content,
+        metadata: result.metadata,
+        scores: {
+          semantic: result.similarity,
+          structural: 0,
+          combined: result.similarity, // セマンティックのみ
+        },
+      }));
+    }
+
+    // 3. 並列でベクトル検索とグラフ検索を実行
+    const [semanticResults, graphResults] = await Promise.all([
+      this.vectorAdapter.searchSimilar(query, limit),
+      this.graphAdapter.search
+        ? this.graphAdapter.search(query, { limit })
+        : Promise.resolve([]),
+    ]);
+
+    // 4. グラフスコアに指数減衰を適用
+    const processedGraphResults = graphResults.map((result) => {
+      const distance = result.distance ?? 1; // デフォルトdistance = 1
+      const structuralScore = Math.exp(-decay * distance);
+      return {
+        ...result,
+        normalizedScore: structuralScore,
+      };
+    });
+
+    // 5. 結果をIDでマージ
+    const mergedMap = new Map<
+      string,
+      {
+        id: string;
+        content?: string | undefined;
+        metadata?: any;
+        semanticScore: number;
+        structuralScore: number;
+        combined: number;
+      }
+    >();
+
+    // セマンティック結果を追加
+    for (const result of semanticResults) {
+      mergedMap.set(result.id, {
+        id: result.id,
+        content: result.content,
+        metadata: result.metadata,
+        semanticScore: result.similarity,
+        structuralScore: 0,
+        combined: 0, // 後で計算
+      });
+    }
+
+    // グラフ結果をマージ
+    for (const result of processedGraphResults) {
+      const existing = mergedMap.get(result.id);
+      if (existing) {
+        // 既存のエントリに構造スコアを追加
+        existing.structuralScore = result.normalizedScore;
+      } else {
+        // 新しいエントリを作成（セマンティックスコア = 0）
+        mergedMap.set(result.id, {
+          id: result.id,
+          content: result.content,
+          metadata: result,
+          semanticScore: 0,
+          structuralScore: result.normalizedScore,
+          combined: 0, // 後で計算
+        });
+      }
+    }
+
+    // 6. 統合スコアを計算
+    for (const entry of mergedMap.values()) {
+      entry.combined =
+        normalizedWeights.semantic * entry.semanticScore +
+        normalizedWeights.structural * entry.structuralScore;
+    }
+
+    // 7. 統合スコアでソート（降順）
+    const sortedResults = Array.from(mergedMap.values()).sort(
+      (a, b) => b.combined - a.combined
+    );
+
+    // 8. limitを適用して結果を返す
+    return sortedResults.slice(0, limit).map((result) => ({
+      id: result.id,
+      content: result.content,
+      metadata: result.metadata,
+      scores: {
+        semantic: result.semanticScore,
+        structural: result.structuralScore,
+        combined: result.combined,
+      },
+    }));
   }
 
   /**
@@ -722,15 +865,18 @@ export class QueryProcessor {
   /**
    * キャッシュから結果を取得
    *
-   * @param queryHash クエリハッシュ
-   * @returns キャッシュされた結果（存在しない場合はundefined）
+   * @param query クエリ文字列
+   * @param filters フィルタ条件（オプション）
+   * @returns キャッシュされた結果（存在しない場合はnull）
    */
-  getCachedResult(queryHash: string): any | undefined {
+  getCachedResult(query: string, filters?: any): any | null {
     if (!this.cache) {
       this.cacheMisses++;
-      return undefined;
+      return null;
     }
 
+    // クエリとフィルタからハッシュを生成
+    const queryHash = this.generateQueryHash(query, filters);
     const cached = this.cache.get(queryHash);
 
     if (cached) {
@@ -738,7 +884,7 @@ export class QueryProcessor {
       return cached;
     } else {
       this.cacheMisses++;
-      return undefined;
+      return null;
     }
   }
 
