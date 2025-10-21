@@ -15,6 +15,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import neo4j, { Driver, Session } from 'neo4j-driver';
 import {
   GraphStoreAdapter,
+  CypherPatternBuilder,
   type GraphStoreConfig,
   type NodeId,
   type NodeProperties,
@@ -386,6 +387,269 @@ describe('GraphStoreAdapter', () => {
     it('永続的なエラーで即座に失敗する', async () => {
       // 無効なラベル名（数字で開始）でエラーをスロー
       await expect(adapter.createNode('123InvalidLabel', { id: 'test-id' })).rejects.toThrow();
+    });
+  });
+
+  // タスク6.2: 関係性の管理とグラフトラバーサル
+  describe('リレーションシップ管理', () => {
+    let node1Id: string;
+    let node2Id: string;
+    let node3Id: string;
+
+    beforeEach(async () => {
+      // テスト用ノードを作成
+      node1Id = await adapter.createNode('Memory', {
+        id: '123e4567-e89b-12d3-a456-426614174010',
+        name: 'Node 1',
+      });
+      node2Id = await adapter.createNode('Memory', {
+        id: '123e4567-e89b-12d3-a456-426614174011',
+        name: 'Node 2',
+      });
+      node3Id = await adapter.createNode('Memory', {
+        id: '123e4567-e89b-12d3-a456-426614174012',
+        name: 'Node 3',
+      });
+    });
+
+    it('リレーションシップを作成できる', async () => {
+      const edgeId = await adapter.createRelationship(node1Id, node2Id, 'REFERENCES', {
+        strength: 0.8,
+        reasoning: 'Test relationship',
+      });
+
+      expect(edgeId).toBeDefined();
+      expect(typeof edgeId).toBe('string');
+    });
+
+    it('リレーションシップを取得できる', async () => {
+      const edgeId = await adapter.createRelationship(node1Id, node2Id, 'DERIVED_FROM', {
+        strength: 0.9,
+      });
+
+      const relationship = await adapter.getRelationship(edgeId);
+
+      expect(relationship).not.toBeNull();
+      expect(relationship?.fromNodeId).toBe(node1Id);
+      expect(relationship?.toNodeId).toBe(node2Id);
+      expect(relationship?.type).toBe('DERIVED_FROM');
+      expect(relationship?.properties.strength).toBe(0.9);
+    });
+
+    it('存在しないリレーションシップでnullを返す', async () => {
+      const relationship = await adapter.getRelationship('non-existent-edge-id');
+      expect(relationship).toBeNull();
+    });
+
+    it('ノードの出力方向のリレーションシップを取得できる', async () => {
+      await adapter.createRelationship(node1Id, node2Id, 'REFERENCES');
+      await adapter.createRelationship(node1Id, node3Id, 'DERIVED_FROM');
+
+      const relationships = await adapter.getNodeRelationships(node1Id, 'outgoing');
+
+      expect(relationships).toHaveLength(2);
+      expect(relationships.every((r) => r.fromNodeId === node1Id)).toBe(true);
+    });
+
+    it('ノードの入力方向のリレーションシップを取得できる', async () => {
+      await adapter.createRelationship(node1Id, node2Id, 'REFERENCES');
+      await adapter.createRelationship(node3Id, node2Id, 'SUPPORTS');
+
+      const relationships = await adapter.getNodeRelationships(node2Id, 'incoming');
+
+      expect(relationships).toHaveLength(2);
+      expect(relationships.every((r) => r.toNodeId === node2Id)).toBe(true);
+    });
+
+    it('ノードの両方向のリレーションシップを取得できる', async () => {
+      await adapter.createRelationship(node1Id, node2Id, 'REFERENCES');
+      await adapter.createRelationship(node2Id, node3Id, 'DERIVED_FROM');
+
+      const relationships = await adapter.getNodeRelationships(node2Id, 'both');
+
+      expect(relationships).toHaveLength(2);
+    });
+
+    it('タイプでリレーションシップをフィルタできる', async () => {
+      await adapter.createRelationship(node1Id, node2Id, 'REFERENCES');
+      await adapter.createRelationship(node1Id, node3Id, 'DERIVED_FROM');
+
+      const relationships = await adapter.getNodeRelationships(node1Id, 'outgoing', 'REFERENCES');
+
+      expect(relationships).toHaveLength(1);
+      expect(relationships[0]?.type).toBe('REFERENCES');
+    });
+
+    it('リレーションシップを削除できる', async () => {
+      const edgeId = await adapter.createRelationship(node1Id, node2Id, 'REFERENCES');
+
+      const success = await adapter.deleteRelationship(edgeId);
+      expect(success).toBe(true);
+
+      const relationship = await adapter.getRelationship(edgeId);
+      expect(relationship).toBeNull();
+    });
+
+    it('存在しないリレーションシップの削除でfalseを返す', async () => {
+      const success = await adapter.deleteRelationship('non-existent-edge-id');
+      expect(success).toBe(false);
+    });
+  });
+
+  describe('グラフトラバーサル', () => {
+    let node1Id: string;
+    let node2Id: string;
+    let node3Id: string;
+    let node4Id: string;
+
+    beforeEach(async () => {
+      // テスト用ノードとリレーションシップのグラフを構築
+      // node1 -> node2 -> node3
+      //   |               ^
+      //   +-> node4 ------+
+      node1Id = await adapter.createNode('Memory', {
+        id: '123e4567-e89b-12d3-a456-426614174020',
+        name: 'Node 1',
+      });
+      node2Id = await adapter.createNode('Memory', {
+        id: '123e4567-e89b-12d3-a456-426614174021',
+        name: 'Node 2',
+      });
+      node3Id = await adapter.createNode('Memory', {
+        id: '123e4567-e89b-12d3-a456-426614174022',
+        name: 'Node 3',
+      });
+      node4Id = await adapter.createNode('Memory', {
+        id: '123e4567-e89b-12d3-a456-426614174023',
+        name: 'Node 4',
+      });
+
+      await adapter.createRelationship(node1Id, node2Id, 'REFERENCES');
+      await adapter.createRelationship(node2Id, node3Id, 'DERIVED_FROM');
+      await adapter.createRelationship(node1Id, node4Id, 'SUPPORTS');
+      await adapter.createRelationship(node4Id, node3Id, 'PREREQUISITE');
+    });
+
+    it('Cypherパターンでグラフを探索できる', async () => {
+      // node1から1ホップの関係を取得
+      const pattern = new CypherPatternBuilder().maxDepth(1).build();
+      const results = await adapter.traverseGraph(node1Id, pattern);
+
+      expect(results).toHaveLength(2); // node2 と node4
+      expect(results.some((r) => r.nodes.some((n) => n.id === node2Id))).toBe(true);
+      expect(results.some((r) => r.nodes.some((n) => n.id === node4Id))).toBe(true);
+    });
+
+    it('2ホップのグラフ探索ができる', async () => {
+      // node1から2ホップの関係を取得
+      const pattern = new CypherPatternBuilder().minDepth(1).maxDepth(2).build();
+      const results = await adapter.traverseGraph(node1Id, pattern);
+
+      expect(results.length).toBeGreaterThanOrEqual(2);
+      expect(results.some((r) => r.nodes.some((n) => n.id === node3Id))).toBe(true);
+    });
+
+    it('最短パスを検索できる', async () => {
+      const path = await adapter.findShortestPath(node1Id, node3Id);
+
+      expect(path).not.toBeNull();
+      expect(path?.nodes).toHaveLength(3); // node1 -> node2 -> node3
+      expect(path?.relationships).toHaveLength(2);
+      expect(path?.length).toBe(2);
+    });
+
+    it('パスが存在しない場合nullを返す', async () => {
+      // 別のグラフを作成
+      const isolatedNodeId = await adapter.createNode('Memory', {
+        id: '123e4567-e89b-12d3-a456-426614174024',
+        name: 'Isolated Node',
+      });
+
+      const path = await adapter.findShortestPath(node1Id, isolatedNodeId);
+      expect(path).toBeNull();
+    });
+
+    it('最大深さを超えるパスでnullを返す', async () => {
+      const path = await adapter.findShortestPath(node1Id, node3Id, 1);
+      expect(path).toBeNull();
+    });
+  });
+
+  describe('グラフ分析', () => {
+    beforeEach(async () => {
+      // 中心性計算用のグラフ構造を構築
+      // 中央ノード (hub) に多くのリレーションシップを持たせる
+      const hubId = await adapter.createNode('Memory', {
+        id: '123e4567-e89b-12d3-a456-426614174030',
+        name: 'Hub Node',
+      });
+
+      for (let i = 0; i < 5; i++) {
+        const leafId = await adapter.createNode('Memory', {
+          id: `123e4567-e89b-12d3-a456-42661417403${i + 1}`,
+          name: `Leaf Node ${i + 1}`,
+        });
+        await adapter.createRelationship(hubId, leafId, 'REFERENCES');
+      }
+    });
+
+    it('ノードの中心性を計算できる', async () => {
+      const hubId = '123e4567-e89b-12d3-a456-426614174030';
+      const centrality = await adapter.calculateCentrality(hubId);
+
+      expect(centrality).toBeGreaterThan(0);
+      expect(centrality).toBeLessThanOrEqual(1);
+    });
+
+    it('孤立ノードの中心性は低い', async () => {
+      const isolatedId = await adapter.createNode('Memory', {
+        id: '123e4567-e89b-12d3-a456-426614174040',
+        name: 'Isolated Node',
+      });
+
+      const centrality = await adapter.calculateCentrality(isolatedId);
+      expect(centrality).toBe(0);
+    });
+  });
+
+  describe('コミュニティ検出', () => {
+    beforeEach(async () => {
+      // 2つのコミュニティを作成
+      // Community 1: nodes 1-3
+      const comm1Nodes = [];
+      for (let i = 0; i < 3; i++) {
+        const nodeId = await adapter.createNode('Memory', {
+          id: `123e4567-e89b-12d3-a456-42661417405${i}`,
+          name: `Community 1 Node ${i + 1}`,
+        });
+        comm1Nodes.push(nodeId);
+      }
+      // Community 1のノード同士を結合
+      await adapter.createRelationship(comm1Nodes[0]!, comm1Nodes[1]!, 'REFERENCES');
+      await adapter.createRelationship(comm1Nodes[1]!, comm1Nodes[2]!, 'REFERENCES');
+      await adapter.createRelationship(comm1Nodes[2]!, comm1Nodes[0]!, 'REFERENCES');
+
+      // Community 2: nodes 4-6
+      const comm2Nodes = [];
+      for (let i = 0; i < 3; i++) {
+        const nodeId = await adapter.createNode('Memory', {
+          id: `123e4567-e89b-12d3-a456-42661417406${i}`,
+          name: `Community 2 Node ${i + 1}`,
+        });
+        comm2Nodes.push(nodeId);
+      }
+      // Community 2のノード同士を結合
+      await adapter.createRelationship(comm2Nodes[0]!, comm2Nodes[1]!, 'REFERENCES');
+      await adapter.createRelationship(comm2Nodes[1]!, comm2Nodes[2]!, 'REFERENCES');
+      await adapter.createRelationship(comm2Nodes[2]!, comm2Nodes[0]!, 'REFERENCES');
+    });
+
+    it('コミュニティを検出できる', async () => {
+      const communities = await adapter.findCommunities();
+
+      expect(communities.length).toBeGreaterThanOrEqual(2);
+      expect(communities.every((c) => c.size > 0)).toBe(true);
+      expect(communities.every((c) => c.memberIds.length === c.size)).toBe(true);
     });
   });
 
