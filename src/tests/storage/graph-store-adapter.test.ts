@@ -11,7 +11,7 @@
  * TDDアプローチ: RED → GREEN → REFACTOR
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import neo4j, { Driver, Session } from 'neo4j-driver';
 import {
   GraphStoreAdapter,
@@ -29,7 +29,7 @@ describe('GraphStoreAdapter', () => {
   const testConfig: GraphStoreConfig = {
     uri: process.env.NEO4J_URI || 'neo4j://localhost:7687',
     username: process.env.NEO4J_USER || 'neo4j',
-    password: process.env.NEO4J_PASSWORD || 'testpassword',
+    password: process.env.NEO4J_PASSWORD || 'changeme',
     database: process.env.NEO4J_DATABASE || 'neo4j',
   };
 
@@ -322,20 +322,58 @@ describe('GraphStoreAdapter', () => {
     it('一時的なエラーで自動リトライを実行する', async () => {
       let attemptCount = 0;
 
-      // リトライ機能をテストするため、最初の2回は失敗させる
       const properties: NodeProperties = {
         id: '123e4567-e89b-12d3-a456-426614174009',
         name: 'Retry Test Node',
       };
 
-      // createNodeは自動リトライを内蔵
-      // ここでは、リトライロジックが正常に動作することを確認する簡易テストを実施
-      const nodeId = await adapter.createNode('Memory', properties);
-      expect(nodeId).toBe(properties.id);
+      // session.run() をモック: 最初の2回は一時的なエラーをスロー、3回目で成功
+      const mockRun = vi.fn().mockImplementation(async () => {
+        attemptCount++;
+        if (attemptCount <= 2) {
+          // 一時的なエラーをシミュレート (Database Unavailable)
+          throw new Error('Neo4j: database unavailable - temporary connection issue');
+        }
+        // 3回目は成功
+        return Promise.resolve({ records: [], summary: {} });
+      });
 
-      // ノードが作成されたことを確認
-      const node = await adapter.getNode(properties.id);
-      expect(node).toBeDefined();
+      // driver.session() をモック
+      const mockClose = vi.fn().mockResolvedValue(undefined);
+      const mockSession = {
+        run: mockRun,
+        close: mockClose,
+      };
+
+      // テスト専用の新しいドライバーとアダプターを作成
+      const testDriver = neo4j.driver(
+        testConfig.uri,
+        neo4j.auth.basic(testConfig.username, testConfig.password)
+      );
+
+      // driver.session() をスパイ
+      const sessionSpy = vi.spyOn(testDriver, 'session').mockReturnValue(mockSession as unknown as Session);
+
+      // テスト専用アダプター(内部で testDriver を使う)
+      const testAdapter = new GraphStoreAdapter(testConfig);
+      // アダプターの内部ドライバーをモックしたドライバーに差し替え
+      // @ts-expect-error - private field access for testing
+      testAdapter.driver = testDriver;
+
+      try {
+        // createNode を実行 - 内部でリトライが発生するはず
+        const nodeId = await testAdapter.createNode('Memory', properties);
+
+        // 結果の検証
+        expect(nodeId).toBe(properties.id);
+        expect(attemptCount).toBe(3); // 3回試行されたことを確認
+        expect(mockRun).toHaveBeenCalledTimes(3); // session.run が3回呼ばれたことを確認
+        expect(sessionSpy).toHaveBeenCalledTimes(3); // session が3回作成されたことを確認
+      } finally {
+        // モックをクリーンアップ
+        sessionSpy.mockRestore();
+        await testDriver.close();
+      }
     });
 
     it('永続的なエラーで即座に失敗する', async () => {
