@@ -29,9 +29,7 @@ export class MemoryManager implements MemoryManagerService {
    * Store a new memory with automatic ID generation and timestamp management
    * Requirements: 1.1 (永続的保存), 1.2 (セッション間アクセス), 1.6 (整合性維持)
    */
-  async storeMemory(
-    params: StoreMemoryParams
-  ): Promise<Result<MemoryId, MemoryError>> {
+  async storeMemory(params: StoreMemoryParams): Promise<Result<MemoryId, MemoryError>> {
     // Content validation
     const validationError = this.validateContent(params.content);
     if (validationError !== null) {
@@ -52,7 +50,8 @@ export class MemoryManager implements MemoryManagerService {
 
     // Normalize memoryType: prefer top-level params.memoryType, then metadata.memoryType, finally default to 'semantic'
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { memoryType: metadataType, ...metadataWithoutType } = processedMetadata as MemoryMetadata & { memoryType?: MemoryType };
+    const { memoryType: metadataType, ...metadataWithoutType } =
+      processedMetadata as MemoryMetadata & { memoryType?: MemoryType };
 
     // Create memory entity
     // memoryType is now exclusively managed at top-level (single source of truth)
@@ -114,13 +113,22 @@ export class MemoryManager implements MemoryManagerService {
     if (updates.metadata !== undefined) {
       const processed = this.processMetadata(updates.metadata);
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { memoryType: _ignore, ...withoutType } = processed as MemoryMetadata & { memoryType?: MemoryType };
+      const { memoryType: _ignore, ...withoutType } = processed as MemoryMetadata & {
+        memoryType?: MemoryType;
+      };
       normalizedMetadata = withoutType;
     }
 
     // Create updated memory, filtering out protected fields
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { id: _id, createdAt: _createdAt, isDeleted: _isDeleted, deletedAt: _deletedAt, metadata: _metadata, ...allowedUpdates } = updates;
+    const {
+      id: _id,
+      createdAt: _createdAt,
+      isDeleted: _isDeleted,
+      deletedAt: _deletedAt,
+      metadata: _metadata,
+      ...allowedUpdates
+    } = updates;
 
     // Update the memory (preserving protected fields and maintaining data integrity)
     const updatedMemory: Memory = {
@@ -191,9 +199,7 @@ export class MemoryManager implements MemoryManagerService {
    * Merge multiple memories into a single memory
    * Requirements: 1.3 (統合), Task 3.2
    */
-  async mergeMemories(
-    ids: MemoryId[]
-  ): Promise<Result<MemoryId, MemoryError>> {
+  async mergeMemories(ids: MemoryId[]): Promise<Result<MemoryId, MemoryError>> {
     // Validate input
     if (ids.length < 2) {
       return {
@@ -648,9 +654,7 @@ export class MemoryManager implements MemoryManagerService {
       // Apply tags filter
       if (params.tags && params.tags.length > 0) {
         const memoryTags = memory.metadata.tags || [];
-        const hasMatchingTag = params.tags.some((tag) =>
-          memoryTags.includes(tag)
-        );
+        const hasMatchingTag = params.tags.some((tag) => memoryTags.includes(tag));
         if (!hasMatchingTag) {
           continue;
         }
@@ -712,7 +716,9 @@ export class MemoryManager implements MemoryManagerService {
     // Update memory type (single source of truth: top-level memoryType only)
     // Remove memoryType from metadata to maintain single source of truth
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { memoryType: _ignore, ...metadataWithoutType } = memory.metadata as MemoryMetadata & { memoryType?: MemoryType };
+    const { memoryType: _ignore, ...metadataWithoutType } = memory.metadata as MemoryMetadata & {
+      memoryType?: MemoryType;
+    };
 
     const updated: Memory = {
       ...memory,

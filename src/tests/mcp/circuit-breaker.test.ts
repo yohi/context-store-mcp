@@ -1,9 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
-import {
-  CircuitBreaker,
-  CircuitBreakerConfig,
-  CircuitState,
-} from '../../mcp/circuit-breaker';
+import { CircuitBreaker, CircuitBreakerConfig, CircuitState } from '../../mcp/circuit-breaker';
 import { ServiceUnavailableError } from '../../mcp/errors';
 
 describe('CircuitBreaker', () => {
@@ -447,9 +443,7 @@ describe('CircuitBreaker', () => {
       const successOp = vi.fn().mockResolvedValue('success');
 
       // Should reject without calling operation
-      await expect(breaker.execute(successOp)).rejects.toThrow(
-        ServiceUnavailableError
-      );
+      await expect(breaker.execute(successOp)).rejects.toThrow(ServiceUnavailableError);
       expect(successOp).not.toHaveBeenCalled();
     });
 
@@ -627,9 +621,7 @@ describe('CircuitBreaker', () => {
       const firstProbe = breaker.execute(slowOp);
 
       // Try to start second probe while first is in flight
-      await expect(breaker.execute(vi.fn())).rejects.toThrow(
-        ServiceUnavailableError
-      );
+      await expect(breaker.execute(vi.fn())).rejects.toThrow(ServiceUnavailableError);
       await expect(breaker.execute(vi.fn())).rejects.toThrow(
         'Circuit breaker is HALF_OPEN (probe in flight)'
       );

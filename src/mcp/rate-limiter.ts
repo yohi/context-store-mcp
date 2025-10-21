@@ -73,10 +73,7 @@ export class RateLimiter {
     }
 
     this.cleanupOldTimestamps(clientLog, now);
-    return Math.max(
-      0,
-      this.config.maxRequests - clientLog.timestamps.length
-    );
+    return Math.max(0, this.config.maxRequests - clientLog.timestamps.length);
   }
 
   /**
@@ -86,14 +83,22 @@ export class RateLimiter {
    * @returns リセット時刻（UNIXタイムスタンプ）
    */
   getResetTime(clientId: string): number {
+    const now = Date.now();
     const clientLog = this.clients.get(clientId);
 
-    if (!clientLog || clientLog.timestamps.length === 0) {
-      return Date.now() + this.config.windowMs;
+    if (!clientLog) {
+      return now + this.config.windowMs;
+    }
+
+    // 期限切れのタイムスタンプをクリーンアップして正確なresetTimeを返す
+    this.cleanupOldTimestamps(clientLog, now);
+
+    if (clientLog.timestamps.length === 0) {
+      return now + this.config.windowMs;
     }
 
     // 最も古いタイムスタンプ + ウィンドウ期間
-    return clientLog.timestamps[0] + this.config.windowMs;
+    return clientLog.timestamps[0]! + this.config.windowMs;
   }
 
   /**
@@ -135,13 +140,12 @@ export class RateLimiter {
   private cleanupOldTimestamps(clientLog: ClientRequestLog, now: number): void {
     const windowStart = now - this.config.windowMs;
 
-    clientLog.timestamps = clientLog.timestamps.filter(
-      (timestamp) => timestamp > windowStart
-    );
+    clientLog.timestamps = clientLog.timestamps.filter((timestamp) => timestamp > windowStart);
 
     // ウィンドウ開始時刻を更新
     if (clientLog.timestamps.length > 0) {
-      clientLog.windowStart = clientLog.timestamps[0];
+      // lengthチェック済みのため、[0]は必ず存在
+      clientLog.windowStart = clientLog.timestamps[0]!;
     } else {
       clientLog.windowStart = now;
     }

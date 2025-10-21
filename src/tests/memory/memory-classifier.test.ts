@@ -43,7 +43,8 @@ describe('MemoryClassifier', () => {
 
   describe('意味記憶の識別', () => {
     it('should classify API specifications as semantic memory', async () => {
-      const content = 'REST APIは、HTTPメソッドを使用してリソースを操作する標準的なアーキテクチャパターンである。';
+      const content =
+        'REST APIは、HTTPメソッドを使用してリソースを操作する標準的なアーキテクチャパターンである。';
       const result = await classifier.classifyContent(content);
 
       expect(result.primaryType).toBe('semantic');
@@ -51,7 +52,8 @@ describe('MemoryClassifier', () => {
     });
 
     it('should detect definition patterns in semantic content', async () => {
-      const content = 'マイクロサービスとは、小さく独立したサービスの集合としてアプリケーションを構築するアーキテクチャスタイルである。';
+      const content =
+        'マイクロサービスとは、小さく独立したサービスの集合としてアプリケーションを構築するアーキテクチャスタイルである。';
       const result = await classifier.classifyContent(content);
 
       expect(result.primaryType).toBe('semantic');
@@ -59,7 +61,8 @@ describe('MemoryClassifier', () => {
     });
 
     it('should recognize coding conventions as semantic memory', async () => {
-      const content = 'TypeScriptでは、interfaceを使って型定義を行う。すべての関数は明示的な戻り値の型を持つべきである。';
+      const content =
+        'TypeScriptでは、interfaceを使って型定義を行う。すべての関数は明示的な戻り値の型を持つべきである。';
       const result = await classifier.classifyContent(content);
 
       expect(result.primaryType).toBe('semantic');
@@ -69,7 +72,8 @@ describe('MemoryClassifier', () => {
 
   describe('手続き記憶の識別', () => {
     it('should classify step-by-step instructions as procedural memory', async () => {
-      const content = 'バグを修正する方法: 1. エラーログを確認する。2. コードをデバッグする。3. テストを実行する。';
+      const content =
+        'バグを修正する方法: 1. エラーログを確認する。2. コードをデバッグする。3. テストを実行する。';
       const result = await classifier.classifyContent(content);
 
       expect(result.primaryType).toBe('procedural');
@@ -77,13 +81,16 @@ describe('MemoryClassifier', () => {
     });
 
     it('should detect imperative verbs in procedural content', async () => {
-      const content = 'まず、依存関係をインストールします。次に、設定ファイルを編集します。最後に、サーバーを起動します。';
+      const content =
+        'まず、依存関係をインストールします。次に、設定ファイルを編集します。最後に、サーバーを起動します。';
       const result = await classifier.classifyContent(content);
 
       expect(result.primaryType).toBe('procedural');
-      expect(result.features.detectedKeywords.some((k: string) =>
-        ['インストール', '編集', '起動'].some(verb => k.includes(verb))
-      )).toBe(true);
+      expect(
+        result.features.detectedKeywords.some((k: string) =>
+          ['インストール', '編集', '起動'].some((verb) => k.includes(verb))
+        )
+      ).toBe(true);
     });
 
     it('should recognize solution methods as procedural memory', async () => {
@@ -97,7 +104,8 @@ describe('MemoryClassifier', () => {
 
   describe('信頼度スコアの計算', () => {
     it('should return high confidence (>= 0.8) for clear episodic content with multiple keywords', async () => {
-      const content = '昨日の会議で、スタンドアップミーティングについて話し合い、スプリントのゴールを決めた。';
+      const content =
+        '昨日の会議で、スタンドアップミーティングについて話し合い、スプリントのゴールを決めた。';
       const result = await classifier.classifyContent(content);
 
       expect(result.confidence).toBeGreaterThanOrEqual(0.8);
