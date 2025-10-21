@@ -285,25 +285,6 @@ export class SearchQualityEvaluator {
   }
 
   /**
-   * 最頻値を計算
-   */
-  private mode(arr: number[]): number {
-    const counts: Record<number, number> = {};
-    let maxCount = 0;
-    let modeValue = arr[0];
-
-    for (const num of arr) {
-      counts[num] = (counts[num] || 0) + 1;
-      if (counts[num] > maxCount) {
-        maxCount = counts[num];
-        modeValue = num;
-      }
-    }
-
-    return modeValue;
-  }
-
-  /**
    * データセットの検証
    *
    * @param dataset - 評価データセット
