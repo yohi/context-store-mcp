@@ -240,12 +240,28 @@
   - _Requirements: 6.1, 6.2_
   - **注意**: 本番環境ではAWS KMSまたはHashiCorp Vaultを使用すること
 
-- [ ] 8.2 アクセス制御とロール管理
-  - ロールベースアクセス制御の実装
-  - 最小権限の原則の適用
-  - ユーザー別データ分離
-  - 権限検証ミドルウェア
-  - アクセス権限の管理
+- [x] 8.2 アクセス制御とロール管理
+  - RBACManager実装（`src/security/rbac-manager.ts`）
+    - デフォルトロール定義（admin, user, read_only）
+    - カスタムロール作成・削除機能
+    - ユーザー-ロール割り当て管理
+    - 権限チェック機能（hasPermission, getAllPermissions）
+    - 5分間のキャッシュTTL（設定可能）
+    - 最小権限の原則（デフォルトはread_only）
+  - PermissionMiddleware実装（`src/security/permission-middleware.ts`）
+    - 単一権限チェック（requirePermission）
+    - 複数権限チェック（requireAnyPermission, requireAllPermissions）
+    - MCPツール別権限マッピング（store_memory, search_memory, update_memory, delete_memory）
+    - 構造化されたPermissionError生成
+  - DataIsolationManager実装（`src/security/data-isolation.ts`）
+    - ユーザー別クエリフィルタ生成（PostgreSQL WHERE句、Neo4j Cypherフィルタ）
+    - パラメータ化クエリ対応（SQLインジェクション対策）
+    - データ所有権検証（validateOwnership）
+    - Admin権限での全データアクセス
+  - 54ユニットテスト全パス
+    - rbac-manager.test.ts: 23テスト
+    - permission-middleware.test.ts: 14テスト
+    - data-isolation.test.ts: 17テスト
   - _Requirements: 6.3_
 
 - [ ] 8.3 監査ログと追跡システム
