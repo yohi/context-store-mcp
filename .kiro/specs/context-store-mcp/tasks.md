@@ -264,13 +264,35 @@
     - data-isolation.test.ts: 17テスト
   - _Requirements: 6.3_
 
-- [ ] 8.3 監査ログと追跡システム
-  - アクセスログの記録
-  - 監査証跡の永続化
-  - 改ざん防止ログの実装
-  - セキュリティイベント検出
-  - アラート通知機能
-  - ログ検索と分析機能
+- [x] 8.3 監査ログと追跡システム
+  - AuditLogger実装（`src/security/audit-logger.ts`）
+    - HMAC-SHA256による改ざん防止デジタル署名
+    - 必須フィールド完全実装（timestamp, event_type, user_id, session_id, ip_address, resource_id, action, result, metadata）
+    - 検索/クエリ機能（ユーザーID、イベントタイプ、時間範囲、リソースID）
+    - ページネーション対応（limit, offset）
+    - アクセス履歴追跡（getAccessHistory）
+    - ログ保持期間管理（purgeOldLogs）
+    - エクスポート機能（JSON, CSV）
+    - 21ユニットテスト全パス
+  - SecurityEventDetector実装（`src/security/security-event-detector.ts`）
+    - 異常検出パターン実装（excessive_data_access, unknown_ip_access, bulk_export_attempt, auth_failure_spike）
+    - 閾値ベース検出（100件以上、1000件以上、50回以上）
+    - ベースライン比較（通常の10倍以上）
+    - 脅威レベル分類（warning, important, critical）
+    - 既知IPアドレス管理
+    - ユーザーベースライン設定
+    - 16ユニットテスト全パス
+  - AlertManager実装（`src/security/alert-manager.ts`）
+    - マルチチャネル通知（log, email, sms, pagerDuty）
+    - 脅威レベル別通知戦略
+    - 自動応答アクション（セッション停止、IPブロック）
+    - アラート履歴管理と検索
+    - ダッシュボードリンク生成
+    - 16ユニットテスト全パス
+  - 53ユニットテスト全パス（既存120テストと合わせて173テスト）
+    - audit-logger.test.ts: 21テスト
+    - security-event-detector.test.ts: 16テスト
+    - alert-manager.test.ts: 16テスト
   - _Requirements: 6.5, 6.6_
 
 - [ ] 8.4 GDPR準拠の完全削除機能
