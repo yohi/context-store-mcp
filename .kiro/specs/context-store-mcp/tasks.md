@@ -216,14 +216,29 @@
 ## セキュリティとアクセス制御
 
 - [ ] 8. セキュリティ機能とデータ保護の実装
-- [ ] 8.1 認証と暗号化の実装
-  - MCP標準認証メカニズム
-  - APIキー管理と検証
-  - データ保存時暗号化
-  - 通信暗号化の設定
-  - 暗号化キー管理システム
-  - キーローテーション機能
+- [x] 8.1 認証と暗号化の実装
+  - AES-256-GCM暗号化モジュール実装（`src/security/encryption.ts`）
+  - エンベロープ暗号化パターン（DEK + CMK）
+  - ローカル開発用MasterKeyProvider実装
+  - APIキー管理システム（`src/security/api-key-manager.ts`）
+    - セキュアなAPIキー生成（csm_v1形式、Base62エンコード）
+    - SHA-256ハッシュ化による保存
+    - TTL管理と有効期限チェック
+    - キーの無効化（revoke）とローテーション機能
+  - MCP認証ミドルウェア（`src/security/mcp-auth-middleware.ts`）
+    - Bearer Token / X-API-Key ヘッダー対応
+    - レート制限（5分間に3回失敗で15分間ブロック）
+    - 権限スコープチェック
+    - 監査ログ生成機能
+  - キーローテーション管理（KeyRotationManager）
+    - DEKローテーション自動判定（90%経過時）
+    - データ再暗号化機能
+  - 66ユニットテスト全パス
+    - encryption.test.ts: 24テスト
+    - api-key-manager.test.ts: 26テスト
+    - mcp-auth-middleware.test.ts: 16テスト
   - _Requirements: 6.1, 6.2_
+  - **注意**: 本番環境ではAWS KMSまたはHashiCorp Vaultを使用すること
 
 - [ ] 8.2 アクセス制御とロール管理
   - ロールベースアクセス制御の実装
