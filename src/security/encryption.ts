@@ -11,6 +11,7 @@
  */
 
 import crypto from 'crypto';
+import { LRUCache } from '../mcp/lru-cache.js';
 
 /**
  * 暗号化アルゴリズムと設定
@@ -133,14 +134,34 @@ export class LocalMasterKeyProvider implements MasterKeyProvider {
 }
 
 /**
+ * エンベロープ暗号化マネージャーの設定
+ */
+export interface EncryptionManagerConfig {
+  /** キャッシュの最大サイズ（デフォルト: 100） */
+  maxCacheSize?: number;
+  /** キャッシュエントリの有効期限（ミリ秒、デフォルト: 1時間） */
+  cacheMaxAge?: number;
+}
+
+/**
  * エンベロープ暗号化マネージャー
  */
 export class EncryptionManager {
   private masterKeyProvider: MasterKeyProvider;
-  private dataKeyCache: Map<string, Buffer> = new Map();
+  private dataKeyCache: LRUCache<Buffer>;
 
-  constructor(masterKeyProvider: MasterKeyProvider) {
+  constructor(masterKeyProvider: MasterKeyProvider, config?: EncryptionManagerConfig) {
     this.masterKeyProvider = masterKeyProvider;
+
+    // LRUキャッシュの設定（退避時にBufferをゼロクリア）
+    this.dataKeyCache = new LRUCache<Buffer>({
+      maxSize: config?.maxCacheSize ?? 100,
+      maxAge: config?.cacheMaxAge ?? 60 * 60 * 1000, // デフォルト1時間
+      onEvict: (keyId: string, keyBuffer: Buffer) => {
+        // セキュリティのため、退避時にキーをゼロクリア
+        keyBuffer.fill(0);
+      },
+    });
   }
 
   /**
@@ -152,7 +173,7 @@ export class EncryptionManager {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000); // 365日後
 
-    // キーをキャッシュに保存
+    // キーをLRUキャッシュに保存
     this.dataKeyCache.set(keyId, plaintext);
 
     return {
@@ -169,15 +190,16 @@ export class EncryptionManager {
    */
   private async loadDataKey(dek: DataEncryptionKey): Promise<Buffer> {
     // キャッシュに存在する場合は再利用
-    if (this.dataKeyCache.has(dek.id)) {
-      return this.dataKeyCache.get(dek.id)!;
+    const cachedKey = this.dataKeyCache.get(dek.id);
+    if (cachedKey) {
+      return cachedKey;
     }
 
     // CMKを使ってDEKを復号化
     const encryptedKeyBuffer = Buffer.from(dek.encryptedKey, 'base64');
     const plaintextKey = await this.masterKeyProvider.decrypt(encryptedKeyBuffer);
 
-    // キャッシュに保存
+    // LRUキャッシュに保存
     this.dataKeyCache.set(dek.id, plaintextKey);
 
     return plaintextKey;
@@ -244,10 +266,7 @@ export class EncryptionManager {
    * データキーキャッシュをクリア（セキュリティ対策）
    */
   clearKeyCache(): void {
-    // メモリ上のキーをゼロクリア
-    for (const key of this.dataKeyCache.values()) {
-      key.fill(0);
-    }
+    // LRUキャッシュのクリア（onEvictコールバックで自動的にゼロクリアされる）
     this.dataKeyCache.clear();
   }
 
@@ -255,11 +274,8 @@ export class EncryptionManager {
    * 特定のキーをキャッシュから削除
    */
   evictKey(keyId: string): void {
-    const key = this.dataKeyCache.get(keyId);
-    if (key) {
-      key.fill(0); // ゼロクリア
-      this.dataKeyCache.delete(keyId);
-    }
+    // LRUキャッシュから削除（onEvictコールバックで自動的にゼロクリアされる）
+    this.dataKeyCache.delete(keyId);
   }
 }
 
