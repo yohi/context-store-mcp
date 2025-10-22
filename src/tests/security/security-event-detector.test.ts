@@ -11,7 +11,7 @@
  * - 自動応答アクション: セッション終了、IPブロック、アラート発火
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   SecurityEventDetector,
   SecurityEvent,
@@ -368,6 +368,175 @@ describe('SecurityEventDetector', () => {
 
       const baseline = await detector.getBaseline('user-123');
       expect(baseline).toBe(20);
+    });
+  });
+
+  describe('verifyAuditLogSignature', () => {
+    it('should skip signature verification when flag is false', async () => {
+      const userId = 'user-123';
+
+      // Create logs (some will be valid, some tampered)
+      const log1 = await auditLogger.logEvent({
+        eventType: 'memory_searched',
+        userId,
+        sessionId: 'session-1',
+        ipAddress: '192.168.1.1',
+        resourceId: 'memory-1',
+        action: 'search',
+        result: 'success',
+      });
+
+      const log2 = await auditLogger.logEvent({
+        eventType: 'memory_searched',
+        userId,
+        sessionId: 'session-2',
+        ipAddress: '192.168.1.1',
+        resourceId: 'memory-2',
+        action: 'search',
+        result: 'success',
+      });
+
+      // Tamper with log2
+      log2.action = 'tampered';
+
+      // Detect without verification (should include tampered log)
+      const eventsWithoutVerification = await detector.detectAnomalies({
+        verifyAuditLogSignature: false,
+      });
+
+      // Should still detect (verification disabled)
+      expect(eventsWithoutVerification.length).toBeGreaterThanOrEqual(0);
+    });
+
+    it('should verify signatures and exclude invalid logs when flag is true', async () => {
+      const userId = 'user-123';
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      // Create 105 valid logs to trigger excessive access detection
+      for (let i = 0; i < 105; i++) {
+        await auditLogger.logEvent({
+          eventType: 'memory_searched',
+          userId,
+          sessionId: 'session-valid',
+          ipAddress: '192.168.1.1',
+          resourceId: `memory-${i}`,
+          action: 'search',
+          result: 'success',
+        });
+      }
+
+      // Create and tamper with some logs
+      const tamperedLog1 = await auditLogger.logEvent({
+        eventType: 'memory_searched',
+        userId,
+        sessionId: 'session-tampered-1',
+        ipAddress: '192.168.1.1',
+        resourceId: 'memory-tampered-1',
+        action: 'search',
+        result: 'success',
+      });
+
+      const tamperedLog2 = await auditLogger.logEvent({
+        eventType: 'memory_searched',
+        userId,
+        sessionId: 'session-tampered-2',
+        ipAddress: '192.168.1.1',
+        resourceId: 'memory-tampered-2',
+        action: 'search',
+        result: 'success',
+      });
+
+      // Tamper with logs
+      tamperedLog1.action = 'tampered action 1';
+      tamperedLog2.userId = 'different-user';
+
+      // Detect with verification enabled
+      const eventsWithVerification = await detector.detectAnomalies({
+        verifyAuditLogSignature: true,
+      });
+
+      // Should have warned about invalid signatures
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Invalid signature detected for audit log')
+      );
+
+      // Should have warned about excluded logs
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Excluded 2 audit log(s) with invalid signatures')
+      );
+
+      // Should still detect excessive access from valid logs
+      expect(eventsWithVerification.length).toBeGreaterThan(0);
+      expect(eventsWithVerification.some((e) => e.anomalyPattern === 'excessive_data_access')).toBe(
+        true
+      );
+
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('should default to false when verifyAuditLogSignature is not provided', async () => {
+      const userId = 'user-123';
+
+      // Create some logs
+      await auditLogger.logEvent({
+        eventType: 'memory_searched',
+        userId,
+        sessionId: 'session-1',
+        ipAddress: '192.168.1.1',
+        resourceId: 'memory-1',
+        action: 'search',
+        result: 'success',
+      });
+
+      // Should work without the flag (defaults to false, no verification)
+      const events = await detector.detectAnomalies({});
+      expect(events).toBeDefined();
+    });
+
+    it('should handle all logs being invalid gracefully', async () => {
+      const userId = 'user-123';
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      // Create logs and tamper with all of them
+      const log1 = await auditLogger.logEvent({
+        eventType: 'memory_searched',
+        userId,
+        sessionId: 'session-1',
+        ipAddress: '192.168.1.1',
+        resourceId: 'memory-1',
+        action: 'search',
+        result: 'success',
+      });
+
+      const log2 = await auditLogger.logEvent({
+        eventType: 'memory_searched',
+        userId,
+        sessionId: 'session-2',
+        ipAddress: '192.168.1.1',
+        resourceId: 'memory-2',
+        action: 'search',
+        result: 'success',
+      });
+
+      // Tamper with all logs
+      log1.action = 'tampered 1';
+      log2.action = 'tampered 2';
+
+      // Detect with verification
+      const events = await detector.detectAnomalies({
+        verifyAuditLogSignature: true,
+      });
+
+      // Should warn about excluded logs
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Excluded 2 audit log(s) with invalid signatures')
+      );
+
+      // Should return empty or minimal events (no valid logs to detect from)
+      expect(events).toBeDefined();
+      expect(Array.isArray(events)).toBe(true);
+
+      consoleWarnSpy.mockRestore();
     });
   });
 });

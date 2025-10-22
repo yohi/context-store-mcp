@@ -311,6 +311,122 @@ describe('AlertManager', () => {
       expect(history).toHaveLength(1);
       expect(history[0].securityEventId).toBe('2');
     });
+
+    it('should preserve userId in alert records', async () => {
+      const event: SecurityEvent = {
+        id: '1',
+        timestamp: new Date(),
+        anomalyPattern: 'excessive_data_access',
+        threatLevel: 'warning',
+        userId: 'user-123',
+        sessionId: 'session-1',
+        description: 'Test event',
+      };
+
+      await alertManager.sendAlert(event, ['log']);
+
+      const history = await alertManager.getAlertHistory();
+
+      expect(history).toHaveLength(1);
+      expect(history[0].userId).toBe('user-123');
+    });
+
+    it('should handle missing userId in alert records', async () => {
+      const event: SecurityEvent = {
+        id: '1',
+        timestamp: new Date(),
+        anomalyPattern: 'excessive_data_access',
+        threatLevel: 'warning',
+        userId: '', // Empty userId
+        sessionId: 'session-1',
+        description: 'Test event',
+      };
+
+      await alertManager.sendAlert(event, ['log']);
+
+      const history = await alertManager.getAlertHistory();
+
+      expect(history).toHaveLength(1);
+      expect(history[0].userId).toBeNull();
+    });
+
+    it('should filter history by userId', async () => {
+      const event1: SecurityEvent = {
+        id: '1',
+        timestamp: new Date(),
+        anomalyPattern: 'excessive_data_access',
+        threatLevel: 'warning',
+        userId: 'user-123',
+        sessionId: 'session-1',
+        description: 'Event 1',
+      };
+
+      const event2: SecurityEvent = {
+        id: '2',
+        timestamp: new Date(),
+        anomalyPattern: 'bulk_export_attempt',
+        threatLevel: 'critical',
+        userId: 'user-456',
+        sessionId: 'session-2',
+        description: 'Event 2',
+      };
+
+      const event3: SecurityEvent = {
+        id: '3',
+        timestamp: new Date(),
+        anomalyPattern: 'auth_failure_spike',
+        threatLevel: 'important',
+        userId: 'user-123',
+        sessionId: 'session-3',
+        description: 'Event 3',
+      };
+
+      await alertManager.sendAlert(event1, ['log']);
+      await alertManager.sendAlert(event2, ['email']);
+      await alertManager.sendAlert(event3, ['log']);
+
+      const history = await alertManager.getAlertHistory({
+        userId: 'user-123',
+      });
+
+      expect(history).toHaveLength(2);
+      expect(history[0].securityEventId).toBe('3'); // Most recent first
+      expect(history[1].securityEventId).toBe('1');
+      expect(history.every((h) => h.userId === 'user-123')).toBe(true);
+    });
+
+    it('should filter history by null userId', async () => {
+      const event1: SecurityEvent = {
+        id: '1',
+        timestamp: new Date(),
+        anomalyPattern: 'excessive_data_access',
+        threatLevel: 'warning',
+        userId: 'user-123',
+        sessionId: 'session-1',
+        description: 'Event 1',
+      };
+
+      const event2: SecurityEvent = {
+        id: '2',
+        timestamp: new Date(),
+        anomalyPattern: 'bulk_export_attempt',
+        threatLevel: 'critical',
+        userId: '', // Empty userId will be stored as null
+        sessionId: 'session-2',
+        description: 'Event 2',
+      };
+
+      await alertManager.sendAlert(event1, ['log']);
+      await alertManager.sendAlert(event2, ['email']);
+
+      const history = await alertManager.getAlertHistory({
+        userId: null,
+      });
+
+      expect(history).toHaveLength(1);
+      expect(history[0].securityEventId).toBe('2');
+      expect(history[0].userId).toBeNull();
+    });
   });
 
   describe('isSessionSuspended', () => {

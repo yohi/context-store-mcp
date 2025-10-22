@@ -47,8 +47,17 @@ export interface SecurityEvent {
  * Detection parameters
  */
 export interface DetectionParams {
+  /** Time window in minutes for anomaly detection (default: 5) */
   timeWindowMinutes?: number;
+  /** Whether to use baseline comparison for detection (default: false) */
   useBaseline?: boolean;
+  /**
+   * Whether to verify audit log signatures before processing
+   * When true, logs with invalid signatures are excluded from detection
+   * Invalid logs are counted and logged but not passed to detection algorithms
+   * (default: false)
+   */
+  verifyAuditLogSignature?: boolean;
 }
 
 /**
@@ -97,10 +106,22 @@ export class SecurityEventDetector {
     const startTime = new Date(Date.now() - timeWindowMinutes * 60 * 1000);
     const endTime = new Date();
 
-    const recentLogs = await this.auditLogger.queryLogs({
+    let recentLogs = await this.auditLogger.queryLogs({
       startTime,
       endTime,
     });
+
+    // Verify audit log signatures if requested
+    if (params.verifyAuditLogSignature === true) {
+      const { validLogs, invalidCount } = await this.filterValidLogs(recentLogs);
+      recentLogs = validLogs;
+
+      if (invalidCount > 0) {
+        console.warn(
+          `[SecurityEventDetector] Excluded ${invalidCount} audit log(s) with invalid signatures from anomaly detection`
+        );
+      }
+    }
 
     const detectedEvents: SecurityEvent[] = [];
 
@@ -411,5 +432,35 @@ export class SecurityEventDetector {
    */
   async getBaseline(userId: string): Promise<number | undefined> {
     return this.userBaselines.get(userId);
+  }
+
+  /**
+   * Filter valid logs by verifying audit log signatures
+   *
+   * @param logs - Audit logs to filter
+   * @returns Object containing valid logs and count of invalid logs
+   */
+  private async filterValidLogs(
+    logs: Awaited<ReturnType<typeof this.auditLogger.queryLogs>>
+  ): Promise<{ validLogs: typeof logs; invalidCount: number }> {
+    const validLogs = [];
+    let invalidCount = 0;
+
+    for (const log of logs) {
+      const isValid = await this.auditLogger.verifySignature(log);
+
+      if (isValid) {
+        validLogs.push(log);
+      } else {
+        invalidCount++;
+        // Log invalid entry for audit purposes
+        console.warn(
+          `[SecurityEventDetector] Invalid signature detected for audit log: ${log.id} ` +
+            `(eventType: ${log.eventType}, userId: ${log.userId}, timestamp: ${log.timestamp.toISOString()})`
+        );
+      }
+    }
+
+    return { validLogs, invalidCount };
   }
 }

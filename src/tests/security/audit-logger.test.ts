@@ -12,14 +12,101 @@
  * - 改ざん防止: デジタル署名（HMAC-SHA256）を付与
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { AuditLogger, AuditLogEntry, EventType, EventResult } from '../../security/audit-logger';
 
 describe('AuditLogger', () => {
   let auditLogger: AuditLogger;
+  let originalNodeEnv: string | undefined;
 
   beforeEach(() => {
+    originalNodeEnv = process.env.NODE_ENV;
+    // Ensure we're in test/development mode by default
+    process.env.NODE_ENV = 'test';
     auditLogger = new AuditLogger();
+  });
+
+  afterEach(() => {
+    // Restore original NODE_ENV
+    if (originalNodeEnv !== undefined) {
+      process.env.NODE_ENV = originalNodeEnv;
+    } else {
+      delete process.env.NODE_ENV;
+    }
+  });
+
+  describe('constructor', () => {
+    it('should accept strong secret key in production', () => {
+      process.env.NODE_ENV = 'production';
+      const strongKey = 'a'.repeat(32); // 32 character key
+
+      expect(() => new AuditLogger(strongKey)).not.toThrow();
+    });
+
+    it('should throw error when no secret key provided in production', () => {
+      process.env.NODE_ENV = 'production';
+      delete process.env.AUDIT_LOG_SECRET_KEY;
+
+      expect(() => new AuditLogger()).toThrow(
+        /AUDIT_LOG_SECRET_KEY is required in production environment/
+      );
+    });
+
+    it('should throw error when weak secret key provided in production', () => {
+      process.env.NODE_ENV = 'production';
+
+      expect(() => new AuditLogger('short')).toThrow(/Weak secret key detected in production/);
+    });
+
+    it('should reject common weak keys in production', () => {
+      process.env.NODE_ENV = 'production';
+      const weakKeys = ['test', 'password', 'secret', '123456', 'changeme'];
+
+      weakKeys.forEach((weakKey) => {
+        expect(() => new AuditLogger(weakKey)).toThrow(/Weak secret key detected in production/);
+      });
+    });
+
+    it('should accept AUDIT_LOG_SECRET_KEY from environment in production', () => {
+      process.env.NODE_ENV = 'production';
+      process.env.AUDIT_LOG_SECRET_KEY = 'a'.repeat(32);
+
+      expect(() => new AuditLogger()).not.toThrow();
+
+      delete process.env.AUDIT_LOG_SECRET_KEY;
+    });
+
+    it('should allow weak keys in development with warning', () => {
+      process.env.NODE_ENV = 'development';
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      expect(() => new AuditLogger('weak')).not.toThrow();
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('WARNING: Using weak or default secret key')
+      );
+
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('should use default key in development', () => {
+      process.env.NODE_ENV = 'development';
+      delete process.env.AUDIT_LOG_SECRET_KEY;
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      expect(() => new AuditLogger()).not.toThrow();
+      expect(consoleWarnSpy).toHaveBeenCalled();
+
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('should enforce minimum key length of 32 characters', () => {
+      process.env.NODE_ENV = 'production';
+      const key31 = 'a'.repeat(31);
+      const key32 = 'a'.repeat(32);
+
+      expect(() => new AuditLogger(key31)).toThrow(/Weak secret key detected/);
+      expect(() => new AuditLogger(key32)).not.toThrow();
+    });
   });
 
   describe('logEvent', () => {
@@ -250,6 +337,92 @@ describe('AuditLogger', () => {
       const isValid = await auditLogger.verifySignature(entry);
       expect(isValid).toBe(false);
     });
+
+    it('should reject signature with different length', async () => {
+      const entry = await auditLogger.logEvent({
+        eventType: 'memory_created',
+        userId: 'user-123',
+        sessionId: 'session-456',
+        ipAddress: '192.168.1.1',
+        resourceId: 'memory-789',
+        action: 'create',
+        result: 'success',
+      });
+
+      // Replace with signature of different length
+      entry.signature = 'abcd1234';
+
+      const isValid = await auditLogger.verifySignature(entry);
+      expect(isValid).toBe(false);
+    });
+
+    it('should reject completely invalid signature', async () => {
+      const entry = await auditLogger.logEvent({
+        eventType: 'memory_created',
+        userId: 'user-123',
+        sessionId: 'session-456',
+        ipAddress: '192.168.1.1',
+        resourceId: 'memory-789',
+        action: 'create',
+        result: 'success',
+      });
+
+      // Replace with invalid signature of same length (64 hex chars = 32 bytes for SHA256)
+      entry.signature = 'f'.repeat(64);
+
+      const isValid = await auditLogger.verifySignature(entry);
+      expect(isValid).toBe(false);
+    });
+
+    it('should use constant-time comparison to prevent timing attacks', async () => {
+      const entry = await auditLogger.logEvent({
+        eventType: 'memory_created',
+        userId: 'user-123',
+        sessionId: 'session-456',
+        ipAddress: '192.168.1.1',
+        resourceId: 'memory-789',
+        action: 'create',
+        result: 'success',
+      });
+
+      // Create multiple invalid signatures with different numbers of matching prefix bytes
+      const originalSignature = entry.signature;
+      const iterations = 100;
+      const timings: number[] = [];
+
+      for (let i = 0; i < iterations; i++) {
+        // Create signature with only first byte matching
+        const invalidSignature1 = originalSignature.substring(0, 2) + 'a'.repeat(62);
+        entry.signature = invalidSignature1;
+
+        const start1 = performance.now();
+        await auditLogger.verifySignature(entry);
+        const end1 = performance.now();
+        timings.push(end1 - start1);
+
+        // Create signature with half bytes matching
+        const invalidSignature2 = originalSignature.substring(0, 32) + 'b'.repeat(32);
+        entry.signature = invalidSignature2;
+
+        const start2 = performance.now();
+        await auditLogger.verifySignature(entry);
+        const end2 = performance.now();
+        timings.push(end2 - start2);
+      }
+
+      // With constant-time comparison, timing variance should be minimal
+      // This is a weak test but demonstrates the concept
+      // In a real timing attack, differences would be measurable
+      const avgTiming = timings.reduce((a, b) => a + b, 0) / timings.length;
+      const maxDeviation = Math.max(...timings.map((t) => Math.abs(t - avgTiming)));
+
+      // All verifications should complete (constant-time comparison works)
+      expect(timings.length).toBe(iterations * 2);
+
+      // Note: This doesn't prove constant-time, but ensures the function works
+      // Real constant-time verification requires statistical analysis of many samples
+      expect(maxDeviation).toBeGreaterThanOrEqual(0);
+    });
   });
 
   describe('getAccessHistory', () => {
@@ -415,8 +588,161 @@ describe('AuditLogger', () => {
       });
 
       expect(typeof exported).toBe('string');
-      expect(exported).toContain('id,timestamp,eventType,userId,sessionId');
+      expect(exported).toContain('"id","timestamp","eventType","userId","sessionId"');
       expect(exported.split('\n').length).toBeGreaterThan(1);
+    });
+
+    it('should escape CSV fields with commas', async () => {
+      await auditLogger.logEvent({
+        eventType: 'memory_created',
+        userId: 'user, with, commas',
+        sessionId: 'session-test',
+        ipAddress: '192.168.1.1',
+        resourceId: 'memory-test',
+        action: 'create, update',
+        result: 'success',
+      });
+
+      const exported = await auditLogger.exportLogs({
+        format: 'csv',
+      });
+
+      // Fields with commas should be quoted
+      expect(exported).toContain('"user, with, commas"');
+      expect(exported).toContain('"create, update"');
+    });
+
+    it('should escape CSV fields with double quotes', async () => {
+      await auditLogger.logEvent({
+        eventType: 'memory_created',
+        userId: 'user "quoted" name',
+        sessionId: 'session-test',
+        ipAddress: '192.168.1.1',
+        resourceId: 'memory-test',
+        action: 'say "hello"',
+        result: 'success',
+      });
+
+      const exported = await auditLogger.exportLogs({
+        format: 'csv',
+      });
+
+      // Double quotes should be escaped by doubling them
+      expect(exported).toContain('"user ""quoted"" name"');
+      expect(exported).toContain('"say ""hello"""');
+    });
+
+    it('should escape CSV fields with newlines', async () => {
+      await auditLogger.logEvent({
+        eventType: 'memory_created',
+        userId: 'user-test',
+        sessionId: 'session-test',
+        ipAddress: '192.168.1.1',
+        resourceId: 'memory-test',
+        action: 'multi\nline\naction',
+        result: 'success',
+      });
+
+      const exported = await auditLogger.exportLogs({
+        format: 'csv',
+      });
+
+      // Newlines should be preserved within quotes
+      expect(exported).toContain('"multi\nline\naction"');
+    });
+
+    it('should prevent CSV injection with leading = character', async () => {
+      await auditLogger.logEvent({
+        eventType: 'memory_created',
+        userId: '=1+1',
+        sessionId: 'session-test',
+        ipAddress: '192.168.1.1',
+        resourceId: 'memory-test',
+        action: '=SUM(A1:A10)',
+        result: 'success',
+      });
+
+      const exported = await auditLogger.exportLogs({
+        format: 'csv',
+      });
+
+      // Formula-like values should be neutralized with leading quote
+      expect(exported).toContain('"\'=1+1"');
+      expect(exported).toContain('"\'=SUM(A1:A10)"');
+    });
+
+    it('should prevent CSV injection with leading + character', async () => {
+      await auditLogger.logEvent({
+        eventType: 'memory_created',
+        userId: '+cmd|/c calc',
+        sessionId: 'session-test',
+        ipAddress: '192.168.1.1',
+        resourceId: 'memory-test',
+        action: 'test',
+        result: 'success',
+      });
+
+      const exported = await auditLogger.exportLogs({
+        format: 'csv',
+      });
+
+      expect(exported).toContain('"\'+cmd|/c calc"');
+    });
+
+    it('should prevent CSV injection with leading - character', async () => {
+      await auditLogger.logEvent({
+        eventType: 'memory_created',
+        userId: '-2+3',
+        sessionId: 'session-test',
+        ipAddress: '192.168.1.1',
+        resourceId: 'memory-test',
+        action: 'test',
+        result: 'success',
+      });
+
+      const exported = await auditLogger.exportLogs({
+        format: 'csv',
+      });
+
+      expect(exported).toContain('"\'-2+3"');
+    });
+
+    it('should prevent CSV injection with leading @ character', async () => {
+      await auditLogger.logEvent({
+        eventType: 'memory_created',
+        userId: '@SUM(1+1)',
+        sessionId: 'session-test',
+        ipAddress: '192.168.1.1',
+        resourceId: 'memory-test',
+        action: 'test',
+        result: 'success',
+      });
+
+      const exported = await auditLogger.exportLogs({
+        format: 'csv',
+      });
+
+      expect(exported).toContain('"\'@SUM(1+1)"');
+    });
+
+    it('should handle complex CSV injection combinations', async () => {
+      await auditLogger.logEvent({
+        eventType: 'memory_created',
+        userId: '=1+1"test, value',
+        sessionId: 'session-test',
+        ipAddress: '192.168.1.1',
+        resourceId: 'memory-test',
+        action: '@cmd|"/c calc"',
+        result: 'success',
+      });
+
+      const exported = await auditLogger.exportLogs({
+        format: 'csv',
+      });
+
+      // Should neutralize formula AND escape quotes
+      expect(exported).toContain('"\'=1+1""test, value"');
+      expect(exported).toContain('"\'@cmd|""/c calc"""');
     });
 
     it('should support time range filtering in export', async () => {

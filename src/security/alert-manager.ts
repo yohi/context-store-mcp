@@ -74,6 +74,7 @@ export interface AlertRecord {
   timestamp: Date;
   securityEventId: string;
   threatLevel: ThreatLevel;
+  userId: string | null;
   channels: AlertChannel[];
   delivered: boolean;
 }
@@ -162,6 +163,7 @@ export class AlertManager {
       timestamp: new Date(),
       securityEventId: event.id,
       threatLevel: event.threatLevel,
+      userId: event.userId || null,
       channels,
       delivered: true,
     });
@@ -237,6 +239,10 @@ export class AlertManager {
 
       if (query.threatLevel) {
         results = results.filter((alert) => alert.threatLevel === query.threatLevel);
+      }
+
+      if (query.userId !== undefined) {
+        results = results.filter((alert) => alert.userId === query.userId);
       }
     }
 

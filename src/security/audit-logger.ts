@@ -4,7 +4,8 @@
  * Requirements: 6.5 - 監査ログの維持
  * - ログ保持期間: 365日間（1年間）保持
  * - 不変ストレージ: WORM（Write-Once-Read-Many）ストレージ
- * - 必須フィールド: timestamp, event_type, user_id, session_id, ip_address, resource_id, action, result, metadata
+ * - 必須フィールド: timestamp, event_type, user_id, session_id, ip_address, resource_id, action, result
+ * - オプションフィールド: error_code, metadata
  * - 検索/クエリSLA:
  *   - 過去30日間（ホットストレージ）: 5秒以内に検索可能
  *   - 31日～365日（コールドストレージ）: 30秒以内に検索可能
@@ -12,7 +13,7 @@
  * - 改ざん防止: デジタル署名（HMAC-SHA256）を付与
  */
 
-import { createHmac, randomUUID } from 'crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 
 /**
  * Event types for audit logging
@@ -117,10 +118,65 @@ export class AuditLogger {
    * Create a new AuditLogger instance
    *
    * @param secretKey - Secret key for HMAC signature generation
+   * @throws Error if no secret key is provided in production environment
+   * @throws Error if secret key has insufficient entropy
    */
   constructor(secretKey?: string) {
     this.logs = new Map();
-    this.secretKey = secretKey || process.env.AUDIT_LOG_SECRET_KEY || 'default-secret-key-for-development';
+
+    const isProduction = process.env['NODE_ENV'] === 'production';
+    const providedKey = secretKey || process.env['AUDIT_LOG_SECRET_KEY'];
+
+    // In production, secret key is required
+    if (isProduction && !providedKey) {
+      throw new Error(
+        'AUDIT_LOG_SECRET_KEY is required in production environment. ' +
+          'Set the AUDIT_LOG_SECRET_KEY environment variable or provide a secretKey parameter.'
+      );
+    }
+
+    // Use provided key or fallback to development default
+    const effectiveKey = providedKey || 'default-secret-key-for-development';
+
+    // Validate secret key entropy
+    this.validateSecretKey(effectiveKey, isProduction);
+
+    this.secretKey = effectiveKey;
+  }
+
+  /**
+   * Validate secret key entropy
+   *
+   * @param key - Secret key to validate
+   * @param isProduction - Whether running in production environment
+   * @throws Error if key is weak in production
+   */
+  private validateSecretKey(key: string, isProduction: boolean): void {
+    const MIN_LENGTH = 32;
+    const weakKeys = [
+      'default-secret-key-for-development',
+      'test',
+      'password',
+      'secret',
+      '123456',
+      'changeme',
+    ];
+
+    const isWeak = key.length < MIN_LENGTH || weakKeys.includes(key.toLowerCase());
+
+    if (isProduction && isWeak) {
+      throw new Error(
+        `Weak secret key detected in production. Secret key must be at least ${MIN_LENGTH} characters ` +
+          'and not be a common weak value. Generate a strong random key for production use.'
+      );
+    }
+
+    if (!isProduction && isWeak) {
+      console.warn(
+        '[AuditLogger] WARNING: Using weak or default secret key in development. ' +
+          `For production, use a strong key with at least ${MIN_LENGTH} characters.`
+      );
+    }
   }
 
   /**
@@ -210,6 +266,8 @@ export class AuditLogger {
   /**
    * Verify the signature of an audit log entry
    *
+   * Uses constant-time comparison to prevent timing attacks
+   *
    * @param entry - Audit log entry to verify
    * @returns True if signature is valid, false otherwise
    */
@@ -229,7 +287,19 @@ export class AuditLogger {
     };
 
     const expectedSignature = this.generateSignature(entryWithoutSignature);
-    return entry.signature === expectedSignature;
+
+    // Convert signatures to Buffers for constant-time comparison
+    // Both signatures are hex-encoded strings
+    const expectedBuffer = Buffer.from(expectedSignature, 'hex');
+    const actualBuffer = Buffer.from(entry.signature, 'hex');
+
+    // Check lengths first to avoid timingSafeEqual exceptions
+    if (expectedBuffer.length !== actualBuffer.length) {
+      return false;
+    }
+
+    // Use constant-time comparison to prevent timing attacks
+    return timingSafeEqual(expectedBuffer, actualBuffer);
   }
 
   /**
@@ -322,7 +392,11 @@ export class AuditLogger {
         log.signature,
       ]);
 
-      return [headers.join(','), ...rows.map((row) => row.join(','))].join('\n');
+      // Convert to RFC 4180 compliant CSV with CSV injection prevention
+      const headerRow = headers.map((h) => this.escapeCsvField(h)).join(',');
+      const dataRows = rows.map((row) => row.map((field) => this.escapeCsvField(field)).join(','));
+
+      return [headerRow, ...dataRows].join('\n');
     }
 
     throw new Error(`Unsupported export format: ${params.format}`);
@@ -352,6 +426,36 @@ export class AuditLogger {
       ...entryWithoutSignature,
       signature,
     });
+  }
+
+  /**
+   * Escape a CSV field according to RFC 4180 and prevent CSV injection
+   *
+   * @param value - Field value to escape
+   * @returns Escaped and quoted CSV field
+   */
+  private escapeCsvField(value: unknown): string {
+    // Convert null/undefined to empty string
+    if (value === null || value === undefined) {
+      return '""';
+    }
+
+    // Convert to string
+    let field = String(value);
+
+    // Prevent CSV injection by neutralizing formula-like values
+    // Leading characters that trigger formula execution: =, +, -, @
+    const dangerousChars = ['=', '+', '-', '@'];
+    if (dangerousChars.some((char) => field.startsWith(char))) {
+      // Prefix with single quote to neutralize
+      field = "'" + field;
+    }
+
+    // Escape double quotes by doubling them (RFC 4180)
+    field = field.replace(/"/g, '""');
+
+    // Always wrap in double quotes (RFC 4180)
+    return `"${field}"`;
   }
 
   /**
