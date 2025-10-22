@@ -11,6 +11,7 @@
  * - 監査ログ記録
  */
 
+import crypto from 'crypto';
 import { ApiKeyManager, ApiKey } from './api-key-manager.js';
 
 /**
@@ -141,6 +142,40 @@ export class McpAuthMiddleware {
   }
 
   /**
+   * 暗号学的に安全なセッションIDを生成
+   *
+   * crypto.randomUUID() を使用してUUIDv4を生成し、
+   * "session_" プレフィックスを付加します。
+   *
+   * @returns 暗号学的に安全なセッションID (例: "session_a3bb189e-8bf9-4f11-a4f1-3a3e8b8e4e5c")
+   */
+  private generateSecureSessionId(): string {
+    // Node.js v14.17.0+ および v15.6.0+ で crypto.randomUUID() が利用可能
+    if (typeof crypto.randomUUID === 'function') {
+      return `session_${crypto.randomUUID()}`;
+    }
+
+    // フォールバック: crypto.randomBytes を使用してUUIDv4を生成
+    const bytes = crypto.randomBytes(16);
+
+    // UUIDv4 形式に変換
+    // version (4) と variant (RFC4122) ビットを設定
+    bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+    bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant RFC4122
+
+    // UUID文字列に変換
+    const uuid = [
+      bytes.subarray(0, 4).toString('hex'),
+      bytes.subarray(4, 6).toString('hex'),
+      bytes.subarray(6, 8).toString('hex'),
+      bytes.subarray(8, 10).toString('hex'),
+      bytes.subarray(10, 16).toString('hex'),
+    ].join('-');
+
+    return `session_${uuid}`;
+  }
+
+  /**
    * 認証ヘッダーからAPIキーを抽出
    *
    * サポートされる形式:
@@ -268,8 +303,16 @@ export class McpAuthMiddleware {
             errorType = 'invalid_token';
         }
 
+        // 内部ログに詳細な理由を記録（クライアントには漏洩させない）
+        console.warn(
+          `Authentication failed for IP ${ipAddress}: ` +
+            `type=${errorType}, reason=${validationResult.reason}, ` +
+            `timestamp=${new Date().toISOString()}`
+        );
+
         this.recordAuthAttempt(ipAddress, false, errorType);
-        throw new AuthenticationError(errorType, `Invalid API key: ${validationResult.reason}`);
+        // 汎用的なエラーメッセージのみをクライアントに返す（情報漏洩防止）
+        throw new AuthenticationError(errorType, 'Invalid API key');
       }
 
       const apiKey = validationResult.key!;
@@ -277,12 +320,15 @@ export class McpAuthMiddleware {
       // 認証成功を記録
       this.recordAuthAttempt(ipAddress, true);
 
+      // 暗号学的に安全なセッションIDを生成
+      const sessionId = this.generateSecureSessionId();
+
       // 認証コンテキストを構築
       return {
         authenticated: true,
         apiKey,
         userId: apiKey.metadata?.userId as string | undefined,
-        sessionId: `session_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+        sessionId,
         scopes: apiKey.scopes,
         metadata: {
           ipAddress,
@@ -322,6 +368,9 @@ export class McpAuthMiddleware {
 
   /**
    * 監査ログエントリを生成
+   *
+   * 予約フィールド（timestamp, event_type, user_id等）の上書きを防ぐため、
+   * 追加の詳細情報は専用の `details` キーにネストします。
    */
   createAuditLog(
     authContext: AuthContext,
@@ -330,6 +379,7 @@ export class McpAuthMiddleware {
     details?: Record<string, unknown>
   ): Record<string, unknown> {
     return {
+      // 予約フィールド（上書き不可）
       timestamp: new Date().toISOString(),
       event_type: eventType,
       success,
@@ -339,7 +389,8 @@ export class McpAuthMiddleware {
       user_agent: authContext.metadata.userAgent,
       api_key_id: authContext.apiKey?.id,
       scopes: authContext.scopes,
-      ...details,
+      // カスタム詳細情報を専用キーにネスト
+      details: details || {},
     };
   }
 

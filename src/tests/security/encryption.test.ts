@@ -27,6 +27,57 @@ describe('LocalMasterKeyProvider', () => {
     provider = new LocalMasterKeyProvider(masterKeyHex);
   });
 
+  describe('constructor validation', () => {
+    it('should accept valid 64-character hex string', () => {
+      const validHex = 'a'.repeat(64);
+      expect(() => new LocalMasterKeyProvider(validHex)).not.toThrow();
+    });
+
+    it('should accept mixed case hex characters', () => {
+      const mixedCaseHex = 'aAbBcCdDeEfF0123456789' + '0'.repeat(42);
+      expect(() => new LocalMasterKeyProvider(mixedCaseHex)).not.toThrow();
+    });
+
+    it('should reject hex string with less than 64 characters', () => {
+      const shortHex = 'a'.repeat(63);
+      expect(() => new LocalMasterKeyProvider(shortHex)).toThrow(
+        'Master key must be exactly 64 hexadecimal characters'
+      );
+    });
+
+    it('should reject hex string with more than 64 characters', () => {
+      const longHex = 'a'.repeat(65);
+      expect(() => new LocalMasterKeyProvider(longHex)).toThrow(
+        'Master key must be exactly 64 hexadecimal characters'
+      );
+    });
+
+    it('should reject hex string with invalid characters', () => {
+      const invalidHex = 'g'.repeat(64); // 'g' is not a hex character
+      expect(() => new LocalMasterKeyProvider(invalidHex)).toThrow(
+        'Master key must be exactly 64 hexadecimal characters'
+      );
+    });
+
+    it('should reject hex string with special characters', () => {
+      const invalidHex = 'a'.repeat(63) + '!';
+      expect(() => new LocalMasterKeyProvider(invalidHex)).toThrow(
+        'Master key must be exactly 64 hexadecimal characters'
+      );
+    });
+
+    it('should reject hex string with spaces', () => {
+      const invalidHex = 'a'.repeat(32) + ' ' + 'a'.repeat(31);
+      expect(() => new LocalMasterKeyProvider(invalidHex)).toThrow(
+        'Master key must be exactly 64 hexadecimal characters'
+      );
+    });
+
+    it('should allow no argument and generate random key', () => {
+      expect(() => new LocalMasterKeyProvider()).not.toThrow();
+    });
+  });
+
   describe('generateDataKey', () => {
     it('should generate a 32-byte data key', async () => {
       const { plaintext, encrypted } = await provider.generateDataKey();
@@ -175,6 +226,23 @@ describe('EncryptionManager', () => {
 
       await expect(manager.decrypt(encrypted, dek)).rejects.toThrow();
     });
+
+    it('should fail to decrypt with tampered keyId due to AAD protection', async () => {
+      const dek = await manager.generateDataKey();
+      const plaintext = 'Sensitive data';
+
+      const encrypted = await manager.encrypt(plaintext, dek);
+
+      // keyIdを改ざん（AADが異なるため復号化に失敗するはず）
+      const originalKeyId = encrypted.keyId;
+      encrypted.keyId = originalKeyId.replace(/^./, 'x'); // 最初の文字を変更
+
+      // DEKのkeyIdも同期して変更（Key ID mismatchチェックを回避）
+      const tamperedDek = { ...dek, id: encrypted.keyId };
+
+      // AADの不一致により認証タグ検証が失敗する
+      await expect(manager.decrypt(encrypted, tamperedDek)).rejects.toThrow();
+    });
   });
 
   describe('clearKeyCache', () => {
@@ -263,6 +331,40 @@ describe('KeyRotationManager', () => {
       dek.expiresAt = new Date(now.getTime() + lifetimeMs * 0.2);
 
       expect(rotationManager.shouldRotate(dek)).toBe(false);
+    });
+
+    it('should return true for key with reversed timestamps (expiresAt before createdAt)', async () => {
+      const dek = await encryptionManager.generateDataKey();
+
+      // タイムスタンプを逆転させる（破損シミュレーション）
+      const temp = dek.createdAt;
+      dek.createdAt = dek.expiresAt;
+      dek.expiresAt = temp;
+
+      // console.warnが呼ばれることを確認するためのスパイは省略
+      // lifetimeMs が負になるため、強制ローテーション
+      expect(rotationManager.shouldRotate(dek)).toBe(true);
+    });
+
+    it('should return true for key with identical createdAt and expiresAt', async () => {
+      const dek = await encryptionManager.generateDataKey();
+
+      // 同じタイムスタンプに設定（lifetimeMs = 0）
+      dek.expiresAt = new Date(dek.createdAt.getTime());
+
+      // lifetimeMs が 0 になるため、強制ローテーション
+      expect(rotationManager.shouldRotate(dek)).toBe(true);
+    });
+
+    it('should return true for key with corrupted future createdAt', async () => {
+      const dek = await encryptionManager.generateDataKey();
+
+      // createdAtを未来に設定（異常な状態）
+      const futureDate = new Date(dek.expiresAt.getTime() + 1000000);
+      dek.createdAt = futureDate;
+
+      // lifetimeMs が負になるため、強制ローテーション
+      expect(rotationManager.shouldRotate(dek)).toBe(true);
     });
   });
 
