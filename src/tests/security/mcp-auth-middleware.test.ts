@@ -53,6 +53,45 @@ describe('McpAuthMiddleware', () => {
       expect(authContext.authenticated).toBe(true);
     });
 
+    it('should generate cryptographically secure session ID in UUID format', async () => {
+      const { plainKey } = apiKeyManager.generateApiKey('session-test-key');
+      const headers = {
+        Authorization: `Bearer ${plainKey}`,
+      };
+
+      const authContext = await middleware.authenticate(headers, '127.0.0.1');
+
+      // セッションIDが存在し、正しいプレフィックスを持つことを確認
+      expect(authContext.sessionId).toBeDefined();
+      expect(authContext.sessionId).toMatch(/^session_/);
+
+      // UUIDv4形式であることを確認（8-4-4-4-12のハイフン区切り）
+      const uuidPattern = /^session_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      expect(authContext.sessionId).toMatch(uuidPattern);
+    });
+
+    it('should generate unique session IDs for each authentication', async () => {
+      const { plainKey } = apiKeyManager.generateApiKey('unique-session-test');
+      const headers = {
+        Authorization: `Bearer ${plainKey}`,
+      };
+
+      // 複数回認証して、異なるセッションIDが生成されることを確認
+      const authContext1 = await middleware.authenticate(headers, '127.0.0.1');
+      const authContext2 = await middleware.authenticate(headers, '127.0.0.1');
+      const authContext3 = await middleware.authenticate(headers, '127.0.0.1');
+
+      expect(authContext1.sessionId).not.toBe(authContext2.sessionId);
+      expect(authContext1.sessionId).not.toBe(authContext3.sessionId);
+      expect(authContext2.sessionId).not.toBe(authContext3.sessionId);
+
+      // すべてUUID形式であることを確認
+      const uuidPattern = /^session_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      expect(authContext1.sessionId).toMatch(uuidPattern);
+      expect(authContext2.sessionId).toMatch(uuidPattern);
+      expect(authContext3.sessionId).toMatch(uuidPattern);
+    });
+
     it('should fail authentication with missing credentials', async () => {
       const headers = {};
 
@@ -118,6 +157,72 @@ describe('McpAuthMiddleware', () => {
       } catch (error) {
         expect(error).toBeInstanceOf(AuthenticationError);
         expect((error as AuthenticationError).type).toBe('revoked_token');
+      }
+    });
+
+    it('should not leak internal validation reason in error message', async () => {
+      const { key, plainKey } = apiKeyManager.generateApiKey('leak-test-key');
+      apiKeyManager.revokeApiKey(key.id);
+
+      const headers = {
+        Authorization: `Bearer ${plainKey}`,
+      };
+
+      try {
+        await middleware.authenticate(headers, '127.0.0.1');
+        // 期待: 例外がスローされるべき
+        expect.fail('Expected authentication to fail');
+      } catch (error) {
+        expect(error).toBeInstanceOf(AuthenticationError);
+        const authError = error as AuthenticationError;
+
+        // エラーメッセージに内部の詳細（"revoked"など）が含まれないことを確認
+        expect(authError.message).toBe('Invalid API key');
+        expect(authError.message).not.toContain('revoked');
+        expect(authError.message).not.toContain('expired');
+        expect(authError.message).not.toContain('invalid_format');
+      }
+    });
+
+    it('should not leak internal validation reason for expired keys', async () => {
+      const { plainKey } = apiKeyManager.generateApiKey('expired-leak-test', ['read'], 50);
+
+      // 有効期限が切れるまで待機
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const headers = {
+        Authorization: `Bearer ${plainKey}`,
+      };
+
+      try {
+        await middleware.authenticate(headers, '127.0.0.1');
+        expect.fail('Expected authentication to fail');
+      } catch (error) {
+        expect(error).toBeInstanceOf(AuthenticationError);
+        const authError = error as AuthenticationError;
+
+        // エラーメッセージに"expired"が含まれないことを確認
+        expect(authError.message).toBe('Invalid API key');
+        expect(authError.message).not.toContain('expired');
+      }
+    });
+
+    it('should not leak internal validation reason for invalid format', async () => {
+      const headers = {
+        Authorization: 'Bearer invalid-format-key',
+      };
+
+      try {
+        await middleware.authenticate(headers, '127.0.0.1');
+        expect.fail('Expected authentication to fail');
+      } catch (error) {
+        expect(error).toBeInstanceOf(AuthenticationError);
+        const authError = error as AuthenticationError;
+
+        // エラーメッセージに"invalid_format"が含まれないことを確認
+        expect(authError.message).toBe('Invalid API key');
+        expect(authError.message).not.toContain('invalid_format');
+        expect(authError.message).not.toContain('format');
       }
     });
   });
@@ -278,6 +383,7 @@ describe('McpAuthMiddleware', () => {
         memory_id: 'mem-456',
       });
 
+      // 予約フィールドの検証
       expect(auditLog.timestamp).toBeDefined();
       expect(auditLog.event_type).toBe('memory_created');
       expect(auditLog.success).toBe(true);
@@ -287,7 +393,10 @@ describe('McpAuthMiddleware', () => {
       expect(auditLog.user_agent).toBe('Mozilla/5.0');
       expect(auditLog.api_key_id).toBe(key.id);
       expect(auditLog.scopes).toEqual(['read', 'write']);
-      expect(auditLog.memory_id).toBe('mem-456');
+
+      // カスタム詳細情報は details キーにネストされる
+      expect(auditLog.details).toBeDefined();
+      expect((auditLog.details as Record<string, unknown>).memory_id).toBe('mem-456');
     });
 
     it('should create audit log for failed operation', async () => {
@@ -303,7 +412,68 @@ describe('McpAuthMiddleware', () => {
       });
 
       expect(auditLog.success).toBe(false);
-      expect(auditLog.error).toBe('Not found');
+      // エラー情報は details キーにネストされる
+      expect((auditLog.details as Record<string, unknown>).error).toBe('Not found');
+    });
+
+    it('should prevent overwriting reserved audit fields', async () => {
+      const { plainKey } = apiKeyManager.generateApiKey('reserved-field-test');
+      const headers = {
+        Authorization: `Bearer ${plainKey}`,
+      };
+
+      const authContext = await middleware.authenticate(headers, '10.0.0.3');
+
+      // 予約フィールドを上書きしようとする試み
+      const auditLog = middleware.createAuditLog(authContext, 'test_event', true, {
+        timestamp: '2000-01-01T00:00:00.000Z', // 上書き試行
+        event_type: 'malicious_event', // 上書き試行
+        success: false, // 上書き試行
+        user_id: 'fake-user', // 上書き試行
+        session_id: 'fake-session', // 上書き試行
+        ip_address: '999.999.999.999', // 上書き試行
+        api_key_id: 'fake-key-id', // 上書き試行
+        scopes: ['admin'], // 上書き試行
+        custom_field: 'custom_value', // カスタムフィールド
+      });
+
+      // 予約フィールドは上書きされない（元の値を保持）
+      expect(auditLog.event_type).toBe('test_event');
+      expect(auditLog.success).toBe(true);
+      expect(auditLog.user_id).toBe(authContext.userId);
+      expect(auditLog.session_id).toBe(authContext.sessionId);
+      expect(auditLog.ip_address).toBe('10.0.0.3');
+      expect(auditLog.api_key_id).toBe(authContext.apiKey?.id);
+      expect(auditLog.scopes).toEqual(['read', 'write']);
+      expect(auditLog.timestamp).not.toBe('2000-01-01T00:00:00.000Z');
+
+      // 上書き試行された値は details にネストされる
+      expect(auditLog.details).toBeDefined();
+      const details = auditLog.details as Record<string, unknown>;
+      expect(details.timestamp).toBe('2000-01-01T00:00:00.000Z');
+      expect(details.event_type).toBe('malicious_event');
+      expect(details.success).toBe(false);
+      expect(details.user_id).toBe('fake-user');
+      expect(details.custom_field).toBe('custom_value');
+    });
+
+    it('should handle empty details gracefully', async () => {
+      const { plainKey } = apiKeyManager.generateApiKey('empty-details-test');
+      const headers = {
+        Authorization: `Bearer ${plainKey}`,
+      };
+
+      const authContext = await middleware.authenticate(headers, '10.0.0.4');
+
+      // details を渡さない場合
+      const auditLog1 = middleware.createAuditLog(authContext, 'test_event', true);
+      expect(auditLog1.details).toBeDefined();
+      expect(auditLog1.details).toEqual({});
+
+      // 空オブジェクトを渡す場合
+      const auditLog2 = middleware.createAuditLog(authContext, 'test_event', true, {});
+      expect(auditLog2.details).toBeDefined();
+      expect(auditLog2.details).toEqual({});
     });
   });
 
