@@ -351,9 +351,11 @@ describe('AlertManager', () => {
     });
 
     it('should filter history by userId', async () => {
+      const baseTime = new Date('2025-01-01T00:00:00Z');
+
       const event1: SecurityEvent = {
         id: '1',
-        timestamp: new Date(),
+        timestamp: new Date(baseTime.getTime() + 1000), // +1 second
         anomalyPattern: 'excessive_data_access',
         threatLevel: 'warning',
         userId: 'user-123',
@@ -363,7 +365,7 @@ describe('AlertManager', () => {
 
       const event2: SecurityEvent = {
         id: '2',
-        timestamp: new Date(),
+        timestamp: new Date(baseTime.getTime() + 2000), // +2 seconds
         anomalyPattern: 'bulk_export_attempt',
         threatLevel: 'critical',
         userId: 'user-456',
@@ -373,7 +375,7 @@ describe('AlertManager', () => {
 
       const event3: SecurityEvent = {
         id: '3',
-        timestamp: new Date(),
+        timestamp: new Date(baseTime.getTime() + 3000), // +3 seconds
         anomalyPattern: 'auth_failure_spike',
         threatLevel: 'important',
         userId: 'user-123',
@@ -426,6 +428,237 @@ describe('AlertManager', () => {
       expect(history).toHaveLength(1);
       expect(history[0].securityEventId).toBe('2');
       expect(history[0].userId).toBeNull();
+    });
+
+    it('should deduplicate channels', async () => {
+      const event: SecurityEvent = {
+        id: '1',
+        timestamp: new Date(),
+        anomalyPattern: 'excessive_data_access',
+        threatLevel: 'warning',
+        userId: 'user-123',
+        sessionId: 'session-1',
+        description: 'Test event',
+      };
+
+      // Send with duplicate channels
+      await alertManager.sendAlert(event, ['log', 'log', 'log']);
+
+      const history = await alertManager.getAlertHistory();
+      expect(history).toHaveLength(1);
+      expect(history[0].channels).toEqual(['log']);
+      expect(history[0].deliveryStatus).toHaveLength(1);
+      expect(history[0].deliveryStatus[0]).toEqual({
+        channel: 'log',
+        success: true,
+      });
+    });
+
+    it('should mark alert as not delivered when sender is missing', async () => {
+      // Create AlertManager without email sender
+      const alertManagerWithoutEmail = new AlertManager({
+        emailRecipients: ['test@example.com'],
+        smsRecipients: ['+1234567890'],
+        pagerDutyIntegrationKey: 'test-key',
+        dashboardUrl: 'https://example.com',
+      });
+
+      const event: SecurityEvent = {
+        id: '1',
+        timestamp: new Date(),
+        anomalyPattern: 'excessive_data_access',
+        threatLevel: 'warning',
+        userId: 'user-123',
+        sessionId: 'session-1',
+        description: 'Test event',
+      };
+
+      // Try to send via email without email sender configured
+      await alertManagerWithoutEmail.sendAlert(event, ['email']);
+
+      const history = await alertManagerWithoutEmail.getAlertHistory();
+      expect(history).toHaveLength(1);
+      expect(history[0].delivered).toBe(false);
+      expect(history[0].deliveryStatus).toHaveLength(1);
+      expect(history[0].deliveryStatus[0]).toEqual({
+        channel: 'email',
+        success: false,
+        error: 'Email sender not configured',
+      });
+    });
+
+    it('should handle mixed success and failure channels', async () => {
+      // Create AlertManager without email sender
+      const alertManagerWithoutEmail = new AlertManager({
+        emailRecipients: ['test@example.com'],
+        smsRecipients: ['+1234567890'],
+        pagerDutyIntegrationKey: 'test-key',
+        dashboardUrl: 'https://example.com',
+      });
+
+      const event: SecurityEvent = {
+        id: '1',
+        timestamp: new Date(),
+        anomalyPattern: 'excessive_data_access',
+        threatLevel: 'warning',
+        userId: 'user-123',
+        sessionId: 'session-1',
+        description: 'Test event',
+      };
+
+      // Send via log (succeeds) and email (fails - not configured)
+      await alertManagerWithoutEmail.sendAlert(event, ['log', 'email']);
+
+      const history = await alertManagerWithoutEmail.getAlertHistory();
+      expect(history).toHaveLength(1);
+      expect(history[0].delivered).toBe(false); // Not all channels succeeded
+      expect(history[0].deliveryStatus).toHaveLength(2);
+
+      const logStatus = history[0].deliveryStatus.find((s) => s.channel === 'log');
+      expect(logStatus).toEqual({ channel: 'log', success: true });
+
+      const emailStatus = history[0].deliveryStatus.find((s) => s.channel === 'email');
+      expect(emailStatus).toEqual({
+        channel: 'email',
+        success: false,
+        error: 'Email sender not configured',
+      });
+    });
+
+    it('should mark alert as delivered when all channels succeed', async () => {
+      const mockEmailSender = vi.fn().mockResolvedValue(undefined);
+      const alertManagerWithEmail = new AlertManager(
+        {
+          emailRecipients: ['test@example.com'],
+          smsRecipients: ['+1234567890'],
+          pagerDutyIntegrationKey: 'test-key',
+          dashboardUrl: 'https://example.com',
+        },
+        { email: mockEmailSender }
+      );
+
+      const event: SecurityEvent = {
+        id: '1',
+        timestamp: new Date(),
+        anomalyPattern: 'excessive_data_access',
+        threatLevel: 'warning',
+        userId: 'user-123',
+        sessionId: 'session-1',
+        description: 'Test event',
+      };
+
+      await alertManagerWithEmail.sendAlert(event, ['log', 'email']);
+
+      const history = await alertManagerWithEmail.getAlertHistory();
+      expect(history).toHaveLength(1);
+      expect(history[0].delivered).toBe(true); // All channels succeeded
+      expect(history[0].deliveryStatus).toHaveLength(2);
+      expect(history[0].deliveryStatus.every((s) => s.success)).toBe(true);
+    });
+
+    it('should continue attempting other channels if one fails', async () => {
+      const mockEmailSender = vi.fn().mockRejectedValue(new Error('Email server down'));
+      const alertManagerWithEmail = new AlertManager(
+        {
+          emailRecipients: ['test@example.com'],
+          smsRecipients: ['+1234567890'],
+          pagerDutyIntegrationKey: 'test-key',
+          dashboardUrl: 'https://example.com',
+        },
+        { email: mockEmailSender }
+      );
+
+      const event: SecurityEvent = {
+        id: '1',
+        timestamp: new Date(),
+        anomalyPattern: 'excessive_data_access',
+        threatLevel: 'warning',
+        userId: 'user-123',
+        sessionId: 'session-1',
+        description: 'Test event',
+      };
+
+      // Should not throw, even though email fails
+      await alertManagerWithEmail.sendAlert(event, ['email', 'log']);
+
+      const history = await alertManagerWithEmail.getAlertHistory();
+      expect(history).toHaveLength(1);
+      expect(history[0].delivered).toBe(false); // Email failed
+      expect(history[0].deliveryStatus).toHaveLength(2);
+
+      const emailStatus = history[0].deliveryStatus.find((s) => s.channel === 'email');
+      expect(emailStatus).toEqual({
+        channel: 'email',
+        success: false,
+        error: 'Email server down',
+      });
+
+      const logStatus = history[0].deliveryStatus.find((s) => s.channel === 'log');
+      expect(logStatus).toEqual({ channel: 'log', success: true });
+    });
+  });
+
+  describe('URL encoding in alerts', () => {
+    it('should URL encode event ID in dashboard link for automated response', async () => {
+      const event: SecurityEvent = {
+        id: 'event-with-special-chars-&=?#',
+        timestamp: new Date(),
+        anomalyPattern: 'excessive_data_access',
+        threatLevel: 'critical',
+        userId: 'user-123',
+        sessionId: 'session-456',
+        description: 'Test event',
+      };
+
+      const result = await alertManager.executeAutomatedResponse(event);
+
+      // Dashboard link should have URL-encoded event ID
+      expect(result.dashboardLink).toContain(encodeURIComponent('event-with-special-chars-&=?#'));
+      expect(result.dashboardLink).toBe(
+        'https://security.example.com/dashboard?event=event-with-special-chars-%26%3D%3F%23'
+      );
+    });
+
+    it('should include URL-encoded dashboard link in email alert', async () => {
+      const event: SecurityEvent = {
+        id: 'event/with/slashes',
+        timestamp: new Date(),
+        anomalyPattern: 'excessive_data_access',
+        threatLevel: 'warning',
+        userId: 'user-123',
+        sessionId: 'session-1',
+        description: 'Test event',
+      };
+
+      await alertManager.sendAlert(event, ['email']);
+
+      expect(mockEmailSender).toHaveBeenCalledTimes(1);
+      const emailCall = mockEmailSender.mock.calls[0][0];
+
+      // Email body should contain URL-encoded dashboard link
+      expect(emailCall.body).toContain(encodeURIComponent('event/with/slashes'));
+      expect(emailCall.body).toContain('Dashboard: https://security.example.com/dashboard?event=event%2Fwith%2Fslashes');
+    });
+
+    it('should include URL-encoded dashboard link in SMS alert', async () => {
+      const event: SecurityEvent = {
+        id: 'event with spaces',
+        timestamp: new Date(),
+        anomalyPattern: 'excessive_data_access',
+        threatLevel: 'warning',
+        userId: 'user-123',
+        sessionId: 'session-1',
+        description: 'Test event',
+      };
+
+      await alertManager.sendAlert(event, ['sms']);
+
+      expect(mockSmsSender).toHaveBeenCalledTimes(1);
+      const smsCall = mockSmsSender.mock.calls[0][0];
+
+      // SMS message should contain URL-encoded dashboard link
+      expect(smsCall.message).toContain(encodeURIComponent('event with spaces'));
+      expect(smsCall.message).toContain('Dashboard: https://security.example.com/dashboard?event=event%20with%20spaces');
     });
   });
 

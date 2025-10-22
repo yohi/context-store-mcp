@@ -272,19 +272,7 @@ export class AuditLogger {
    * @returns True if signature is valid, false otherwise
    */
   async verifySignature(entry: AuditLogEntry): Promise<boolean> {
-    const entryWithoutSignature: Omit<AuditLogEntry, 'signature'> = {
-      id: entry.id,
-      timestamp: entry.timestamp,
-      eventType: entry.eventType,
-      userId: entry.userId,
-      sessionId: entry.sessionId,
-      ipAddress: entry.ipAddress,
-      resourceId: entry.resourceId,
-      action: entry.action,
-      result: entry.result,
-      ...(entry.errorCode && { errorCode: entry.errorCode }),
-      ...(entry.metadata && { metadata: entry.metadata }),
-    };
+    const entryWithoutSignature = this.buildEntryWithoutSignature(entry);
 
     const expectedSignature = this.generateSignature(entryWithoutSignature);
 
@@ -300,6 +288,31 @@ export class AuditLogger {
 
     // Use constant-time comparison to prevent timing attacks
     return timingSafeEqual(expectedBuffer, actualBuffer);
+  }
+
+  /**
+   * Build audit log entry without signature
+   *
+   * Explicitly constructs an entry object without signature field
+   * to ensure type safety and prevent signature leakage
+   *
+   * @param entry - Full audit log entry or partial entry data
+   * @returns Entry without signature field
+   */
+  private buildEntryWithoutSignature(entry: AuditLogEntry): Omit<AuditLogEntry, 'signature'> {
+    return {
+      id: entry.id,
+      timestamp: entry.timestamp,
+      eventType: entry.eventType,
+      userId: entry.userId,
+      sessionId: entry.sessionId,
+      ipAddress: entry.ipAddress,
+      resourceId: entry.resourceId,
+      action: entry.action,
+      result: entry.result,
+      errorCode: entry.errorCode,
+      metadata: entry.metadata,
+    };
   }
 
   /**
@@ -415,10 +428,9 @@ export class AuditLogger {
     }
 
     // Update timestamp and regenerate signature
-    const entryWithoutSignature: Omit<AuditLogEntry, 'signature'> = {
-      ...entry,
-      timestamp,
-    };
+    // Build entry without signature first, then apply timestamp update
+    const updatedEntry = { ...entry, timestamp };
+    const entryWithoutSignature = this.buildEntryWithoutSignature(updatedEntry);
 
     const signature = this.generateSignature(entryWithoutSignature);
 

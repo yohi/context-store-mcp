@@ -198,7 +198,7 @@ describe('SecurityEventDetector', () => {
 
       expect(spikeEvent).toBeDefined();
       expect(spikeEvent?.metadata?.baseline).toBe(10);
-      expect(spikeEvent?.metadata?.current).toBeGreaterThanOrEqual(120);
+      expect(spikeEvent?.metadata?.count).toBeGreaterThanOrEqual(120);
     });
   });
 
@@ -537,6 +537,134 @@ describe('SecurityEventDetector', () => {
       expect(Array.isArray(events)).toBe(true);
 
       consoleWarnSpy.mockRestore();
+    });
+  });
+
+  describe('Unknown IP detection deduplication', () => {
+    it('should deduplicate events for the same userId+IP combination', async () => {
+      const userId = 'user-123';
+
+      // Register a known IP
+      await detector.registerKnownIp(userId, '192.168.1.1');
+
+      // Create multiple log entries with same unknown IP
+      await auditLogger.logEvent({
+        eventType: 'memory_searched',
+        userId,
+        sessionId: 'session-1',
+        ipAddress: '192.168.1.100', // Unknown IP
+        resourceId: 'memory-1',
+        action: 'read',
+        result: 'success',
+      });
+
+      await auditLogger.logEvent({
+        eventType: 'memory_searched',
+        userId,
+        sessionId: 'session-1',
+        ipAddress: '192.168.1.100', // Same unknown IP
+        resourceId: 'memory-2',
+        action: 'read',
+        result: 'success',
+      });
+
+      await auditLogger.logEvent({
+        eventType: 'memory_searched',
+        userId,
+        sessionId: 'session-1',
+        ipAddress: '192.168.1.100', // Same unknown IP again
+        resourceId: 'memory-3',
+        action: 'read',
+        result: 'success',
+      });
+
+      const events = await detector.detectAnomalies({});
+
+      // Should only get one event for the userId+IP combination
+      const unknownIpEvents = events.filter((e) => e.anomalyPattern === 'unknown_ip_access');
+      expect(unknownIpEvents).toHaveLength(1);
+      expect(unknownIpEvents[0].userId).toBe(userId);
+      expect(unknownIpEvents[0].metadata?.ipAddress).toBe('192.168.1.100');
+    });
+
+    it('should handle undefined known IPs as empty set', async () => {
+      const userId = 'user-no-known-ips';
+
+      // Do NOT register any known IPs for this user
+
+      // Create log entry
+      await auditLogger.logEvent({
+        eventType: 'memory_searched',
+        userId,
+        sessionId: 'session-1',
+        ipAddress: '10.0.0.1',
+        resourceId: 'memory-1',
+        action: 'read',
+        result: 'success',
+      });
+
+      const events = await detector.detectAnomalies({});
+
+      // Should detect as unknown IP with empty known IPs list
+      const unknownIpEvents = events.filter((e) => e.anomalyPattern === 'unknown_ip_access');
+      expect(unknownIpEvents.length).toBeGreaterThan(0);
+
+      const event = unknownIpEvents.find((e) => e.userId === userId);
+      expect(event).toBeDefined();
+      expect(event?.metadata?.ipAddress).toBe('10.0.0.1');
+      expect(event?.metadata?.knownIps).toEqual([]); // Empty array, not undefined
+    });
+
+    it('should create separate events for different userId+IP combinations', async () => {
+      const user1 = 'user-1';
+      const user2 = 'user-2';
+
+      // Register known IPs
+      await detector.registerKnownIp(user1, '192.168.1.1');
+      await detector.registerKnownIp(user2, '192.168.1.2');
+
+      // Create log entries with different combinations
+      await auditLogger.logEvent({
+        eventType: 'memory_searched',
+        userId: user1,
+        sessionId: 'session-1',
+        ipAddress: '10.0.0.1', // Unknown for user1
+        resourceId: 'memory-1',
+        action: 'read',
+        result: 'success',
+      });
+
+      await auditLogger.logEvent({
+        eventType: 'memory_searched',
+        userId: user2,
+        sessionId: 'session-2',
+        ipAddress: '10.0.0.1', // Unknown for user2 (same IP, different user)
+        resourceId: 'memory-2',
+        action: 'read',
+        result: 'success',
+      });
+
+      await auditLogger.logEvent({
+        eventType: 'memory_searched',
+        userId: user1,
+        sessionId: 'session-3',
+        ipAddress: '10.0.0.2', // Different unknown IP for user1
+        resourceId: 'memory-3',
+        action: 'read',
+        result: 'success',
+      });
+
+      const events = await detector.detectAnomalies({});
+
+      // Should get 3 separate events
+      const unknownIpEvents = events.filter((e) => e.anomalyPattern === 'unknown_ip_access');
+      expect(unknownIpEvents).toHaveLength(3);
+
+      // Verify each combination is present
+      const combinations = unknownIpEvents.map((e) => `${e.userId}|${e.metadata?.ipAddress}`);
+      expect(combinations).toContain('user-1|10.0.0.1');
+      expect(combinations).toContain('user-2|10.0.0.1');
+      expect(combinations).toContain('user-1|10.0.0.2');
     });
   });
 });
