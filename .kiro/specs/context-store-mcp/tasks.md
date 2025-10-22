@@ -180,7 +180,7 @@
   - タグとメタデータフィルタリング（記憶タイプ、タグ、時間範囲）
   - クエリプランの生成と最適化（早期フィルタ適用、キャッシュルックアップ）
   - 検索戦略の自動選択（vector_only, hybrid, graph_priority, metadata_filtering）
-  - 24ユニットテスト全パス
+  - 42ユニットテスト全パス（参照: `src/tests/query/query-processor.test.ts`）
   - _Requirements: 2.2, 2.4, 2.6_
 
 - [~] 7.2 ハイブリッド検索とキャッシング
@@ -199,18 +199,19 @@
   - 評価データセット管理 (SearchEvaluationDataset型)
   - Precision@K、Recall@K、F1スコア計算機能
   - Average Precision、MAP (Mean Average Precision) 計算
-  - **Fleiss' Kappa係数によるアノテーター間一致度計算 (簡易実装)** - モード比率平均による近似、真のFleiss' Kappaではない
-  - **データセット検証** (最低100クエリ、2名以上のアノテーター、Kappa ≥ 0.6) - **注意: 簡易実装のため本番判定には使用不可**
+  - **Fleiss' Kappa係数によるアノテーター間一致度計算 (完全実装)** - カテゴリごとの集計、P̄（平均観測一致度）、P_e（期待一致度）による正確な κ 計算
+  - **データセット検証** (最低100クエリ、2名以上のアノテーター、Kappa ≥ 0.6)
   - 検索ログ記録機能 (SearchLogEntry、UserFeedbackLog)
   - ユーザーフィードバック収集 (RelevanceFeedback)
-  - **A/Bテストフレームワーク (統計的有意性検定、p値計算) (簡易実装)** - 段階的z-scoreしきい値、真の統計検定ではない
+  - **A/Bテストフレームワーク (統計的有意性検定、p値計算)** - Welchのt検定（不等分散対応、Welch-Satterthwaite自由度補正、t分布累積分布関数による両側検定、不完全ベータ関数/Lentz連分数展開による近似）
   - 改善計画自動生成機能
   - 30ユニットテスト全パス
   - _Requirements: 2.1_
-  - **TODO/Issue: 本番品質評価への統計実装の置き換え**
-    - 真のFleiss' Kappa実装 (カテゴリカル評価の正確な一致度計算)
-    - 適切な統計的有意性検定 (ブートストラップ法またはtwo-sample tests)
-    - 現在の評価ゲート (Kappa ≥ 0.6, p < 0.05) は簡易実装による近似値のため、本番意思決定には正式な統計検証とレビューが必須
+  - **注意事項: 統計検定の制限と推奨事項**
+    - **小サンプル**: n < 30の場合、正規分布仮定が崩れp値の精度が低下する可能性あり（実装内で警告表示）
+    - **p値近似**: erf関数ベースのCDF近似を使用（厳密な実装ではない）
+    - **本番推奨**: 厳密な統計検証が必要な場合は外部ライブラリ（jstat、simple-statisticsなど）の使用を検討
+    - 参照実装: `src/query/search-quality-evaluator.ts:368-408` (A/Bテスト), `src/query/search-quality-evaluator.ts:202-285` (Fleiss' Kappa)
 
 ## セキュリティとアクセス制御
 

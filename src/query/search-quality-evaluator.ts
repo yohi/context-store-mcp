@@ -537,23 +537,32 @@ export class SearchQualityEvaluator {
    *
    * @param t - t統計量（絶対値）
    * @param df - 自由度
-   * @returns 両側検定のp値
+   * @returns 両側検定のp値（[0, 1]の範囲にクランプ済み）
    */
   private tDistributionPValue(t: number, df: number): number {
+    let p: number;
+
     // 自由度が大きい場合は正規分布で近似
     if (df > 30) {
-      return 2 * (1 - this.standardNormalCDF(t));
+      p = 2 * (1 - this.standardNormalCDF(t));
+    } else {
+      // 小サンプルの場合の簡易近似（Hill's approximation）
+      const x = df / (df + t * t);
+      const a = df / 2;
+      const b = 0.5;
+
+      // 不完全ベータ関数の近似（簡易実装）
+      p = this.incompleteBetaApprox(x, a, b);
     }
 
-    // 小サンプルの場合の簡易近似（Hill's approximation）
-    const x = df / (df + t * t);
-    const a = df / 2;
-    const b = 0.5;
+    // 近似計算によるNaNや範囲外の値をガード
+    // NaNの場合は1.0を返す（統計的に有意でないと判定）
+    if (isNaN(p)) {
+      return 1.0;
+    }
 
-    // 不完全ベータ関数の近似（簡易実装）
-    const betaApprox = this.incompleteBetaApprox(x, a, b);
-
-    return betaApprox;
+    // [0, 1]の範囲にクランプ（近似誤差による範囲外の値を補正）
+    return Math.max(0, Math.min(1, p));
   }
 
   /**

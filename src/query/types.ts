@@ -244,9 +244,9 @@ export interface HybridSearchResult {
   memory: Memory;
   /** スコア情報 */
   scores: {
-    semantic: number; // 0.0 - 1.0
-    structural: number; // 0.0 - 1.0
-    final: number; // 0.0 - 1.0
+    semantic: number; // セマンティック類似度スコア (0.0 - 1.0)
+    structural: number; // 構造的関連性スコア (0.0 - 1.0)
+    combined: number; // 統合スコア = w_semantic * semantic + w_structural * structural (0.0 - 1.0)
   };
   /** メタデータ */
   metadata: {

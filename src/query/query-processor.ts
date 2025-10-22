@@ -23,8 +23,10 @@ import type {
   QueryStep,
   SearchStrategy,
   OptimizedQueryPlan,
+  HybridSearchOptions,
+  HybridSearchResult,
 } from './types';
-import type { MemoryType } from '../memory/types';
+import type { MemoryType, Memory } from '../memory/types';
 
 import type { LRUCache } from '../mcp/lru-cache';
 import { createHash } from 'crypto';
@@ -184,21 +186,18 @@ export class QueryProcessor {
 
     // 複合語を認識するための前処理
     // 例: "セットアップ方法" → ["セットアップ", "方法"]
-    const compoundWords = query
+    // 助詞を空白に置換（長い助詞を先にマッチさせる）
+    const normalized = query
       .replace(/[、。]/g, ' ')
-      // 助詞で分割
-      .split(/[のにをはがでとからまでやな]/)
-      .filter((word) => word.trim().length > 0);
+      .replace(/(から|まで|の|に|を|は|が|で|と|や|な)/g, ' ');
 
+    // 空白で分割してキーワードを抽出
     const keywords: string[] = [];
+    const words = normalized.split(/\s+/).filter((word) => word.trim().length > 0);
 
-    for (const word of compoundWords) {
-      // 空白で分割
-      const subWords = word.trim().split(/\s+/);
-      for (const subWord of subWords) {
-        if (subWord.length > 0 && !stopWords.has(subWord)) {
-          keywords.push(subWord);
-        }
+    for (const word of words) {
+      if (word.length > 0 && !stopWords.has(word)) {
+        keywords.push(word);
       }
     }
 
@@ -220,6 +219,9 @@ export class QueryProcessor {
     const lowerQuery = query.toLowerCase();
 
     // 相対時間表現の検出
+    if (lowerQuery.includes('今日') || lowerQuery.includes('本日')) {
+      return { type: 'relative', value: 'today' };
+    }
     if (lowerQuery.includes('昨日')) {
       return { type: 'relative', value: 'yesterday' };
     }
@@ -234,6 +236,14 @@ export class QueryProcessor {
     }
     if (lowerQuery.includes('過去30日') || lowerQuery.includes('この1ヶ月')) {
       return { type: 'relative', value: 'last_30_days' };
+    }
+    if (
+      lowerQuery.includes('過去90日') ||
+      lowerQuery.includes('過去９０日') ||
+      lowerQuery.includes('この90日') ||
+      lowerQuery.includes('この９０日')
+    ) {
+      return { type: 'relative', value: 'last_90_days' };
     }
 
     // 絶対日時の検出 (例: 2024年1月)
@@ -374,17 +384,32 @@ export class QueryProcessor {
         end.setHours(23, 59, 59, 999);
         break;
 
-      case 'last_week':
-        start = new Date(now);
-        start.setDate(start.getDate() - 7);
-        start.setHours(0, 0, 0, 0);
-        break;
+      case 'last_week': {
+        // ISO週の前週の月曜日00:00:00.000から日曜日23:59:59.999まで
+        const currentDay = now.getDay(); // 0=日曜, 1=月曜, ..., 6=土曜
+        const daysToLastMonday = currentDay === 0 ? 6 : currentDay + 6; // 前週の月曜日までの日数
 
-      case 'last_month':
         start = new Date(now);
-        start.setMonth(start.getMonth() - 1);
+        start.setDate(start.getDate() - daysToLastMonday);
         start.setHours(0, 0, 0, 0);
+
+        end = new Date(start);
+        end.setDate(end.getDate() + 6); // 日曜日まで
+        end.setHours(23, 59, 59, 999);
         break;
+      }
+
+      case 'last_month': {
+        // 前月の1日00:00:00.000から最終日23:59:59.999まで
+        const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+        const month = now.getMonth() === 0 ? 11 : now.getMonth() - 1;
+
+        start = new Date(year, month, 1, 0, 0, 0, 0);
+
+        // 前月の最終日を取得（次月の0日目 = 前月の最終日）
+        end = new Date(year, month + 1, 0, 23, 59, 59, 999);
+        break;
+      }
 
       case 'last_7_days':
         start = new Date(now);
@@ -681,26 +706,33 @@ export class QueryProcessor {
    * - 最終スコア = w_semantic * semantic_score + w_structural * structural_score
    * - デフォルト重み: semantic = 0.7, structural = 0.3
    * - グラフスコア正規化: structural_score = exp(-α * path_length), α = 1.0
+   *
+   * @param query - 検索クエリ文字列
+   * @param options - HybridSearchOptions型のオプション
+   *   - weights: セマンティック/構造的スコアの重み（デフォルト: 0.7/0.3）
+   *   - limit: 最大結果件数（デフォルト: 10）
+   *   - scoringConfig.alpha: グラフスコア減衰率（デフォルト: 1.0）
+   *   - semanticQuery, graphPattern, filters: 将来の拡張用（現在未実装）
+   * @returns HybridSearchResult[]型の検索結果配列
    */
   async hybridSearch(
     query: string,
-    options?: {
-      weights?: { semantic: number; structural: number };
-      limit?: number;
-      decay?: number; // グラフスコア減衰定数 (デフォルト: 1.0)
-    }
-  ): Promise<any[]> {
+    options?: HybridSearchOptions
+  ): Promise<HybridSearchResult[]> {
     // 1. デフォルトパラメータと重みの正規化
-    const rawWeights = options?.weights || { semantic: 0.7, structural: 0.3 };
-    const limit = options?.limit || 10;
-    const decay = options?.decay ?? 1.0;
+    const rawWeights = options?.weights ?? { semantic: 0.7, structural: 0.3 };
+    const limit = options?.limit ?? 10;
+    const alpha = options?.scoringConfig?.alpha ?? 1.0;
 
     // 重みの正規化 (合計が1.0になるように)
     const totalWeight = rawWeights.semantic + rawWeights.structural;
-    const normalizedWeights = {
-      semantic: rawWeights.semantic / totalWeight,
-      structural: rawWeights.structural / totalWeight,
-    };
+    const normalizedWeights =
+      totalWeight > 0
+        ? {
+            semantic: rawWeights.semantic / totalWeight,
+            structural: rawWeights.structural / totalWeight,
+          }
+        : { semantic: 0.7, structural: 0.3 };
 
     // 2. アダプターの可用性チェック
     if (!this.vectorAdapter) {
@@ -716,13 +748,14 @@ export class QueryProcessor {
       );
       const semanticResults = await this.vectorAdapter.searchSimilar(query, limit);
       return semanticResults.map((result) => ({
-        id: result.id,
-        content: result.content,
-        metadata: result.metadata,
+        memory: result as unknown as Memory,
         scores: {
           semantic: result.similarity,
           structural: 0,
           combined: result.similarity, // セマンティックのみ
+        },
+        metadata: {
+          cosineSimilarity: result.similarity,
         },
       }));
     }
@@ -738,7 +771,7 @@ export class QueryProcessor {
     // 4. グラフスコアに指数減衰を適用
     const processedGraphResults = graphResults.map((result) => {
       const distance = result.distance ?? 1; // デフォルトdistance = 1
-      const structuralScore = Math.exp(-decay * distance);
+      const structuralScore = Math.exp(-alpha * distance);
       return {
         ...result,
         normalizedScore: structuralScore,
@@ -791,9 +824,10 @@ export class QueryProcessor {
 
     // 6. 統合スコアを計算
     for (const entry of mergedMap.values()) {
-      entry.combined =
+      const finalScore =
         normalizedWeights.semantic * entry.semanticScore +
         normalizedWeights.structural * entry.structuralScore;
+      entry.combined = finalScore;
     }
 
     // 7. 統合スコアでソート（降順）
@@ -803,14 +837,13 @@ export class QueryProcessor {
 
     // 8. limitを適用して結果を返す
     return sortedResults.slice(0, limit).map((result) => ({
-      id: result.id,
-      content: result.content,
-      metadata: result.metadata,
+      memory: result as unknown as Memory,
       scores: {
         semantic: result.semanticScore,
         structural: result.structuralScore,
         combined: result.combined,
       },
+      metadata: result.metadata ?? {},
     }));
   }
 
