@@ -81,6 +81,14 @@ export class LocalMasterKeyProvider implements MasterKeyProvider {
   constructor(masterKeyHex?: string) {
     // 環境変数からマスターキーを取得、なければ生成（開発用）
     if (masterKeyHex) {
+      // 厳密な形式検証: 正確に64文字の16進数文字列であることを確認
+      const hexPattern = /^[0-9a-fA-F]{64}$/;
+      if (!hexPattern.test(masterKeyHex)) {
+        throw new Error(
+          'Master key must be exactly 64 hexadecimal characters (0-9, a-f, A-F). ' +
+            `Received ${masterKeyHex.length} characters.`
+        );
+      }
       this.masterKey = Buffer.from(masterKeyHex, 'hex');
     } else {
       this.masterKey = crypto.randomBytes(KEY_LENGTH);
@@ -90,6 +98,7 @@ export class LocalMasterKeyProvider implements MasterKeyProvider {
       );
     }
 
+    // 防御的深層チェック: Buffer長を最終確認
     if (this.masterKey.length !== KEY_LENGTH) {
       throw new Error(`Master key must be ${KEY_LENGTH} bytes (${KEY_LENGTH * 8} bits)`);
     }
@@ -218,8 +227,10 @@ export class EncryptionManager {
     // IVを生成
     const iv = crypto.randomBytes(IV_LENGTH);
 
-    // 暗号化
+    // 暗号化（AADでメタデータを完全性保護）
     const cipher = crypto.createCipheriv(ENCRYPTION_ALGORITHM, dataKey, iv);
+    // GCM AADにkeyIdを設定して完全性保護を強化
+    cipher.setAAD(Buffer.from(dek.id, 'utf8'));
     const ciphertext = Buffer.concat([cipher.update(plaintextBuffer), cipher.final()]);
     const authTag = cipher.getAuthTag();
 
@@ -255,8 +266,10 @@ export class EncryptionManager {
     const iv = Buffer.from(encryptedData.iv, 'base64');
     const authTag = Buffer.from(encryptedData.authTag, 'base64');
 
-    // 復号化
+    // 復号化（AADでメタデータ完全性を検証）
     const decipher = crypto.createDecipheriv(ENCRYPTION_ALGORITHM, dataKey, iv);
+    // 暗号化時と同じAADを設定（keyIdの完全性を検証）
+    decipher.setAAD(Buffer.from(dek.id, 'utf8'));
     decipher.setAuthTag(authTag);
 
     return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
@@ -307,6 +320,18 @@ export class KeyRotationManager {
 
     // 365日の90%（約328日）経過でローテーション推奨
     const lifetimeMs = dek.expiresAt.getTime() - dek.createdAt.getTime();
+
+    // タイムスタンプ破損チェック: lifetimeMs が 0 以下の場合
+    if (lifetimeMs <= 0) {
+      console.warn(
+        `Warning: Invalid DEK timestamps detected (id: ${dek.id}). ` +
+          `createdAt: ${dek.createdAt.toISOString()}, ` +
+          `expiresAt: ${dek.expiresAt.toISOString()}. ` +
+          `Forcing rotation due to corrupted or reversed timestamps.`
+      );
+      return true; // タイムスタンプが破損している場合は強制ローテーション
+    }
+
     const elapsedMs = now.getTime() - dek.createdAt.getTime();
     const rotationThreshold = 0.9;
 
