@@ -205,8 +205,9 @@ export class AlertManager {
       }
     }
 
-    // Alert is delivered only if all channels succeeded
-    const delivered = deliveryStatus.every((status) => status.success);
+    // Alert is delivered only if there are channels AND all channels succeeded
+    const delivered =
+      uniqueChannels.length > 0 && deliveryStatus.every((status) => status.success);
 
     // Record alert
     this.alertHistory.set(alertId, {
@@ -230,11 +231,11 @@ export class AlertManager {
   async executeAutomatedResponse(event: SecurityEvent): Promise<AutomatedResponseResult> {
     const actions: string[] = [];
 
-    // Suspend session
+    // Suspend session (only for critical threats)
     let sessionSuspended = false;
     let suspensionDuration: number | undefined;
 
-    if (event.sessionId) {
+    if (event.threatLevel === 'critical' && event.sessionId) {
       const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
       this.suspendedSessions.set(event.sessionId, expiresAt);
       sessionSuspended = true;
@@ -242,12 +243,16 @@ export class AlertManager {
       actions.push('Session suspended for 1 hour');
     }
 
-    // Block IP
+    // Block IP (only for critical threats)
     let ipBlocked = false;
     let blockedIp: string | undefined;
     let blockDuration: number | undefined;
 
-    if (event.metadata?.ipAddress && typeof event.metadata.ipAddress === 'string') {
+    if (
+      event.threatLevel === 'critical' &&
+      event.metadata?.ipAddress &&
+      typeof event.metadata.ipAddress === 'string'
+    ) {
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
       this.blockedIps.set(event.metadata.ipAddress, expiresAt);
       ipBlocked = true;

@@ -16,6 +16,49 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 
 /**
+ * Deep freeze an object recursively to make it immutable (WORM requirement)
+ * Handles cycles using WeakSet and freezes both objects and arrays
+ *
+ * @param obj - Object or array to freeze
+ * @param visited - WeakSet to track visited objects (prevents infinite recursion on cycles)
+ * @returns Deeply frozen object
+ */
+function deepFreeze<T>(obj: T, visited: WeakSet<object> = new WeakSet()): T {
+  // Skip primitives, null, undefined, and functions
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
+
+  // Skip if already frozen
+  if (Object.isFrozen(obj)) {
+    return obj;
+  }
+
+  // Handle cycles: skip if already visited
+  if (visited.has(obj)) {
+    return obj;
+  }
+
+  // Mark as visited
+  visited.add(obj);
+
+  // Freeze the object/array itself
+  Object.freeze(obj);
+
+  // Recursively freeze all properties (works for both objects and arrays)
+  Object.getOwnPropertyNames(obj).forEach((prop) => {
+    const value = (obj as Record<string, unknown>)[prop];
+
+    // Recursively freeze nested objects/arrays
+    if (value !== null && typeof value === 'object') {
+      deepFreeze(value, visited);
+    }
+  });
+
+  return obj;
+}
+
+/**
  * Event types for audit logging
  */
 export type EventType =
@@ -208,10 +251,15 @@ export class AuditLogger {
     const signature = this.generateSignature(entryWithoutSignature);
 
     // Create final entry with signature
-    const entry: AuditLogEntry = {
+    let entry: AuditLogEntry = {
       ...entryWithoutSignature,
       signature,
     };
+
+    // Deep freeze in production to enforce WORM (Write-Once-Read-Many)
+    if (process.env['NODE_ENV'] === 'production') {
+      entry = deepFreeze(entry);
+    }
 
     // Store in memory (in production, this would be written to WORM storage)
     this.logs.set(id, entry);
@@ -260,6 +308,8 @@ export class AuditLogger {
     const offset = params.offset || 0;
     const limit = params.limit || results.length;
 
+    // In production, entries are already deep-frozen (immutable)
+    // In non-production (e.g., tests), return mutable references for test flexibility
     return results.slice(offset, offset + limit);
   }
 
@@ -430,14 +480,27 @@ export class AuditLogger {
     // Update timestamp and regenerate signature
     // Build entry without signature first, then apply timestamp update
     const updatedEntry = { ...entry, timestamp };
-    const entryWithoutSignature = this.buildEntryWithoutSignature(updatedEntry);
+    let entryWithoutSignature = this.buildEntryWithoutSignature(updatedEntry);
+
+    // Deep freeze intermediate entry without signature in production
+    if (process.env['NODE_ENV'] === 'production') {
+      entryWithoutSignature = deepFreeze(entryWithoutSignature);
+    }
 
     const signature = this.generateSignature(entryWithoutSignature);
 
-    this.logs.set(id, {
+    // Create new entry with updated signature
+    let newEntry: AuditLogEntry = {
       ...entryWithoutSignature,
       signature,
-    });
+    };
+
+    // Deep freeze final entry in production to enforce WORM (Write-Once-Read-Many)
+    if (process.env['NODE_ENV'] === 'production') {
+      newEntry = deepFreeze(newEntry);
+    }
+
+    this.logs.set(id, newEntry);
   }
 
   /**
