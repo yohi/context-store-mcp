@@ -4,7 +4,8 @@
  * Requirements: 6.5 - 監査ログの維持
  * - ログ保持期間: 365日間（1年間）保持
  * - 不変ストレージ: WORM（Write-Once-Read-Many）ストレージ
- * - 必須フィールド: timestamp, event_type, user_id, session_id, ip_address, resource_id, action, result, metadata
+ * - 必須フィールド: timestamp, event_type, user_id, session_id, ip_address, resource_id, action, result
+ * - オプションフィールド: error_code, metadata
  * - 検索/クエリSLA:
  *   - 過去30日間（ホットストレージ）: 5秒以内に検索可能
  *   - 31日～365日（コールドストレージ）: 30秒以内に検索可能
@@ -12,7 +13,50 @@
  * - 改ざん防止: デジタル署名（HMAC-SHA256）を付与
  */
 
-import { createHmac, randomUUID } from 'crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
+
+/**
+ * Deep freeze an object recursively to make it immutable (WORM requirement)
+ * Handles cycles using WeakSet and freezes both objects and arrays
+ *
+ * @param obj - Object or array to freeze
+ * @param visited - WeakSet to track visited objects (prevents infinite recursion on cycles)
+ * @returns Deeply frozen object
+ */
+function deepFreeze<T>(obj: T, visited: WeakSet<object> = new WeakSet()): T {
+  // Skip primitives, null, undefined, and functions
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
+
+  // Skip if already frozen
+  if (Object.isFrozen(obj)) {
+    return obj;
+  }
+
+  // Handle cycles: skip if already visited
+  if (visited.has(obj)) {
+    return obj;
+  }
+
+  // Mark as visited
+  visited.add(obj);
+
+  // Freeze the object/array itself
+  Object.freeze(obj);
+
+  // Recursively freeze all properties (works for both objects and arrays)
+  Object.getOwnPropertyNames(obj).forEach((prop) => {
+    const value = (obj as Record<string, unknown>)[prop];
+
+    // Recursively freeze nested objects/arrays
+    if (value !== null && typeof value === 'object') {
+      deepFreeze(value, visited);
+    }
+  });
+
+  return obj;
+}
 
 /**
  * Event types for audit logging
@@ -117,10 +161,65 @@ export class AuditLogger {
    * Create a new AuditLogger instance
    *
    * @param secretKey - Secret key for HMAC signature generation
+   * @throws Error if no secret key is provided in production environment
+   * @throws Error if secret key has insufficient entropy
    */
   constructor(secretKey?: string) {
     this.logs = new Map();
-    this.secretKey = secretKey || process.env.AUDIT_LOG_SECRET_KEY || 'default-secret-key-for-development';
+
+    const isProduction = process.env['NODE_ENV'] === 'production';
+    const providedKey = secretKey || process.env['AUDIT_LOG_SECRET_KEY'];
+
+    // In production, secret key is required
+    if (isProduction && !providedKey) {
+      throw new Error(
+        'AUDIT_LOG_SECRET_KEY is required in production environment. ' +
+          'Set the AUDIT_LOG_SECRET_KEY environment variable or provide a secretKey parameter.'
+      );
+    }
+
+    // Use provided key or fallback to development default
+    const effectiveKey = providedKey || 'default-secret-key-for-development';
+
+    // Validate secret key entropy
+    this.validateSecretKey(effectiveKey, isProduction);
+
+    this.secretKey = effectiveKey;
+  }
+
+  /**
+   * Validate secret key entropy
+   *
+   * @param key - Secret key to validate
+   * @param isProduction - Whether running in production environment
+   * @throws Error if key is weak in production
+   */
+  private validateSecretKey(key: string, isProduction: boolean): void {
+    const MIN_LENGTH = 32;
+    const weakKeys = [
+      'default-secret-key-for-development',
+      'test',
+      'password',
+      'secret',
+      '123456',
+      'changeme',
+    ];
+
+    const isWeak = key.length < MIN_LENGTH || weakKeys.includes(key.toLowerCase());
+
+    if (isProduction && isWeak) {
+      throw new Error(
+        `Weak secret key detected in production. Secret key must be at least ${MIN_LENGTH} characters ` +
+          'and not be a common weak value. Generate a strong random key for production use.'
+      );
+    }
+
+    if (!isProduction && isWeak) {
+      console.warn(
+        '[AuditLogger] WARNING: Using weak or default secret key in development. ' +
+          `For production, use a strong key with at least ${MIN_LENGTH} characters.`
+      );
+    }
   }
 
   /**
@@ -152,10 +251,15 @@ export class AuditLogger {
     const signature = this.generateSignature(entryWithoutSignature);
 
     // Create final entry with signature
-    const entry: AuditLogEntry = {
+    let entry: AuditLogEntry = {
       ...entryWithoutSignature,
       signature,
     };
+
+    // Deep freeze in production to enforce WORM (Write-Once-Read-Many)
+    if (process.env['NODE_ENV'] === 'production') {
+      entry = deepFreeze(entry);
+    }
 
     // Store in memory (in production, this would be written to WORM storage)
     this.logs.set(id, entry);
@@ -204,17 +308,49 @@ export class AuditLogger {
     const offset = params.offset || 0;
     const limit = params.limit || results.length;
 
+    // In production, entries are already deep-frozen (immutable)
+    // In non-production (e.g., tests), return mutable references for test flexibility
     return results.slice(offset, offset + limit);
   }
 
   /**
    * Verify the signature of an audit log entry
    *
+   * Uses constant-time comparison to prevent timing attacks
+   *
    * @param entry - Audit log entry to verify
    * @returns True if signature is valid, false otherwise
    */
   async verifySignature(entry: AuditLogEntry): Promise<boolean> {
-    const entryWithoutSignature: Omit<AuditLogEntry, 'signature'> = {
+    const entryWithoutSignature = this.buildEntryWithoutSignature(entry);
+
+    const expectedSignature = this.generateSignature(entryWithoutSignature);
+
+    // Convert signatures to Buffers for constant-time comparison
+    // Both signatures are hex-encoded strings
+    const expectedBuffer = Buffer.from(expectedSignature, 'hex');
+    const actualBuffer = Buffer.from(entry.signature, 'hex');
+
+    // Check lengths first to avoid timingSafeEqual exceptions
+    if (expectedBuffer.length !== actualBuffer.length) {
+      return false;
+    }
+
+    // Use constant-time comparison to prevent timing attacks
+    return timingSafeEqual(expectedBuffer, actualBuffer);
+  }
+
+  /**
+   * Build audit log entry without signature
+   *
+   * Explicitly constructs an entry object without signature field
+   * to ensure type safety and prevent signature leakage
+   *
+   * @param entry - Full audit log entry or partial entry data
+   * @returns Entry without signature field
+   */
+  private buildEntryWithoutSignature(entry: AuditLogEntry): Omit<AuditLogEntry, 'signature'> {
+    return {
       id: entry.id,
       timestamp: entry.timestamp,
       eventType: entry.eventType,
@@ -224,12 +360,9 @@ export class AuditLogger {
       resourceId: entry.resourceId,
       action: entry.action,
       result: entry.result,
-      ...(entry.errorCode && { errorCode: entry.errorCode }),
-      ...(entry.metadata && { metadata: entry.metadata }),
+      errorCode: entry.errorCode,
+      metadata: entry.metadata,
     };
-
-    const expectedSignature = this.generateSignature(entryWithoutSignature);
-    return entry.signature === expectedSignature;
   }
 
   /**
@@ -322,7 +455,11 @@ export class AuditLogger {
         log.signature,
       ]);
 
-      return [headers.join(','), ...rows.map((row) => row.join(','))].join('\n');
+      // Convert to RFC 4180 compliant CSV with CSV injection prevention
+      const headerRow = headers.map((h) => this.escapeCsvField(h)).join(',');
+      const dataRows = rows.map((row) => row.map((field) => this.escapeCsvField(field)).join(','));
+
+      return [headerRow, ...dataRows].join('\n');
     }
 
     throw new Error(`Unsupported export format: ${params.format}`);
@@ -341,17 +478,59 @@ export class AuditLogger {
     }
 
     // Update timestamp and regenerate signature
-    const entryWithoutSignature: Omit<AuditLogEntry, 'signature'> = {
-      ...entry,
-      timestamp,
-    };
+    // Build entry without signature first, then apply timestamp update
+    const updatedEntry = { ...entry, timestamp };
+    let entryWithoutSignature = this.buildEntryWithoutSignature(updatedEntry);
+
+    // Deep freeze intermediate entry without signature in production
+    if (process.env['NODE_ENV'] === 'production') {
+      entryWithoutSignature = deepFreeze(entryWithoutSignature);
+    }
 
     const signature = this.generateSignature(entryWithoutSignature);
 
-    this.logs.set(id, {
+    // Create new entry with updated signature
+    let newEntry: AuditLogEntry = {
       ...entryWithoutSignature,
       signature,
-    });
+    };
+
+    // Deep freeze final entry in production to enforce WORM (Write-Once-Read-Many)
+    if (process.env['NODE_ENV'] === 'production') {
+      newEntry = deepFreeze(newEntry);
+    }
+
+    this.logs.set(id, newEntry);
+  }
+
+  /**
+   * Escape a CSV field according to RFC 4180 and prevent CSV injection
+   *
+   * @param value - Field value to escape
+   * @returns Escaped and quoted CSV field
+   */
+  private escapeCsvField(value: unknown): string {
+    // Convert null/undefined to empty string
+    if (value === null || value === undefined) {
+      return '""';
+    }
+
+    // Convert to string
+    let field = String(value);
+
+    // Prevent CSV injection by neutralizing formula-like values
+    // Leading characters that trigger formula execution: =, +, -, @
+    const dangerousChars = ['=', '+', '-', '@'];
+    if (dangerousChars.some((char) => field.startsWith(char))) {
+      // Prefix with single quote to neutralize
+      field = "'" + field;
+    }
+
+    // Escape double quotes by doubling them (RFC 4180)
+    field = field.replace(/"/g, '""');
+
+    // Always wrap in double quotes (RFC 4180)
+    return `"${field}"`;
   }
 
   /**

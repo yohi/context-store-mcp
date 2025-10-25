@@ -67,6 +67,15 @@ export interface AlertSenders {
 }
 
 /**
+ * Channel delivery status
+ */
+export interface ChannelDeliveryStatus {
+  channel: AlertChannel;
+  success: boolean;
+  error?: string;
+}
+
+/**
  * Alert record
  */
 export interface AlertRecord {
@@ -74,8 +83,10 @@ export interface AlertRecord {
   timestamp: Date;
   securityEventId: string;
   threatLevel: ThreatLevel;
+  userId: string | null;
   channels: AlertChannel[];
   delivered: boolean;
+  deliveryStatus: ChannelDeliveryStatus[];
 }
 
 /**
@@ -98,7 +109,7 @@ export interface AlertHistoryQuery {
   startTime?: Date;
   endTime?: Date;
   threatLevel?: ThreatLevel;
-  userId?: string;
+  userId?: string | null;
 }
 
 /**
@@ -130,31 +141,73 @@ export class AlertManager {
   async sendAlert(event: SecurityEvent, channels: AlertChannel[]): Promise<void> {
     const alertId = randomUUID();
 
-    for (const channel of channels) {
-      switch (channel) {
-        case 'log':
-          this.logAlert(event);
-          break;
+    // Deduplicate channels
+    const uniqueChannels = Array.from(new Set(channels));
 
-        case 'email':
-          if (this.senders.email) {
-            await this.sendEmailAlert(event);
-          }
-          break;
+    // Track delivery status for each channel
+    const deliveryStatus: ChannelDeliveryStatus[] = [];
 
-        case 'sms':
-          if (this.senders.sms) {
-            await this.sendSmsAlert(event);
-          }
-          break;
+    // Attempt to send to each channel
+    for (const channel of uniqueChannels) {
+      try {
+        switch (channel) {
+          case 'log':
+            this.logAlert(event);
+            deliveryStatus.push({ channel, success: true });
+            break;
 
-        case 'pagerDuty':
-          if (this.senders.pagerDuty) {
-            await this.sendPagerDutyAlert(event);
-          }
-          break;
+          case 'email':
+            if (!this.senders.email) {
+              deliveryStatus.push({
+                channel,
+                success: false,
+                error: 'Email sender not configured',
+              });
+            } else {
+              await this.sendEmailAlert(event);
+              deliveryStatus.push({ channel, success: true });
+            }
+            break;
+
+          case 'sms':
+            if (!this.senders.sms) {
+              deliveryStatus.push({
+                channel,
+                success: false,
+                error: 'SMS sender not configured',
+              });
+            } else {
+              await this.sendSmsAlert(event);
+              deliveryStatus.push({ channel, success: true });
+            }
+            break;
+
+          case 'pagerDuty':
+            if (!this.senders.pagerDuty) {
+              deliveryStatus.push({
+                channel,
+                success: false,
+                error: 'PagerDuty sender not configured',
+              });
+            } else {
+              await this.sendPagerDutyAlert(event);
+              deliveryStatus.push({ channel, success: true });
+            }
+            break;
+        }
+      } catch (error) {
+        // Record failure for this channel but continue with others
+        deliveryStatus.push({
+          channel,
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
       }
     }
+
+    // Alert is delivered only if there are channels AND all channels succeeded
+    const delivered =
+      uniqueChannels.length > 0 && deliveryStatus.every((status) => status.success);
 
     // Record alert
     this.alertHistory.set(alertId, {
@@ -162,8 +215,10 @@ export class AlertManager {
       timestamp: new Date(),
       securityEventId: event.id,
       threatLevel: event.threatLevel,
-      channels,
-      delivered: true,
+      userId: event.userId || null,
+      channels: uniqueChannels,
+      delivered,
+      deliveryStatus,
     });
   }
 
@@ -176,11 +231,11 @@ export class AlertManager {
   async executeAutomatedResponse(event: SecurityEvent): Promise<AutomatedResponseResult> {
     const actions: string[] = [];
 
-    // Suspend session
+    // Suspend session (only for critical threats)
     let sessionSuspended = false;
     let suspensionDuration: number | undefined;
 
-    if (event.sessionId) {
+    if (event.threatLevel === 'critical' && event.sessionId) {
       const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
       this.suspendedSessions.set(event.sessionId, expiresAt);
       sessionSuspended = true;
@@ -188,12 +243,16 @@ export class AlertManager {
       actions.push('Session suspended for 1 hour');
     }
 
-    // Block IP
+    // Block IP (only for critical threats)
     let ipBlocked = false;
     let blockedIp: string | undefined;
     let blockDuration: number | undefined;
 
-    if (event.metadata?.ipAddress && typeof event.metadata.ipAddress === 'string') {
+    if (
+      event.threatLevel === 'critical' &&
+      event.metadata?.ipAddress &&
+      typeof event.metadata.ipAddress === 'string'
+    ) {
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
       this.blockedIps.set(event.metadata.ipAddress, expiresAt);
       ipBlocked = true;
@@ -202,8 +261,8 @@ export class AlertManager {
       actions.push(`IP address ${blockedIp} blocked for 24 hours`);
     }
 
-    // Generate dashboard link
-    const dashboardLink = `${this.config.dashboardUrl}?event=${event.id}`;
+    // Generate dashboard link with properly encoded event ID
+    const dashboardLink = `${this.config.dashboardUrl}?event=${encodeURIComponent(event.id)}`;
     actions.push(`Alert dashboard: ${dashboardLink}`);
 
     return {
@@ -238,10 +297,21 @@ export class AlertManager {
       if (query.threatLevel) {
         results = results.filter((alert) => alert.threatLevel === query.threatLevel);
       }
+
+      if (query.userId !== undefined) {
+        results = results.filter((alert) => alert.userId === query.userId);
+      }
     }
 
-    // Sort by timestamp descending
-    results.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+    // Sort by timestamp descending, then by ID for stable ordering
+    results.sort((a, b) => {
+      const timeDiff = b.timestamp.getTime() - a.timestamp.getTime();
+      if (timeDiff !== 0) {
+        return timeDiff;
+      }
+      // Use ID as tiebreaker for stable sorting
+      return b.id.localeCompare(a.id);
+    });
 
     return results;
   }
@@ -316,6 +386,9 @@ export class AlertManager {
   private async sendEmailAlert(event: SecurityEvent): Promise<void> {
     const subject = `[SECURITY ALERT] ${event.threatLevel.toUpperCase()}: ${event.anomalyPattern}`;
 
+    // Generate dashboard link with properly encoded event ID
+    const dashboardLink = `${this.config.dashboardUrl}?event=${encodeURIComponent(event.id)}`;
+
     const body = `
 Security Alert Notification
 
@@ -330,7 +403,7 @@ ${event.description}
 
 ${event.recommendedActions ? `Recommended Actions:\n${event.recommendedActions.map((a) => `- ${a}`).join('\n')}` : ''}
 
-Dashboard: ${this.config.dashboardUrl}
+Dashboard: ${dashboardLink}
     `.trim();
 
     await this.senders.email!({
@@ -344,7 +417,10 @@ Dashboard: ${this.config.dashboardUrl}
    * Send SMS alert
    */
   private async sendSmsAlert(event: SecurityEvent): Promise<void> {
-    const message = `[SECURITY] ${event.threatLevel.toUpperCase()}: ${event.anomalyPattern} - User: ${event.userId}. Dashboard: ${this.config.dashboardUrl}`;
+    // Generate dashboard link with properly encoded event ID
+    const dashboardLink = `${this.config.dashboardUrl}?event=${encodeURIComponent(event.id)}`;
+
+    const message = `[SECURITY] ${event.threatLevel.toUpperCase()}: ${event.anomalyPattern} - User: ${event.userId}. Dashboard: ${dashboardLink}`;
 
     await this.senders.sms!({
       message,
