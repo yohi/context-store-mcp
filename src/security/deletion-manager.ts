@@ -72,6 +72,7 @@ export interface DeletionFailure {
   failureMode: DeletionFailureMode;
   errorMessage: string;
   retryCount: number;
+  reason: DeletionReason;
   lastRetryAt?: Date;
   createdAt: Date;
 }
@@ -216,7 +217,8 @@ export class DeletionManager {
         await this.recordFailure(
           memoryId,
           DeletionFailureMode.KEY_DESTRUCTION_FAILED,
-          error instanceof Error ? error.message : String(error)
+          error instanceof Error ? error.message : String(error),
+          reason
         );
       }
 
@@ -243,7 +245,7 @@ export class DeletionManager {
   /**
    * 物理削除を実行する（Phase 3: Background Purge）
    */
-  async executePurge(memoryId: MemoryId, userId: string): Promise<DeletionResult> {
+  async executePurge(memoryId: MemoryId, userId: string, deletionReason: DeletionReason): Promise<DeletionResult> {
     let retryCount = 0;
 
     while (retryCount < this.retryPolicy.maxAttempts) {
@@ -255,7 +257,7 @@ export class DeletionManager {
         await this.postgresAdapter.hardDelete(memoryId);
 
         // Phase 3完了をログに記録
-        await this.logDeletionEvent(memoryId, 'PURGED', userId, 'user_request');
+        await this.logDeletionEvent(memoryId, 'PURGED', userId, deletionReason);
 
         // Phase 4: Backup Deletion（バックアップ削除）をスケジュール
         await this.scheduleBackupDeletion(memoryId);
@@ -275,6 +277,7 @@ export class DeletionManager {
             memoryId,
             DeletionFailureMode.POSTGRESQL_DEADLOCK,
             error instanceof Error ? error.message : String(error),
+            deletionReason,
             retryCount
           );
 
@@ -356,8 +359,9 @@ export class DeletionManager {
       }),
     };
 
-    // 検証完了をログに記録
-    await this.logDeletionEvent(memoryId, 'VERIFIED', userId, 'user_request');
+    // 検証完了をログに記録（元の削除理由を保持）
+    const originalReason = requestedLog?.reason ?? 'user_request';
+    await this.logDeletionEvent(memoryId, 'VERIFIED', userId, originalReason);
 
     return receipt;
   }
@@ -514,6 +518,7 @@ export class DeletionManager {
     memoryId: MemoryId,
     failureMode: DeletionFailureMode,
     errorMessage: string,
+    reason: DeletionReason,
     retryCount: number = 0
   ): Promise<void> {
     const failure: DeletionFailure = {
@@ -522,6 +527,7 @@ export class DeletionManager {
       failureMode,
       errorMessage,
       retryCount,
+      reason,
       ...(retryCount > 0 ? { lastRetryAt: new Date() } : {}),
       createdAt: new Date(),
     };
@@ -576,7 +582,7 @@ export class DeletionManager {
   }
 
   private generateId(): string {
-    return `del_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return `del_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
   }
 
   private generateSignature(memoryId: MemoryId, data: any): string {

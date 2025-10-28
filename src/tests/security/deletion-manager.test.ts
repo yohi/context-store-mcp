@@ -189,7 +189,7 @@ describe('DeletionManager', () => {
       // 事前にソフト削除を実行
       await deletionManager.initiateDeletion(memoryId, userId, 'user_request');
 
-      const result = await deletionManager.executePurge(memoryId, userId);
+      const result = await deletionManager.executePurge(memoryId, userId, 'user_request');
 
       expect(result.success).toBe(true);
       expect(result.phase).toBe('PURGED');
@@ -202,7 +202,7 @@ describe('DeletionManager', () => {
       const userId = 'user-456';
 
       await deletionManager.initiateDeletion(memoryId, userId, 'user_request');
-      await deletionManager.executePurge(memoryId, userId);
+      await deletionManager.executePurge(memoryId, userId, 'user_request');
 
       const logs = await deletionManager['getAuditLogs'](memoryId);
       const purgedLog = logs.find((l) => l.eventType === 'PURGED');
@@ -216,7 +216,7 @@ describe('DeletionManager', () => {
       const userId = 'user-456';
 
       await deletionManager.initiateDeletion(memoryId, userId, 'user_request');
-      await deletionManager.executePurge(memoryId, userId);
+      await deletionManager.executePurge(memoryId, userId, 'user_request');
 
       const backupEntry = await deletionManager['getBackupDeletionEntry'](memoryId);
 
@@ -240,7 +240,7 @@ describe('DeletionManager', () => {
         }
       });
 
-      const result = await deletionManager.executePurge(memoryId, userId);
+      const result = await deletionManager.executePurge(memoryId, userId, 'user_request');
 
       expect(result.success).toBe(true);
       expect(callCount).toBe(3);
@@ -255,13 +255,43 @@ describe('DeletionManager', () => {
       // 常に失敗させる
       vi.spyOn(neo4jAdapter, 'hardDelete').mockRejectedValue(new Error('Permanent failure'));
 
-      const result = await deletionManager.executePurge(memoryId, userId);
+      const result = await deletionManager.executePurge(memoryId, userId, 'user_request');
 
       expect(result.success).toBe(false);
 
       const failures = await deletionManager.getDeletionFailures(memoryId);
       expect(failures.length).toBeGreaterThan(0);
       expect(failures[0].retryCount).toBe(3);
+    });
+
+    it('should preserve deletion reason in PURGED event', async () => {
+      const memoryId = 'mem-123';
+      const userId = 'user-456';
+
+      await deletionManager.initiateDeletion(memoryId, userId, 'gdpr_right_to_erasure');
+      await deletionManager.executePurge(memoryId, userId, 'gdpr_right_to_erasure');
+
+      const logs = await deletionManager['getAuditLogs'](memoryId);
+      const purgedLog = logs.find((l) => l.eventType === 'PURGED');
+
+      expect(purgedLog).toBeDefined();
+      expect(purgedLog!.reason).toBe('gdpr_right_to_erasure');
+    });
+
+    it('should preserve deletion reason in failure records', async () => {
+      const memoryId = 'mem-123';
+      const userId = 'user-456';
+
+      await deletionManager.initiateDeletion(memoryId, userId, 'data_retention_policy');
+
+      // 常に失敗させる
+      vi.spyOn(neo4jAdapter, 'hardDelete').mockRejectedValue(new Error('Permanent failure'));
+
+      await deletionManager.executePurge(memoryId, userId, 'data_retention_policy');
+
+      const failures = await deletionManager.getDeletionFailures(memoryId);
+      expect(failures.length).toBeGreaterThan(0);
+      expect(failures[0].reason).toBe('data_retention_policy');
     });
   });
 
@@ -272,7 +302,7 @@ describe('DeletionManager', () => {
 
       // 完全な削除フローを実行
       await deletionManager.initiateDeletion(memoryId, userId, 'gdpr_right_to_erasure');
-      await deletionManager.executePurge(memoryId, userId);
+      await deletionManager.executePurge(memoryId, userId, 'gdpr_right_to_erasure');
 
       const receipt = await deletionManager.verifyDeletion(memoryId, userId);
 
@@ -292,7 +322,7 @@ describe('DeletionManager', () => {
       postgresAdapter.setChecksum(memoryId, 'checksum-123');
 
       await deletionManager.initiateDeletion(memoryId, userId, 'user_request');
-      await deletionManager.executePurge(memoryId, userId);
+      await deletionManager.executePurge(memoryId, userId, 'user_request');
 
       const receipt = await deletionManager.verifyDeletion(memoryId, userId);
 
@@ -305,13 +335,42 @@ describe('DeletionManager', () => {
       const userId = 'user-456';
 
       await deletionManager.initiateDeletion(memoryId, userId, 'user_request');
-      await deletionManager.executePurge(memoryId, userId);
+      await deletionManager.executePurge(memoryId, userId, 'user_request');
       await deletionManager.verifyDeletion(memoryId, userId);
 
       const logs = await deletionManager['getAuditLogs'](memoryId);
       const verifiedLog = logs.find((l) => l.eventType === 'VERIFIED');
 
       expect(verifiedLog).toBeDefined();
+    });
+
+    it('should preserve deletion reason in VERIFIED event', async () => {
+      const memoryId = 'mem-123';
+      const userId = 'user-456';
+
+      await deletionManager.initiateDeletion(memoryId, userId, 'security_incident');
+      await deletionManager.executePurge(memoryId, userId, 'security_incident');
+      await deletionManager.verifyDeletion(memoryId, userId);
+
+      const logs = await deletionManager['getAuditLogs'](memoryId);
+      const verifiedLog = logs.find((l) => l.eventType === 'VERIFIED');
+
+      expect(verifiedLog).toBeDefined();
+      expect(verifiedLog!.reason).toBe('security_incident');
+    });
+
+    it('should use fallback reason when original is missing', async () => {
+      const memoryId = 'mem-missing';
+      const userId = 'user-456';
+
+      // 検証のみ実行（REQUESTED ログなし）
+      await deletionManager.verifyDeletion(memoryId, userId);
+
+      const logs = await deletionManager['getAuditLogs'](memoryId);
+      const verifiedLog = logs.find((l) => l.eventType === 'VERIFIED');
+
+      expect(verifiedLog).toBeDefined();
+      expect(verifiedLog!.reason).toBe('user_request'); // フォールバック値
     });
 
     it('should show PENDING status if purge not completed', async () => {
@@ -405,7 +464,7 @@ describe('DeletionManager', () => {
 
       // memoryId2: 完全削除（孤立でない）
       await deletionManager.initiateDeletion(memoryId2, userId, 'user_request');
-      await deletionManager.executePurge(memoryId2, userId);
+      await deletionManager.executePurge(memoryId2, userId, 'user_request');
 
       // タイムスタンプを古くする（テスト用ハック）
       const logs = await deletionManager['getAuditLogs'](memoryId1);
@@ -441,7 +500,7 @@ describe('DeletionManager', () => {
 
       // 2件削除要求、1件完了
       await deletionManager.initiateDeletion(memoryId1, userId, 'user_request');
-      await deletionManager.executePurge(memoryId1, userId);
+      await deletionManager.executePurge(memoryId1, userId, 'user_request');
 
       await deletionManager.initiateDeletion(memoryId2, userId, 'user_request');
 
@@ -489,8 +548,8 @@ describe('DeletionManager', () => {
       // 失敗を発生させる
       vi.spyOn(neo4jAdapter, 'hardDelete').mockRejectedValue(new Error('Failure'));
 
-      await deletionManager.executePurge(memoryId1, userId);
-      await deletionManager.executePurge(memoryId2, userId);
+      await deletionManager.executePurge(memoryId1, userId, 'user_request');
+      await deletionManager.executePurge(memoryId2, userId, 'user_request');
 
       const failures = await deletionManager.getDeletionFailures();
 
@@ -514,8 +573,8 @@ describe('DeletionManager', () => {
         }
       });
 
-      await deletionManager.executePurge(memoryId1, userId);
-      await deletionManager.executePurge(memoryId2, userId);
+      await deletionManager.executePurge(memoryId1, userId, 'user_request');
+      await deletionManager.executePurge(memoryId2, userId, 'user_request');
 
       const failures = await deletionManager.getDeletionFailures(memoryId1);
 
