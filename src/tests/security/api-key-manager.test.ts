@@ -6,13 +6,20 @@
  * - APIキー検証
  * - キーの無効化とローテーション
  * - クリーンアップ処理
+ * - HMAC-SHA256への移行
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, beforeAll, vi } from 'vitest';
 import { ApiKeyManager } from '../../security/api-key-manager.js';
+import crypto from 'crypto';
 
 describe('ApiKeyManager', () => {
   let manager: ApiKeyManager;
+
+  // テスト用のペッパーを設定
+  beforeAll(() => {
+    process.env['API_KEY_PEPPER'] = 'test-pepper-secret-for-hmac-sha256-hashing-1234567890';
+  });
 
   beforeEach(() => {
     manager = new ApiKeyManager();
@@ -299,6 +306,188 @@ describe('ApiKeyManager', () => {
 
       expect(manager.listApiKeys()).toHaveLength(0);
       expect(manager.getStatistics().total).toBe(0);
+    });
+  });
+
+  describe('HMAC-SHA256 migration', () => {
+    it('should generate new keys with HMAC-SHA256', () => {
+      const { key, plainKey } = manager.generateApiKey('hmac-key');
+
+      // HMAC-SHA256でハッシュ化されていることを確認
+      const pepper = process.env['API_KEY_PEPPER']!;
+      const expectedHash = crypto.createHmac('sha256', pepper).update(plainKey).digest('hex');
+
+      expect(key.hashedKey).toBe(expectedHash);
+    });
+
+    it('should validate new HMAC-based keys successfully', async () => {
+      const { plainKey } = manager.generateApiKey('new-hmac-key');
+
+      const result = await manager.validateApiKey(plainKey);
+
+      expect(result.valid).toBe(true);
+      expect(result.key).toBeDefined();
+    });
+
+    it('should migrate legacy SHA-256 keys to HMAC-SHA256 on validation', async () => {
+      // レガシーSHA-256キーを手動で作成
+      const plainKey = 'csm_v1_testlegacykey123456';
+      const legacyHash = crypto.createHash('sha256').update(plainKey).digest('hex');
+
+      const legacyKey = {
+        id: crypto.randomUUID(),
+        keyPrefix: 'csm_v1_testlega',
+        hashedKey: legacyHash,
+        name: 'legacy-key',
+        createdAt: new Date(),
+        status: 'active' as const,
+        scopes: ['read', 'write'],
+      };
+
+      // レガシーハッシュでキーを登録（内部APIを使用）
+      (manager as any).keys.set(legacyHash, legacyKey);
+
+      // 検証を実行（自動移行が発生する）
+      const result = await manager.validateApiKey(plainKey);
+
+      expect(result.valid).toBe(true);
+      expect(result.key).toBeDefined();
+
+      // hashedKeyは公開ビューに含まれないことを確認（セキュリティ保護）
+      expect((result.key as any).hashedKey).toBeUndefined();
+
+      // 新しいHMACハッシュが使用されていることを確認（内部状態で検証）
+      const pepper = process.env['API_KEY_PEPPER']!;
+      const newHash = crypto.createHmac('sha256', pepper).update(plainKey).digest('hex');
+
+      // レガシーハッシュが削除されていることを確認
+      const legacyEntry = (manager as any).keys.get(legacyHash);
+      expect(legacyEntry).toBeUndefined();
+
+      // 新しいハッシュでアクセス可能であることを確認（内部状態で検証）
+      const newEntry = (manager as any).keys.get(newHash);
+      expect(newEntry).toBeDefined();
+      expect(newEntry.id).toBe(legacyKey.id);
+      expect(newEntry.hashedKey).toBe(newHash); // 内部ではhashedKeyを持つ
+    });
+
+    it('should successfully validate migrated keys on subsequent attempts', async () => {
+      // レガシーキーを作成して移行
+      const plainKey = 'csm_v1_migratedkey987654';
+      const legacyHash = crypto.createHash('sha256').update(plainKey).digest('hex');
+
+      const legacyKey = {
+        id: crypto.randomUUID(),
+        keyPrefix: 'csm_v1_migrated',
+        hashedKey: legacyHash,
+        name: 'to-migrate',
+        createdAt: new Date(),
+        status: 'active' as const,
+        scopes: ['read'],
+      };
+
+      (manager as any).keys.set(legacyHash, legacyKey);
+
+      // 1回目の検証（移行実行）
+      const firstResult = await manager.validateApiKey(plainKey);
+      expect(firstResult.valid).toBe(true);
+
+      // 2回目の検証（HMAC-SHA256で直接検証）
+      const secondResult = await manager.validateApiKey(plainKey);
+      expect(secondResult.valid).toBe(true);
+      expect(secondResult.key!.id).toBe(legacyKey.id);
+    });
+
+    it('should not migrate revoked legacy keys', async () => {
+      const plainKey = 'csm_v1_revokedlegacy123';
+      const legacyHash = crypto.createHash('sha256').update(plainKey).digest('hex');
+
+      const legacyKey = {
+        id: crypto.randomUUID(),
+        keyPrefix: 'csm_v1_revoked',
+        hashedKey: legacyHash,
+        name: 'revoked-legacy',
+        createdAt: new Date(),
+        status: 'revoked' as const,
+        scopes: ['read'],
+      };
+
+      (manager as any).keys.set(legacyHash, legacyKey);
+
+      // 無効なキーは移行されない
+      const result = await manager.validateApiKey(plainKey);
+
+      expect(result.valid).toBe(false);
+      expect(result.reason).toBe('revoked');
+
+      // レガシーハッシュがまだ存在することを確認（移行されていない）
+      const legacyEntry = (manager as any).keys.get(legacyHash);
+      expect(legacyEntry).toBeDefined();
+    });
+
+    it('should not migrate expired legacy keys', async () => {
+      const plainKey = 'csm_v1_expiredlegacy456';
+      const legacyHash = crypto.createHash('sha256').update(plainKey).digest('hex');
+
+      const legacyKey = {
+        id: crypto.randomUUID(),
+        keyPrefix: 'csm_v1_expired',
+        hashedKey: legacyHash,
+        name: 'expired-legacy',
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() - 1000), // 1秒前に期限切れ
+        status: 'active' as const,
+        scopes: ['read'],
+      };
+
+      (manager as any).keys.set(legacyHash, legacyKey);
+
+      // 期限切れのキーは移行されない
+      const result = await manager.validateApiKey(plainKey);
+
+      expect(result.valid).toBe(false);
+      expect(result.reason).toBe('expired');
+
+      // レガシーハッシュがまだ存在することを確認（移行されていない）
+      const legacyEntry = (manager as any).keys.get(legacyHash);
+      expect(legacyEntry).toBeDefined();
+    });
+  });
+
+  describe('pepper validation', () => {
+    it('should throw error when pepper is not set', () => {
+      const originalPepper = process.env['API_KEY_PEPPER'];
+      delete process.env['API_KEY_PEPPER'];
+
+      try {
+        expect(() => manager.generateApiKey('test')).toThrow(
+          'API_KEY_PEPPER environment variable is required'
+        );
+      } finally {
+        // テスト後に復元
+        if (originalPepper) {
+          process.env['API_KEY_PEPPER'] = originalPepper;
+        }
+      }
+    });
+
+    it('should warn when pepper is too short', () => {
+      const originalPepper = process.env['API_KEY_PEPPER'];
+      process.env['API_KEY_PEPPER'] = 'short'; // 16文字未満
+
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      try {
+        manager.generateApiKey('test');
+        expect(consoleWarnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('WARNING: API_KEY_PEPPER is shorter than recommended')
+        );
+      } finally {
+        consoleWarnSpy.mockRestore();
+        if (originalPepper) {
+          process.env['API_KEY_PEPPER'] = originalPepper;
+        }
+      }
     });
   });
 });

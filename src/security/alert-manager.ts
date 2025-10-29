@@ -12,8 +12,8 @@
  *   - 緊急アラートダッシュボードへのリンク通知
  */
 
-import { randomUUID } from 'crypto';
-import { SecurityEvent, ThreatLevel } from './security-event-detector';
+import { randomUUID, createHash } from 'crypto';
+import type { SecurityEvent, ThreatLevel } from './security-event-detector.js';
 
 /**
  * Alert channel
@@ -368,15 +368,48 @@ export class AlertManager {
   }
 
   /**
-   * Log alert
+   * Hash user ID for PII-safe logging
+   *
+   * Uses SHA-256 one-way hash and truncates to 12 characters for brevity
+   * while maintaining uniqueness for correlation purposes.
+   *
+   * @param userId - User ID to hash
+   * @returns Truncated hash in format "user_xxxxx"
+   */
+  private hashUserId(userId: string): string {
+    const hash = createHash('sha256').update(userId).digest('hex');
+    return `user_${hash.substring(0, 12)}`;
+  }
+
+  /**
+   * Sanitize description for PII-safe logging
+   *
+   * Removes potential PII and keeps only high-level security event information.
+   * Returns a non-PII summary with severity and anomaly pattern.
+   *
+   * @param description - Original description
+   * @param event - Security event for context
+   * @returns Sanitized description without PII
+   */
+  private sanitizeDescription(description: string, event: SecurityEvent): string {
+    // Return only non-PII summary: severity code and anomaly pattern
+    return `Security event detected: ${event.anomalyPattern} (threat level: ${event.threatLevel})`;
+  }
+
+  /**
+   * Log alert (PII-safe)
+   *
+   * Logs security alerts with hashed user identifiers and sanitized descriptions
+   * to prevent PII leakage in console logs.
    */
   private logAlert(event: SecurityEvent): void {
     console.log('[SECURITY ALERT]', {
+      eventId: event.id,
       timestamp: event.timestamp.toISOString(),
       threatLevel: event.threatLevel,
       anomalyPattern: event.anomalyPattern,
-      userId: event.userId,
-      description: event.description,
+      userIdHash: this.hashUserId(event.userId),
+      description: this.sanitizeDescription(event.description, event),
     });
   }
 
@@ -414,13 +447,18 @@ Dashboard: ${dashboardLink}
   }
 
   /**
-   * Send SMS alert
+   * Send SMS alert (PII-safe)
+   *
+   * Sends SMS notifications without PII. Only includes event ID and
+   * non-sensitive status information. Recipients must access the
+   * dashboard for full details.
    */
   private async sendSmsAlert(event: SecurityEvent): Promise<void> {
     // Generate dashboard link with properly encoded event ID
     const dashboardLink = `${this.config.dashboardUrl}?event=${encodeURIComponent(event.id)}`;
 
-    const message = `[SECURITY] ${event.threatLevel.toUpperCase()}: ${event.anomalyPattern} - User: ${event.userId}. Dashboard: ${dashboardLink}`;
+    // PII-safe message: Only event ID, severity, and non-identifying information
+    const message = `[SECURITY] ${event.threatLevel.toUpperCase()}: ${event.anomalyPattern} detected. Event ID: ${event.id.substring(0, 8)}. Dashboard: ${dashboardLink}`;
 
     await this.senders.sms!({
       message,

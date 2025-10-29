@@ -156,15 +156,18 @@ export interface ExportLogsParams {
 export class AuditLogger {
   private logs: Map<string, AuditLogEntry>;
   private readonly secretKey: string;
+  private readonly allowMutableLogs: boolean;
 
   /**
    * Create a new AuditLogger instance
    *
    * @param secretKey - Secret key for HMAC signature generation
+   * @param options - Optional configuration
+   * @param options.allowMutableLogs - Allow log mutations (for testing only, ignored in production)
    * @throws Error if no secret key is provided in production environment
    * @throws Error if secret key has insufficient entropy
    */
-  constructor(secretKey?: string) {
+  constructor(secretKey?: string, options?: { allowMutableLogs?: boolean }) {
     this.logs = new Map();
 
     const isProduction = process.env['NODE_ENV'] === 'production';
@@ -185,6 +188,10 @@ export class AuditLogger {
     this.validateSecretKey(effectiveKey, isProduction);
 
     this.secretKey = effectiveKey;
+
+    // WORM enforcement: logs are immutable in production regardless of option
+    // allowMutableLogs only applies to non-production environments (for testing)
+    this.allowMutableLogs = isProduction ? false : (options?.allowMutableLogs ?? true);
   }
 
   /**
@@ -466,39 +473,54 @@ export class AuditLogger {
   }
 
   /**
-   * Update timestamp of a log entry (for testing purposes)
+   * Update timestamp of a log entry (for testing purposes only)
+   *
+   * WORM Enforcement: This method enforces Write-Once-Read-Many immutability.
+   * - In production: Always throws an error (logs are immutable)
+   * - In non-production: Requires allowMutableLogs=true (default true for testing)
    *
    * @param id - Log entry ID
    * @param timestamp - New timestamp
+   * @throws Error if attempting to update in production (WORM violation)
+   * @throws Error if log entry not found
+   * @throws Error if allowMutableLogs is false in non-production
    */
   async updateTimestamp(id: string, timestamp: Date): Promise<void> {
+    const isProduction = process.env['NODE_ENV'] === 'production';
+
+    // WORM enforcement: logs are immutable in production
+    if (isProduction) {
+      throw new Error(
+        'Audit log entries are immutable in production (WORM requirement). ' +
+          'updateTimestamp is only available in non-production environments for testing purposes.'
+      );
+    }
+
+    // Check if mutations are allowed in non-production
+    if (!this.allowMutableLogs) {
+      throw new Error(
+        'Audit log mutations are disabled. ' +
+          'Create AuditLogger with { allowMutableLogs: true } to enable testing mutations.'
+      );
+    }
+
     const entry = this.logs.get(id);
     if (!entry) {
       throw new Error(`Log entry not found: ${id}`);
     }
 
-    // Update timestamp and regenerate signature
+    // Update timestamp and regenerate signature (only in non-production with allowMutableLogs=true)
     // Build entry without signature first, then apply timestamp update
     const updatedEntry = { ...entry, timestamp };
-    let entryWithoutSignature = this.buildEntryWithoutSignature(updatedEntry);
-
-    // Deep freeze intermediate entry without signature in production
-    if (process.env['NODE_ENV'] === 'production') {
-      entryWithoutSignature = deepFreeze(entryWithoutSignature);
-    }
+    const entryWithoutSignature = this.buildEntryWithoutSignature(updatedEntry);
 
     const signature = this.generateSignature(entryWithoutSignature);
 
     // Create new entry with updated signature
-    let newEntry: AuditLogEntry = {
+    const newEntry: AuditLogEntry = {
       ...entryWithoutSignature,
       signature,
     };
-
-    // Deep freeze final entry in production to enforce WORM (Write-Once-Read-Many)
-    if (process.env['NODE_ENV'] === 'production') {
-      newEntry = deepFreeze(newEntry);
-    }
 
     this.logs.set(id, newEntry);
   }

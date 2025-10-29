@@ -17,6 +17,9 @@ describe('McpAuthMiddleware', () => {
   let middleware: McpAuthMiddleware;
 
   beforeEach(() => {
+    // API_KEY_PEPPERを設定（HMAC-SHA256ハッシュ化に必要）
+    process.env['API_KEY_PEPPER'] = 'test-pepper-secret-for-mcp-auth-middleware-testing';
+
     apiKeyManager = new ApiKeyManager();
     middleware = new McpAuthMiddleware(apiKeyManager, {
       windowMs: 5 * 60 * 1000, // 5分
@@ -168,20 +171,19 @@ describe('McpAuthMiddleware', () => {
         Authorization: `Bearer ${plainKey}`,
       };
 
-      try {
-        await middleware.authenticate(headers, '127.0.0.1');
-        // 期待: 例外がスローされるべき
-        expect.fail('Expected authentication to fail');
-      } catch (error) {
-        expect(error).toBeInstanceOf(AuthenticationError);
-        const authError = error as AuthenticationError;
+      // Vitest promise rejection assertions
+      await expect(middleware.authenticate(headers, '127.0.0.1'))
+        .rejects.toBeInstanceOf(AuthenticationError);
 
-        // エラーメッセージに内部の詳細（"revoked"など）が含まれないことを確認
-        expect(authError.message).toBe('Invalid API key');
-        expect(authError.message).not.toContain('revoked');
-        expect(authError.message).not.toContain('expired');
-        expect(authError.message).not.toContain('invalid_format');
-      }
+      // Check error message doesn't contain internal details
+      await expect(middleware.authenticate(headers, '127.0.0.1'))
+        .rejects.toThrow((error: any) => {
+          expect(error.message).toBe('Invalid API key');
+          expect(error.message).not.toContain('revoked');
+          expect(error.message).not.toContain('expired');
+          expect(error.message).not.toContain('invalid_format');
+          return true;
+        });
     });
 
     it('should not leak internal validation reason for expired keys', async () => {
@@ -194,17 +196,17 @@ describe('McpAuthMiddleware', () => {
         Authorization: `Bearer ${plainKey}`,
       };
 
-      try {
-        await middleware.authenticate(headers, '127.0.0.1');
-        expect.fail('Expected authentication to fail');
-      } catch (error) {
-        expect(error).toBeInstanceOf(AuthenticationError);
-        const authError = error as AuthenticationError;
+      // Vitest promise rejection assertions
+      await expect(middleware.authenticate(headers, '127.0.0.1'))
+        .rejects.toBeInstanceOf(AuthenticationError);
 
-        // エラーメッセージに"expired"が含まれないことを確認
-        expect(authError.message).toBe('Invalid API key');
-        expect(authError.message).not.toContain('expired');
-      }
+      // Check error message doesn't contain "expired"
+      await expect(middleware.authenticate(headers, '127.0.0.1'))
+        .rejects.toThrow((error: any) => {
+          expect(error.message).toBe('Invalid API key');
+          expect(error.message).not.toContain('expired');
+          return true;
+        });
     });
 
     it('should not leak internal validation reason for invalid format', async () => {
@@ -212,18 +214,18 @@ describe('McpAuthMiddleware', () => {
         Authorization: 'Bearer invalid-format-key',
       };
 
-      try {
-        await middleware.authenticate(headers, '127.0.0.1');
-        expect.fail('Expected authentication to fail');
-      } catch (error) {
-        expect(error).toBeInstanceOf(AuthenticationError);
-        const authError = error as AuthenticationError;
+      // Vitest promise rejection assertions
+      await expect(middleware.authenticate(headers, '127.0.0.1'))
+        .rejects.toBeInstanceOf(AuthenticationError);
 
-        // エラーメッセージに"invalid_format"が含まれないことを確認
-        expect(authError.message).toBe('Invalid API key');
-        expect(authError.message).not.toContain('invalid_format');
-        expect(authError.message).not.toContain('format');
-      }
+      // Check error message doesn't contain "invalid_format"
+      await expect(middleware.authenticate(headers, '127.0.0.1'))
+        .rejects.toThrow((error: any) => {
+          expect(error.message).toBe('Invalid API key');
+          expect(error.message).not.toContain('invalid_format');
+          expect(error.message).not.toContain('format');
+          return true;
+        });
     });
   });
 

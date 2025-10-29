@@ -763,4 +763,93 @@ describe('AuditLogger', () => {
       });
     });
   });
+
+  describe('WORM enforcement', () => {
+    it('should throw error when updateTimestamp is called in production', async () => {
+      const originalEnv = process.env['NODE_ENV'];
+      process.env['NODE_ENV'] = 'production';
+
+      try {
+        const productionLogger = new AuditLogger('test-secret-key-for-production-worm-test');
+
+        const entry = await productionLogger.logEvent({
+          eventType: 'memory_created',
+          userId: 'user-1',
+          sessionId: 'session-1',
+          ipAddress: '192.168.1.1',
+          resourceId: 'memory-1',
+          action: 'create',
+          result: 'success',
+        });
+
+        const newTimestamp = new Date();
+
+        // Should throw error in production
+        await expect(productionLogger.updateTimestamp(entry.id, newTimestamp)).rejects.toThrow(
+          'Audit log entries are immutable in production (WORM requirement)'
+        );
+      } finally {
+        process.env['NODE_ENV'] = originalEnv;
+      }
+    });
+
+    it('should allow updateTimestamp in non-production with allowMutableLogs=true', async () => {
+      const originalEnv = process.env['NODE_ENV'];
+      process.env['NODE_ENV'] = 'test';
+
+      try {
+        const testLogger = new AuditLogger('test-key', { allowMutableLogs: true });
+
+        const entry = await testLogger.logEvent({
+          eventType: 'memory_created',
+          userId: 'user-1',
+          sessionId: 'session-1',
+          ipAddress: '192.168.1.1',
+          resourceId: 'memory-1',
+          action: 'create',
+          result: 'success',
+        });
+
+        const originalTimestamp = entry.timestamp;
+        const newTimestamp = new Date(originalTimestamp.getTime() + 1000);
+
+        // Should succeed in non-production with allowMutableLogs=true
+        await expect(testLogger.updateTimestamp(entry.id, newTimestamp)).resolves.not.toThrow();
+
+        // Verify timestamp was updated
+        const logs = await testLogger.queryLogs({ resourceId: 'memory-1' });
+        expect(logs[0].timestamp.getTime()).toBe(newTimestamp.getTime());
+      } finally {
+        process.env['NODE_ENV'] = originalEnv;
+      }
+    });
+
+    it('should throw error in non-production when allowMutableLogs=false', async () => {
+      const originalEnv = process.env['NODE_ENV'];
+      process.env['NODE_ENV'] = 'test';
+
+      try {
+        const testLogger = new AuditLogger('test-key', { allowMutableLogs: false });
+
+        const entry = await testLogger.logEvent({
+          eventType: 'memory_created',
+          userId: 'user-1',
+          sessionId: 'session-1',
+          ipAddress: '192.168.1.1',
+          resourceId: 'memory-1',
+          action: 'create',
+          result: 'success',
+        });
+
+        const newTimestamp = new Date();
+
+        // Should throw error when allowMutableLogs=false
+        await expect(testLogger.updateTimestamp(entry.id, newTimestamp)).rejects.toThrow(
+          'Audit log mutations are disabled'
+        );
+      } finally {
+        process.env['NODE_ENV'] = originalEnv;
+      }
+    });
+  });
 });

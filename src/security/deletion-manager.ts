@@ -158,6 +158,22 @@ export interface JobQueue {
 }
 
 /**
+ * 時刻プロバイダーインターフェース（テスト用）
+ */
+export interface TimeProvider {
+  now(): Date;
+}
+
+/**
+ * デフォルト時刻プロバイダー（実際の時刻を返す）
+ */
+export class SystemTimeProvider implements TimeProvider {
+  now(): Date {
+    return new Date();
+  }
+}
+
+/**
  * GDPR準拠削除マネージャー
  */
 export class DeletionManager {
@@ -166,6 +182,7 @@ export class DeletionManager {
   private readonly backupQueue: Map<string, BackupDeletionQueueEntry> = new Map();
   private readonly retryPolicy: DeletionRetryPolicy;
   private readonly signatureSecret: string;
+  private readonly timeProvider: TimeProvider;
 
   constructor(
     private readonly postgresAdapter: StorageAdapter,
@@ -175,6 +192,7 @@ export class DeletionManager {
     config?: {
       retryPolicy?: Partial<DeletionRetryPolicy>;
       signatureSecret?: string;
+      timeProvider?: TimeProvider;
     }
   ) {
     this.retryPolicy = {
@@ -183,7 +201,23 @@ export class DeletionManager {
       multiplier: config?.retryPolicy?.multiplier ?? 2.0,
       maxDelay: config?.retryPolicy?.maxDelay ?? 900000,
     };
-    this.signatureSecret = config?.signatureSecret ?? 'default-secret-for-testing';
+
+    // Signature secret handling: require explicit value in production
+    const isProduction = process.env['NODE_ENV'] === 'production';
+    const providedSecret = config?.signatureSecret || process.env['SIGNATURE_SECRET'];
+
+    if (isProduction && !providedSecret) {
+      throw new Error(
+        'SIGNATURE_SECRET is required in production environment. ' +
+        'Please provide it via config.signatureSecret or SIGNATURE_SECRET environment variable.'
+      );
+    }
+
+    // Use provided secret, or fallback to test secret only in non-production
+    this.signatureSecret = providedSecret || 'default-secret-for-testing';
+
+    // Initialize time provider
+    this.timeProvider = config?.timeProvider ?? new SystemTimeProvider();
   }
 
   /**
@@ -243,6 +277,66 @@ export class DeletionManager {
   }
 
   /**
+   * エラーを削除失敗モードに分類する
+   * @private
+   */
+  private classifyError(error: unknown): DeletionFailureMode {
+    const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+    const stack = error instanceof Error ? (error.stack || '').toLowerCase() : '';
+    const fullText = `${message} ${stack}`;
+
+    // Neo4j関連のエラー
+    if (
+      fullText.includes('neo4j') ||
+      fullText.includes('graph') ||
+      fullText.includes('cypher') ||
+      fullText.includes('bolt') ||
+      message.includes('connection timeout') ||
+      message.includes('session expired')
+    ) {
+      return DeletionFailureMode.NEO4J_TIMEOUT;
+    }
+
+    // PostgreSQLデッドロック
+    if (
+      fullText.includes('deadlock') ||
+      message.includes('deadlock detected') ||
+      message.includes('could not serialize access')
+    ) {
+      return DeletionFailureMode.POSTGRESQL_DEADLOCK;
+    }
+
+    // レプリカ同期タイムアウト
+    if (
+      fullText.includes('replica') ||
+      fullText.includes('replication') ||
+      fullText.includes('sync') ||
+      message.includes('lag') ||
+      message.includes('follower')
+    ) {
+      return DeletionFailureMode.REPLICA_SYNC_TIMEOUT;
+    }
+
+    // バックアップ削除失敗
+    if (fullText.includes('backup') || message.includes('archive')) {
+      return DeletionFailureMode.BACKUP_DELETION_FAILED;
+    }
+
+    // キー破棄失敗
+    if (
+      fullText.includes('key') ||
+      fullText.includes('encryption') ||
+      fullText.includes('decrypt') ||
+      message.includes('kms')
+    ) {
+      return DeletionFailureMode.KEY_DESTRUCTION_FAILED;
+    }
+
+    // デフォルト: PostgreSQLエラーとして扱う
+    return DeletionFailureMode.POSTGRESQL_DEADLOCK;
+  }
+
+  /**
    * 物理削除を実行する（Phase 3: Background Purge）
    */
   async executePurge(memoryId: MemoryId, userId: string, deletionReason: DeletionReason): Promise<DeletionResult> {
@@ -273,9 +367,10 @@ export class DeletionManager {
 
         if (retryCount >= this.retryPolicy.maxAttempts) {
           // 最大再試行回数に達した
+          const failureMode = this.classifyError(error);
           await this.recordFailure(
             memoryId,
-            DeletionFailureMode.POSTGRESQL_DEADLOCK,
+            failureMode,
             error instanceof Error ? error.message : String(error),
             deletionReason,
             retryCount
@@ -332,12 +427,12 @@ export class DeletionManager {
 
     const receipt: DeletionReceipt = {
       memoryId,
-      deletionRequestedAt: requestedLog?.timestamp ?? new Date(),
-      softDeletedAt: softDeletedLog?.timestamp ?? new Date(),
-      keyDestroyedAt: keyDestroyedLog?.timestamp ?? new Date(),
+      deletionRequestedAt: requestedLog?.timestamp ?? this.timeProvider.now(),
+      softDeletedAt: softDeletedLog?.timestamp ?? this.timeProvider.now(),
+      keyDestroyedAt: keyDestroyedLog?.timestamp ?? this.timeProvider.now(),
       purgeCompletedAt: purgedLog?.timestamp ?? null,
       backupClearedAt: backupClearedLog?.timestamp ?? null,
-      verificationTimestamp: new Date(),
+      verificationTimestamp: this.timeProvider.now(),
       checksumVerified,
       storageLocations: {
         postgresql: pgExists ? 'PENDING' : 'DELETED',
@@ -390,7 +485,7 @@ export class DeletionManager {
       return JSON.stringify(logs, null, 2);
     }
 
-    // CSV形式
+    // CSV形式 (RFC 4180準拠 + CSV Injection対策)
     const headers = ['id', 'memoryId', 'eventType', 'userId', 'reason', 'timestamp'];
     const rows = logs.map((log) => [
       log.id,
@@ -401,7 +496,11 @@ export class DeletionManager {
       log.timestamp.toISOString(),
     ]);
 
-    return [headers.join(','), ...rows.map((row) => row.join(','))].join('\n');
+    // 各フィールドをエスケープしてCSV出力
+    const headerRow = headers.map((h) => this.escapeCsvField(h)).join(',');
+    const dataRows = rows.map((row) => row.map((field) => this.escapeCsvField(field)).join(','));
+
+    return [headerRow, ...dataRows].join('\n');
   }
 
   /**
@@ -507,7 +606,7 @@ export class DeletionManager {
       eventType,
       userId,
       reason,
-      timestamp: new Date(),
+      timestamp: this.timeProvider.now(),
       metadata: metadata ?? {},
     };
 
@@ -528,15 +627,15 @@ export class DeletionManager {
       errorMessage,
       retryCount,
       reason,
-      ...(retryCount > 0 ? { lastRetryAt: new Date() } : {}),
-      createdAt: new Date(),
+      ...(retryCount > 0 ? { lastRetryAt: this.timeProvider.now() } : {}),
+      createdAt: this.timeProvider.now(),
     };
 
     this.failures.set(failure.id, failure);
   }
 
   private async scheduleBackupDeletion(memoryId: MemoryId): Promise<void> {
-    const now = new Date();
+    const now = this.timeProvider.now();
     const retentionEndDate = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000); // 365日後
 
     const entry: BackupDeletionQueueEntry = {
@@ -548,6 +647,26 @@ export class DeletionManager {
     };
 
     this.backupQueue.set(entry.id, entry);
+  }
+
+  /**
+   * Test-only API: Get audit logs for a specific memory ID
+   *
+   * @param memoryId - Memory ID to filter logs
+   * @returns Array of audit logs
+   */
+  async getAuditLogsForTest(memoryId: MemoryId): Promise<DeletionAuditLog[]> {
+    return this.getAuditLogs(memoryId);
+  }
+
+  /**
+   * Test-only API: Get backup deletion entry for a specific memory ID
+   *
+   * @param memoryId - Memory ID to find backup entry
+   * @returns Backup deletion queue entry or null
+   */
+  async getBackupDeletionEntryForTest(memoryId: MemoryId): Promise<BackupDeletionQueueEntry | null> {
+    return this.getBackupDeletionEntry(memoryId);
   }
 
   private async getAuditLogs(memoryId: MemoryId): Promise<DeletionAuditLog[]> {
@@ -590,5 +709,35 @@ export class DeletionManager {
     return createHmac('sha256', this.signatureSecret)
       .update(payload)
       .digest('hex');
+  }
+
+  /**
+   * RFC 4180準拠のCSVフィールドエスケープとCSV Injection対策
+   *
+   * @param value - エスケープ対象の値
+   * @returns エスケープおよび引用符で囲まれたCSVフィールド
+   */
+  private escapeCsvField(value: unknown): string {
+    // null/undefinedは空文字列に変換
+    if (value === null || value === undefined) {
+      return '""';
+    }
+
+    // 文字列に変換
+    let field = String(value);
+
+    // CSV Injection対策: 数式として実行される可能性のある文字を無害化
+    // 先頭文字が =, +, -, @ の場合は数式として実行される可能性がある
+    const dangerousChars = ['=', '+', '-', '@'];
+    if (dangerousChars.some((char) => field.startsWith(char))) {
+      // シングルクォートを前置して無害化
+      field = "'" + field;
+    }
+
+    // ダブルクォートをエスケープ (RFC 4180: " → "")
+    field = field.replace(/"/g, '""');
+
+    // 常にダブルクォートで囲む (RFC 4180)
+    return `"${field}"`;
   }
 }

@@ -31,7 +31,63 @@ const KEY_RANDOM_BYTES = 32;
 const BASE62_CHARS = '0123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz';
 
 /**
- * APIキーの情報
+ * セキュリティペッパーの取得
+ *
+ * HMAC-SHA256用のシークレットペッパーを環境変数から取得します。
+ * ペッパーが設定されていない場合は、明確なエラーメッセージと共に失敗します。
+ *
+ * @returns シークレットペッパー
+ * @throws {Error} ペッパーが設定されていない場合
+ */
+function getSecretPepper(): string {
+  const pepper = process.env['API_KEY_PEPPER'];
+
+  if (!pepper) {
+    const errorMessage =
+      'FATAL: API_KEY_PEPPER environment variable is not set. ' +
+      'This is required for secure API key hashing with HMAC-SHA256. ' +
+      'Please set a strong random secret (minimum 32 characters recommended). ' +
+      'Example: export API_KEY_PEPPER="your-secure-random-secret-here"';
+
+    console.error(errorMessage);
+    throw new Error('API_KEY_PEPPER environment variable is required');
+  }
+
+  // 最低限の長さチェック（16文字以上を推奨）
+  if (pepper.length < 16) {
+    const warningMessage =
+      'WARNING: API_KEY_PEPPER is shorter than recommended (< 16 characters). ' +
+      'For better security, use a longer secret (32+ characters recommended).';
+    console.warn(warningMessage);
+  }
+
+  return pepper;
+}
+
+/**
+ * HMAC-SHA256を使用してAPIキーをハッシュ化
+ *
+ * @param plainKey 平文のAPIキー
+ * @returns ハッシュ化されたキー（16進数文字列）
+ */
+function hashApiKeyWithHmac(plainKey: string): string {
+  const pepper = getSecretPepper();
+  return crypto.createHmac('sha256', pepper).update(plainKey).digest('hex');
+}
+
+/**
+ * レガシーSHA-256を使用してAPIキーをハッシュ化（移行用のみ）
+ *
+ * @param plainKey 平文のAPIキー
+ * @returns ハッシュ化されたキー（16進数文字列）
+ * @deprecated HMAC-SHA256に移行してください
+ */
+function hashApiKeyWithSha256(plainKey: string): string {
+  return crypto.createHash('sha256').update(plainKey).digest('hex');
+}
+
+/**
+ * APIキーの情報（内部使用のみ）
  */
 export interface ApiKey {
   /** キーID（UUID） */
@@ -57,13 +113,40 @@ export interface ApiKey {
 }
 
 /**
+ * APIキーの公開ビュー（hashedKeyを含まない安全なビュー）
+ *
+ * hashedKeyは内部管理用のみであり、外部に公開すべきではありません。
+ * このビューはAPIキー検証結果などで使用され、ハッシュ漏洩リスクを防ぎます。
+ */
+export interface ApiKeyView {
+  /** キーID（UUID） */
+  id: string;
+  /** キープレフィックス（表示用、例: csm_v1_7YHF） */
+  keyPrefix: string;
+  /** キー名（ユーザー識別用） */
+  name: string;
+  /** 作成日時 */
+  createdAt: Date;
+  /** 最終使用日時 */
+  lastUsedAt?: Date;
+  /** 有効期限 */
+  expiresAt?: Date;
+  /** キーのステータス */
+  status: 'active' | 'revoked' | 'expired';
+  /** 権限スコープ */
+  scopes: string[];
+  /** メタデータ */
+  metadata?: Record<string, unknown>;
+}
+
+/**
  * APIキー検証結果
  */
 export interface ApiKeyValidationResult {
   /** 検証が成功したか */
   valid: boolean;
-  /** キー情報（検証成功時） */
-  key?: ApiKey;
+  /** キー情報（検証成功時、hashedKeyを含まない安全なビュー） */
+  key?: ApiKeyView;
   /** エラー理由（検証失敗時） */
   reason?: 'invalid_format' | 'not_found' | 'revoked' | 'expired' | 'hash_mismatch';
 }
@@ -82,6 +165,29 @@ function encodeBase62(buffer: Buffer): string {
   }
 
   return encoded || BASE62_CHARS[0];
+}
+
+/**
+ * ApiKeyをApiKeyViewに変換（hashedKeyを除外）
+ *
+ * hashedKeyは内部管理用のみであり、外部に公開すべきではないため、
+ * 安全な公開ビューに変換します。
+ *
+ * @param key 内部APIキー情報
+ * @returns hashedKeyを含まない安全なビュー
+ */
+function sanitizeApiKey(key: ApiKey): ApiKeyView {
+  return {
+    id: key.id,
+    keyPrefix: key.keyPrefix,
+    name: key.name,
+    createdAt: key.createdAt,
+    lastUsedAt: key.lastUsedAt,
+    expiresAt: key.expiresAt,
+    status: key.status,
+    scopes: key.scopes,
+    metadata: key.metadata,
+  };
 }
 
 /**
@@ -110,8 +216,8 @@ export class ApiKeyManager {
     // APIキーを構築
     const plainKey = `${API_KEY_PREFIX}_${API_KEY_VERSION}_${randomPart}`;
 
-    // キーをハッシュ化（SHA-256）
-    const hashedKey = crypto.createHash('sha256').update(plainKey).digest('hex');
+    // キーをハッシュ化（HMAC-SHA256 with pepper）
+    const hashedKey = hashApiKeyWithHmac(plainKey);
 
     // プレフィックス（表示用、最初の8文字）
     const keyPrefix = `${API_KEY_PREFIX}_${API_KEY_VERSION}_${randomPart.substring(0, 8)}`;
@@ -137,7 +243,12 @@ export class ApiKeyManager {
   }
 
   /**
-   * APIキーを検証
+   * APIキーを検証（デュアルモード：HMAC優先、レガシーSHA-256フォールバック）
+   *
+   * 検証プロセス:
+   * 1. HMAC-SHA256で検証を試みる（新しいキー）
+   * 2. 失敗した場合、レガシーSHA-256で検証（古いキー）
+   * 3. レガシーで成功した場合、HMAC-SHA256に自動移行
    *
    * @param plainKey 平文のAPIキー
    * @returns 検証結果
@@ -149,32 +260,78 @@ export class ApiKeyManager {
       return { valid: false, reason: 'invalid_format' };
     }
 
-    // キーをハッシュ化
-    const hashedKey = crypto.createHash('sha256').update(plainKey).digest('hex');
+    // 1. HMAC-SHA256で検証を試みる（新しいキー）
+    const hashedKeyHmac = hashApiKeyWithHmac(plainKey);
+    let key = this.keys.get(hashedKeyHmac);
 
-    // データベースから取得（ここではメモリから）
-    const key = this.keys.get(hashedKey);
+    if (key) {
+      // HMAC-SHA256で見つかった（最新のキー）
+      return this.validateKeyStatus(key);
+    }
+
+    // 2. レガシーSHA-256で検証（移行用フォールバック）
+    const hashedKeySha256 = hashApiKeyWithSha256(plainKey);
+    key = this.keys.get(hashedKeySha256);
 
     if (!key) {
       return { valid: false, reason: 'not_found' };
     }
 
+    // レガシーキーが見つかった場合、ステータスを検証
+    const statusResult = this.validateKeyStatus(key);
+
+    if (!statusResult.valid) {
+      return statusResult;
+    }
+
+    // 3. 有効なレガシーキーをHMAC-SHA256に自動移行
+    console.log(
+      `Migrating legacy API key (ID: ${key.id}, prefix: ${key.keyPrefix}) ` +
+        `from SHA-256 to HMAC-SHA256`
+    );
+
+    // 古いエントリを削除
+    this.keys.delete(hashedKeySha256);
+
+    // 新しいハッシュで再保存
+    key.hashedKey = hashedKeyHmac;
+    this.keys.set(hashedKeyHmac, key);
+
+    console.log(
+      `Successfully migrated API key (ID: ${key.id}) to HMAC-SHA256. ` +
+        `Old hash removed from storage.`
+    );
+
+    // hashedKeyを除外した安全なビューを返す
+    return { valid: true, key: sanitizeApiKey(key) };
+  }
+
+  /**
+   * APIキーのステータスを検証（共通ロジック）
+   *
+   * @param key APIキー
+   * @returns 検証結果（hashedKeyを含まない安全なビュー）
+   */
+  private validateKeyStatus(key: ApiKey): ApiKeyValidationResult {
     // ステータスチェック
     if (key.status === 'revoked') {
-      return { valid: false, key, reason: 'revoked' };
+      // hashedKeyを除外した安全なビューを返す
+      return { valid: false, key: sanitizeApiKey(key), reason: 'revoked' };
     }
 
     // 有効期限チェック
     if (key.expiresAt && key.expiresAt <= new Date()) {
       // 期限切れの場合、ステータスを更新
       key.status = 'expired';
-      return { valid: false, key, reason: 'expired' };
+      // hashedKeyを除外した安全なビューを返す
+      return { valid: false, key: sanitizeApiKey(key), reason: 'expired' };
     }
 
     // 最終使用日時を更新
     key.lastUsedAt = new Date();
 
-    return { valid: true, key };
+    // hashedKeyを除外した安全なビューを返す
+    return { valid: true, key: sanitizeApiKey(key) };
   }
 
   /**

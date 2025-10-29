@@ -10,8 +10,8 @@
  * Requirements: 6.3 (Access Control & Role Management)
  */
 
-import type { Permission } from './rbac-manager';
-import { RBACManager } from './rbac-manager';
+import type { Permission } from './rbac-manager.js';
+import { RBACManager } from './rbac-manager.js';
 
 /**
  * Result of permission check

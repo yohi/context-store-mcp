@@ -12,7 +12,7 @@
  */
 
 import { randomUUID } from 'crypto';
-import { AuditLogger } from './audit-logger';
+import { AuditLogger } from './audit-logger.js';
 
 /**
  * Anomaly patterns

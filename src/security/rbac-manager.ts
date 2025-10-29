@@ -217,7 +217,7 @@ export class RBACManager {
     // Check cache first
     const cached = this.cache.get(userId);
     if (cached && cached.expiresAt > new Date()) {
-      return cached.roles;
+      return [...cached.roles]; // Return defensive copy
     }
 
     // Fetch from storage
@@ -226,7 +226,7 @@ export class RBACManager {
     // Update cache
     this.updateCache(userId, roles);
 
-    return roles;
+    return [...roles]; // Return defensive copy
   }
 
   /**
@@ -292,7 +292,7 @@ export class RBACManager {
     const expiresAt = new Date(now.getTime() + this.cacheTTLMs);
 
     this.cache.set(userId, {
-      roles,
+      roles: [...roles], // Store defensive copy
       cachedAt: now,
       expiresAt,
     });
@@ -316,7 +316,10 @@ export class RBACManager {
   getCacheInfo(userId: string): CacheEntry | undefined {
     const cached = this.cache.get(userId);
     if (cached && cached.expiresAt > new Date()) {
-      return cached;
+      return {
+        ...cached,
+        roles: [...cached.roles], // Return defensive copy
+      };
     }
     return undefined;
   }

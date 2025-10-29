@@ -11,7 +11,7 @@
  * Requirements: 6.3 (Access Control & Role Management)
  */
 
-import { RBACManager } from './rbac-manager';
+import { RBACManager } from './rbac-manager.js';
 
 /**
  * Query filter for user-specific data
@@ -95,6 +95,7 @@ export class DataIsolationManager {
 
   /**
    * Generate SQL WHERE clause for user-specific data
+   * @deprecated Use generateParameterizedFilter instead to avoid SQL injection risks
    *
    * @param userId - User ID
    * @returns SQL WHERE clause (empty for admin)
@@ -131,6 +132,7 @@ export class DataIsolationManager {
 
   /**
    * Generate Neo4j Cypher filter for user-specific data
+   * @deprecated Use generateParameterizedCypherFilter instead to avoid injection risks
    *
    * @param userId - User ID
    * @returns Cypher filter string (empty object for admin)

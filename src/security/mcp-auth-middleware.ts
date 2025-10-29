@@ -12,7 +12,7 @@
  */
 
 import crypto from 'crypto';
-import { ApiKeyManager, ApiKey } from './api-key-manager.js';
+import { ApiKeyManager, type ApiKeyView } from './api-key-manager.js';
 
 /**
  * 認証コンテキスト
@@ -20,8 +20,8 @@ import { ApiKeyManager, ApiKey } from './api-key-manager.js';
 export interface AuthContext {
   /** 認証済みかどうか */
   authenticated: boolean;
-  /** APIキー情報 */
-  apiKey?: ApiKey;
+  /** APIキー情報（hashedKeyを含まない安全なビュー） */
+  apiKey?: ApiKeyView;
   /** ユーザーID */
   userId?: string;
   /** セッションID */
@@ -133,7 +133,7 @@ export class McpAuthMiddleware {
     apiKeyManager: ApiKeyManager,
     rateLimitConfig: RateLimitConfig = {
       windowMs: 5 * 60 * 1000, // 5分
-      maxAttempts: 10,
+      maxAttempts: 3,
       blockDurationMs: 15 * 60 * 1000, // 15分
     }
   ) {
