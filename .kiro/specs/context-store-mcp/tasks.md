@@ -295,14 +295,18 @@
     - alert-manager.test.ts: 16テスト
   - _Requirements: 6.5, 6.6_
 
-- [ ] 8.4 GDPR準拠の完全削除機能
-  - 段階的削除ワークフローの実装
-  - 論理削除から物理削除への自動移行
-  - バックアップからの削除
-  - 削除証明書の発行
-  - 削除検証メカニズム
-  - 監査メカニズムと整合性チェック
+- [x] 8.4 GDPR準拠の完全削除機能
+  - DeletionManager実装（`src/security/deletion-manager.ts`）
+  - 段階的削除ワークフロー（Phase 1: Soft Delete + Key Destruction, Phase 2: Background Purge, Phase 3: Backup Deletion）
+  - 削除証明書（DeletionReceipt）の発行機能
+  - 削除検証メカニズム（verifyDeletion）
+  - 監査ログエクスポート（JSON/CSV）
+  - 孤立削除検出（detectOrphanedDeletions）
+  - 削除メトリクス（getDeletionMetrics）
+  - 指数バックオフによる再試行ポリシー（最大3回）
+  - 24ユニットテスト全パス
   - _Requirements: 6.4_
+  - **注意**: 本実装はインメモリストレージアダプター使用。PostgreSQL/Neo4j統合は後続タスクで実施
 
 ## ハイブリッドストレージ一貫性
 
