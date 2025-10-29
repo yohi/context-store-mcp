@@ -9,7 +9,7 @@
  * Phase 4: Backup Deletion (バックアップからの削除、非同期)
  */
 
-import { createHash } from 'crypto';
+import { createHmac } from 'crypto';
 
 // 型定義: MemoryId
 export type MemoryId = string;
@@ -587,8 +587,8 @@ export class DeletionManager {
 
   private generateSignature(memoryId: MemoryId, data: any): string {
     const payload = JSON.stringify({ memoryId, ...data });
-    return createHash('sha256')
-      .update(payload + this.signatureSecret)
+    return createHmac('sha256', this.signatureSecret)
+      .update(payload)
       .digest('hex');
   }
 }
