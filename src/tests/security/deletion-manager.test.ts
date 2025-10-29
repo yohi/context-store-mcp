@@ -63,12 +63,12 @@ class MockKeyManagementService implements KeyManagementService {
 
 // モックジョブキュー
 class MockJobQueue implements JobQueue {
-  private jobs = new Map<string, string>();
+  private jobs = new Map<string, { memoryId: string; delay: number | undefined }>();
   private jobCounter = 0;
 
   async schedulePurge(memoryId: string, delay?: number): Promise<string> {
     const jobId = `job_${++this.jobCounter}`;
-    this.jobs.set(jobId, memoryId);
+    this.jobs.set(jobId, { memoryId, delay });
     return jobId;
   }
 
@@ -77,7 +77,11 @@ class MockJobQueue implements JobQueue {
   }
 
   getMemoryId(jobId: string): string | undefined {
-    return this.jobs.get(jobId);
+    return this.jobs.get(jobId)?.memoryId;
+  }
+
+  getDelay(jobId: string): number | undefined {
+    return this.jobs.get(jobId)?.delay;
   }
 }
 
@@ -157,6 +161,8 @@ describe('DeletionManager', () => {
       expect(result.purgeJobId).toBeDefined();
       expect(jobQueue.hasJob(result.purgeJobId!)).toBe(true);
       expect(jobQueue.getMemoryId(result.purgeJobId!)).toBe(memoryId);
+      // 5分後の遅延が設定されていることを確認
+      expect(jobQueue.getDelay(result.purgeJobId!)).toBe(5 * 60 * 1000);
     });
 
     it('should continue deletion even if key destruction fails', async () => {
