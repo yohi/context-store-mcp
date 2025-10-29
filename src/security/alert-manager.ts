@@ -372,12 +372,15 @@ export class AlertManager {
    *
    * Uses SHA-256 one-way hash and truncates to 12 characters for brevity
    * while maintaining uniqueness for correlation purposes.
+   * If userId is undefined or empty, returns a deterministic placeholder.
    *
-   * @param userId - User ID to hash
-   * @returns Truncated hash in format "user_xxxxx"
+   * @param userId - User ID to hash (can be undefined)
+   * @returns Truncated hash in format "user_xxxxx" or "user_<missing>" for undefined/empty
    */
-  private hashUserId(userId: string): string {
-    const hash = createHash('sha256').update(userId).digest('hex');
+  private hashUserId(userId: string | undefined): string {
+    // Treat undefined or empty string as a deterministic placeholder
+    const id = userId ?? '<missing>';
+    const hash = createHash('sha256').update(id).digest('hex');
     return `user_${hash.substring(0, 12)}`;
   }
 

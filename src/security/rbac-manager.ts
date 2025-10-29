@@ -146,6 +146,9 @@ export class RBACManager {
   /**
    * Delete a custom role
    *
+   * Removes the role definition and cleans up all user assignments and cache entries
+   * to prevent orphaned role references.
+   *
    * @param name - Role name
    * @throws Error if role is a default role or does not exist
    */
@@ -159,6 +162,28 @@ export class RBACManager {
       throw new Error('Cannot delete default role');
     }
 
+    // Clean up user role assignments
+    const affectedUserIds: string[] = [];
+    for (const [userId, roles] of this.userRoles.entries()) {
+      const index = roles.indexOf(name);
+      if (index !== -1) {
+        // Remove the deleted role from this user's roles
+        roles.splice(index, 1);
+        affectedUserIds.push(userId);
+
+        // If user has no roles left, remove the entry
+        if (roles.length === 0) {
+          this.userRoles.delete(userId);
+        }
+      }
+    }
+
+    // Invalidate cache for all affected users
+    for (const userId of affectedUserIds) {
+      this.invalidateCache(userId);
+    }
+
+    // Finally, delete the role definition
     this.roles.delete(name);
   }
 

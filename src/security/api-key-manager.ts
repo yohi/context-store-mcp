@@ -351,12 +351,30 @@ export class ApiKeyManager {
   }
 
   /**
-   * ユーザーの全APIキーを取得
+   * ユーザーの全APIキーを取得（公開ビュー、hashedKeyを含まない）
+   *
+   * hashedKeyは内部管理用のみであり、外部に公開すべきではありません。
+   * このメソッドは安全なApiKeyViewを返します。
    *
    * @param userId ユーザーID（メタデータに保存されている想定）
-   * @returns APIキーのリスト
+   * @returns APIキーのリスト（hashedKeyを含まない安全なビュー）
    */
-  listApiKeys(userId?: string): ApiKey[] {
+  listApiKeys(userId?: string): ApiKeyView[] {
+    const rawKeys = this.listRawApiKeys(userId);
+    return rawKeys.map((key) => sanitizeApiKey(key));
+  }
+
+  /**
+   * ユーザーの全APIキーを取得（内部使用のみ、hashedKeyを含む）
+   *
+   * このメソッドは内部管理用であり、外部に公開すべきではありません。
+   * 生のApiKeyオブジェクトが必要な内部処理でのみ使用してください。
+   *
+   * @param userId ユーザーID（メタデータに保存されている想定）
+   * @returns APIキーのリスト（hashedKeyを含む内部ビュー）
+   * @private
+   */
+  private listRawApiKeys(userId?: string): ApiKey[] {
     const result: ApiKey[] = [];
 
     for (const key of this.keys.values()) {
