@@ -204,11 +204,12 @@ export class PostgresApiKeyStoreAdapter implements IApiKeyStoreAdapter {
           key_prefix = $2,
           hashed_key = $3,
           name = $4,
-          last_used_at = $5,
-          expires_at = $6,
-          status = $7,
-          scopes = $8,
-          metadata = $9
+          user_id = $5,
+          last_used_at = $6,
+          expires_at = $7,
+          status = $8,
+          scopes = $9,
+          metadata = $10
         WHERE id = $1
       `;
 
@@ -217,6 +218,7 @@ export class PostgresApiKeyStoreAdapter implements IApiKeyStoreAdapter {
         key.keyPrefix,
         key.hashedKey,
         key.name,
+        key.metadata?.userId ?? null,
         key.lastUsedAt ?? null,
         key.expiresAt ?? null,
         key.status,
