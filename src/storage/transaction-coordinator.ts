@@ -27,6 +27,34 @@ export interface MemoryEntity {
 }
 
 /**
+ * Logger interface for structured logging
+ */
+export interface Logger {
+  warn(message: string, context?: Record<string, unknown>): void;
+  error(message: string, context?: Record<string, unknown>): void;
+  info(message: string, context?: Record<string, unknown>): void;
+  debug(message: string, context?: Record<string, unknown>): void;
+}
+
+/**
+ * Default console-based logger implementation
+ */
+const defaultLogger: Logger = {
+  warn: (message: string, context?: Record<string, unknown>) => {
+    console.warn(message, context ? JSON.stringify(context) : '');
+  },
+  error: (message: string, context?: Record<string, unknown>) => {
+    console.error(message, context ? JSON.stringify(context) : '');
+  },
+  info: (message: string, context?: Record<string, unknown>) => {
+    console.info(message, context ? JSON.stringify(context) : '');
+  },
+  debug: (message: string, context?: Record<string, unknown>) => {
+    console.debug(message, context ? JSON.stringify(context) : '');
+  },
+};
+
+/**
  * Transaction Coordinator Configuration
  */
 export interface TransactionCoordinatorConfig {
@@ -34,6 +62,8 @@ export interface TransactionCoordinatorConfig {
   postgresPool: Pool;
   /** Neo4j driver */
   neo4jDriver: Driver;
+  /** Logger instance for structured logging (default: console-based logger) */
+  logger?: Logger;
   /** Maximum number of retry attempts (default: 3) */
   maxRetries?: number;
   /** Initial delay in milliseconds for retry backoff (default: 100ms) */
@@ -45,20 +75,40 @@ export interface TransactionCoordinatorConfig {
 }
 
 /**
- * Transaction Result
+ * Transaction Result - Discriminated Union
+ *
+ * - 'ok': Complete success (both PostgreSQL and Neo4j succeeded)
+ * - 'partial': Partial success (PostgreSQL succeeded, Neo4j failed or warning)
+ * - 'failed': Complete failure (PostgreSQL failed or critical error)
  */
-export interface TransactionResult {
-  /** Whether the transaction succeeded */
-  success: boolean;
-  /** Memory ID if operation succeeded */
-  memoryId?: MemoryId;
-  /** Error information if operation failed */
-  error?: {
-    type: 'POSTGRESQL_ERROR' | 'NEO4J_ERROR' | 'SYNC_FAILURE';
-    message: string;
-    requiresCompensation?: boolean;
-  };
-}
+export type TransactionResult =
+  | {
+      /** Success status */
+      status: 'ok';
+      /** Memory ID for successful operation */
+      memoryId: MemoryId;
+    }
+  | {
+      /** Partial success status */
+      status: 'partial';
+      /** Memory ID for partially successful operation */
+      memoryId: MemoryId;
+      /** Warning information for partial success */
+      warning: {
+        type: 'SYNC_FAILURE';
+        message: string;
+      };
+    }
+  | {
+      /** Failure status */
+      status: 'failed';
+      /** Error information for failed operation */
+      error: {
+        type: 'POSTGRESQL_ERROR' | 'NEO4J_ERROR' | 'SYNC_FAILURE';
+        message: string;
+        requiresCompensation?: boolean;
+      };
+    };
 
 /**
  * Transaction Coordinator
@@ -73,6 +123,7 @@ export class TransactionCoordinator {
     this.config = {
       postgresPool: config.postgresPool,
       neo4jDriver: config.neo4jDriver,
+      logger: config.logger ?? defaultLogger,
       maxRetries: config.maxRetries ?? 3,
       initialDelayMs: config.initialDelayMs ?? 100,
       maxDelayMs: config.maxDelayMs ?? 400,
@@ -106,7 +157,7 @@ export class TransactionCoordinator {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       return {
-        success: false,
+        status: 'failed',
         error: {
           type: 'POSTGRESQL_ERROR',
           message: `PostgreSQL insertion failed after retries: ${errorMessage}`,
@@ -127,8 +178,7 @@ export class TransactionCoordinator {
           } catch (markError) {
             // 同期失敗マークにも失敗した場合は致命的エラーとして返す
             return {
-              success: false,
-              memoryId: memory.id,
+              status: 'failed',
               error: {
                 type: 'POSTGRESQL_ERROR',
                 message: `Failed to mark sync failure after Neo4j error: ${
@@ -140,9 +190,9 @@ export class TransactionCoordinator {
           }
 
           return {
-            success: true, // PostgreSQL成功なので全体は成功
+            status: 'partial', // PostgreSQL成功、Neo4j失敗 = 部分成功
             memoryId: memory.id,
-            error: {
+            warning: {
               type: 'SYNC_FAILURE',
               message: `Neo4j node creation failed: ${neoResult.error}. Marked for background retry.`,
             },
@@ -152,7 +202,7 @@ export class TransactionCoordinator {
     }
 
     return {
-      success: true,
+      status: 'ok',
       memoryId: memory.id,
     };
   }
@@ -184,7 +234,7 @@ export class TransactionCoordinator {
 
     if (!pgResult.success) {
       return {
-        success: false,
+        status: 'failed',
         error: {
           type: 'POSTGRESQL_ERROR',
           message: `PostgreSQL deletion failed: ${pgResult.error}`,
@@ -196,9 +246,9 @@ export class TransactionCoordinator {
     // Neo4j削除失敗があった場合は警告を返す
     if (syncFailure) {
       return {
-        success: true,
+        status: 'partial',
         memoryId,
-        error: {
+        warning: {
           type: 'SYNC_FAILURE',
           message: `Neo4j node deletion failed: ${syncFailure}. Orphan node will be cleaned later.`,
         },
@@ -206,7 +256,7 @@ export class TransactionCoordinator {
     }
 
     return {
-      success: true,
+      status: 'ok',
       memoryId,
     };
   }
@@ -237,7 +287,8 @@ export class TransactionCoordinator {
       session = this.config.neo4jDriver.session();
       await session.run(
         `MERGE (m:Memory {id: $id})
-         SET m.type = $type, m.created_at = datetime()`,
+         ON CREATE SET m.created_at = datetime()
+         SET m.type = $type`,
         {
           id: memory.id,
           type: memory.memoryType,
@@ -309,7 +360,7 @@ export class TransactionCoordinator {
         [memoryId]
       );
       // TODO: Insert into sync_failures table for tracking
-      console.warn(`Sync failure marked for memory ${memoryId}: ${reason}`);
+      this.config.logger.warn('Sync failure marked for memory', { memoryId, reason });
     } catch (error) {
       // 同期失敗マークに失敗した場合、エラーを呼び出し側へ伝播
       throw error instanceof Error ? error : new Error(String(error));

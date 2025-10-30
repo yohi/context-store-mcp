@@ -76,7 +76,7 @@ describe('TransactionCoordinator - Task 9.1: Saga Pattern', () => {
       const result = await coordinator.storeMemoryWithSaga(memory);
 
       // Assert
-      expect(result.success).toBe(true);
+      expect(result.status).toBe('ok');
       expect(result.memoryId).toBe(memory.id);
       expect(mockPgPool.query).toHaveBeenCalledTimes(1);
       expect(mockSession.run).toHaveBeenCalledTimes(1);
@@ -98,9 +98,11 @@ describe('TransactionCoordinator - Task 9.1: Saga Pattern', () => {
       const result = await coordinator.storeMemoryWithSaga(memory);
 
       // Assert
-      expect(result.success).toBe(false);
-      expect(result.error?.type).toBe('POSTGRESQL_ERROR');
-      expect(result.error?.message).toContain('PG connection failed');
+      expect(result.status).toBe('failed');
+      if (result.status === 'failed') {
+        expect(result.error.type).toBe('POSTGRESQL_ERROR');
+        expect(result.error.message).toContain('PG connection failed');
+      }
       // Neo4jは呼ばれないはず
       expect(mockNeo4jDriver.session).not.toHaveBeenCalled();
     });
@@ -143,10 +145,12 @@ describe('TransactionCoordinator - Task 9.1: Saga Pattern', () => {
       const result = await coordinator.storeMemoryWithSaga(memory);
 
       // Assert
-      expect(result.success).toBe(true); // PostgreSQL成功なので全体は成功
+      expect(result.status).toBe('partial'); // PostgreSQL成功、Neo4j失敗 = 部分成功
       expect(result.memoryId).toBe(memory.id);
-      expect(result.error?.type).toBe('SYNC_FAILURE');
-      expect(result.error?.message).toContain('Neo4j');
+      if (result.status === 'partial') {
+        expect(result.warning.type).toBe('SYNC_FAILURE');
+        expect(result.warning.message).toContain('Neo4j');
+      }
       // sync_status = 'pending_graph' への更新が呼ばれたか確認
       expect(mockPgPool.query).toHaveBeenCalledTimes(2);
     });
@@ -178,13 +182,13 @@ describe('TransactionCoordinator - Task 9.1: Saga Pattern', () => {
 
       // Act - 1回目
       const result1 = await coordinator.storeMemoryWithSaga(memory);
-      expect(result1.success).toBe(true);
+      expect(result1.status).toBe('ok');
 
       // Act - 2回目（同じIDで再実行）
       const result2 = await coordinator.storeMemoryWithSaga(memory);
 
       // Assert - べき等性: 2回目も成功とみなす（すでに存在するため）
-      expect(result2.success).toBe(true);
+      expect(result2.status).toBe('ok');
       expect(result2.memoryId).toBe(memory.id);
     });
   });
@@ -214,7 +218,7 @@ describe('TransactionCoordinator - Task 9.1: Saga Pattern', () => {
       const result = await coordinator.deleteMemoryWithSaga(memoryId);
 
       // Assert
-      expect(result.success).toBe(true);
+      expect(result.status).toBe('ok');
       expect(mockSession.run).toHaveBeenCalledTimes(1);
       expect(mockPgPool.query).toHaveBeenCalledTimes(1);
     });
@@ -242,10 +246,12 @@ describe('TransactionCoordinator - Task 9.1: Saga Pattern', () => {
       // Act
       const result = await coordinator.deleteMemoryWithSaga(memoryId);
 
-      // Assert - PostgreSQLでの削除が成功していれば、操作は成功とみなす
-      expect(result.success).toBe(true);
-      expect(result.error?.type).toBe('SYNC_FAILURE');
-      expect(result.error?.message).toContain('Neo4j');
+      // Assert - PostgreSQLでの削除が成功していれば、操作は部分成功とみなす
+      expect(result.status).toBe('partial');
+      if (result.status === 'partial') {
+        expect(result.warning.type).toBe('SYNC_FAILURE');
+        expect(result.warning.message).toContain('Neo4j');
+      }
     });
 
     it('should rollback if PostgreSQL deletion fails', async () => {
@@ -268,9 +274,11 @@ describe('TransactionCoordinator - Task 9.1: Saga Pattern', () => {
       const result = await coordinator.deleteMemoryWithSaga(memoryId);
 
       // Assert - 致命的エラー
-      expect(result.success).toBe(false);
-      expect(result.error?.type).toBe('POSTGRESQL_ERROR');
-      expect(result.error?.requiresCompensation).toBe(true);
+      expect(result.status).toBe('failed');
+      if (result.status === 'failed') {
+        expect(result.error.type).toBe('POSTGRESQL_ERROR');
+        expect(result.error.requiresCompensation).toBe(true);
+      }
     });
   });
 
@@ -309,7 +317,7 @@ describe('TransactionCoordinator - Task 9.1: Saga Pattern', () => {
       const result = await coordinator.storeMemoryWithSaga(memory);
 
         // Assert
-        expect(result.success).toBe(true);
+        expect(result.status).toBe('ok');
         // 2回のリトライ + 1回の成功 = 合計3回呼ばれる
         expect(mockPgPool.query).toHaveBeenCalledTimes(3);
       },
@@ -334,8 +342,10 @@ describe('TransactionCoordinator - Task 9.1: Saga Pattern', () => {
       const result = await coordinator.storeMemoryWithSaga(memory);
 
         // Assert
-        expect(result.success).toBe(false);
-        expect(result.error?.type).toBe('POSTGRESQL_ERROR');
+        expect(result.status).toBe('failed');
+        if (result.status === 'failed') {
+          expect(result.error.type).toBe('POSTGRESQL_ERROR');
+        }
         // maxRetries=3なので、合計3回試行される
         expect(mockPgPool.query).toHaveBeenCalledTimes(3);
       },
