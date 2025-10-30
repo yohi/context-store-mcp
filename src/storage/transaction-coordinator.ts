@@ -170,8 +170,9 @@ export class TransactionCoordinator {
       const neoResult = await this.createNeo4jNode(memory);
 
       if (!neoResult.success) {
-        // Neo4j失敗時の補償トランザクション: 新規挿入の場合のみ sync_status マーキング
-        // 理由: 既存レコードは既に同期済みの可能性があり、ステータスを上書きしない
+        // Neo4j失敗時の補償トランザクション
+        // 新規挿入の場合のみ sync_status をマーキング
+        // 既存レコードの場合は警告のみ（既存の sync_status を保持）
         if (wasInserted) {
           try {
             await this.markSyncFailure(memory.id, 'neo4j_creation_failed');
@@ -188,16 +189,19 @@ export class TransactionCoordinator {
               },
             };
           }
-
-          return {
-            status: 'partial', // PostgreSQL成功、Neo4j失敗 = 部分成功
-            memoryId: memory.id,
-            warning: {
-              type: 'SYNC_FAILURE',
-              message: `Neo4j node creation failed: ${neoResult.error}. Marked for background retry.`,
-            },
-          };
         }
+
+        // wasInserted に関係なく、Neo4j 失敗は部分成功として返す
+        return {
+          status: 'partial', // PostgreSQL成功、Neo4j失敗 = 部分成功
+          memoryId: memory.id,
+          warning: {
+            type: 'SYNC_FAILURE',
+            message: `Neo4j node creation failed: ${neoResult.error}${
+              wasInserted ? '. Marked for background retry.' : '. Existing record remains out of sync.'
+            }`,
+          },
+        };
       }
     }
 
