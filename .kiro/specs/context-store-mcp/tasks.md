@@ -216,40 +216,97 @@
 ## セキュリティとアクセス制御
 
 - [ ] 8. セキュリティ機能とデータ保護の実装
-- [ ] 8.1 認証と暗号化の実装
-  - MCP標準認証メカニズム
-  - APIキー管理と検証
-  - データ保存時暗号化
-  - 通信暗号化の設定
-  - 暗号化キー管理システム
-  - キーローテーション機能
+- [x] 8.1 認証と暗号化の実装
+  - AES-256-GCM暗号化モジュール実装（`src/security/encryption.ts`）
+  - エンベロープ暗号化パターン（DEK + CMK）
+  - ローカル開発用MasterKeyProvider実装
+  - APIキー管理システム（`src/security/api-key-manager.ts`）
+    - セキュアなAPIキー生成（csm_v1形式、Base62エンコード）
+    - SHA-256ハッシュ化による保存
+    - TTL管理と有効期限チェック
+    - キーの無効化（revoke）とローテーション機能
+  - MCP認証ミドルウェア（`src/security/mcp-auth-middleware.ts`）
+    - Bearer Token / X-API-Key ヘッダー対応
+    - レート制限（5分間に3回失敗で15分間ブロック）
+    - 権限スコープチェック
+    - 監査ログ生成機能
+  - キーローテーション管理（KeyRotationManager）
+    - DEKローテーション自動判定（90%経過時）
+    - データ再暗号化機能
+  - 66ユニットテスト全パス
+    - encryption.test.ts: 24テスト
+    - api-key-manager.test.ts: 26テスト
+    - mcp-auth-middleware.test.ts: 16テスト
   - _Requirements: 6.1, 6.2_
+  - **注意**: 本番環境ではAWS KMSまたはHashiCorp Vaultを使用すること
 
-- [ ] 8.2 アクセス制御とロール管理
-  - ロールベースアクセス制御の実装
-  - 最小権限の原則の適用
-  - ユーザー別データ分離
-  - 権限検証ミドルウェア
-  - アクセス権限の管理
+- [x] 8.2 アクセス制御とロール管理
+  - RBACManager実装（`src/security/rbac-manager.ts`）
+    - デフォルトロール定義（admin, user, read_only）
+    - カスタムロール作成・削除機能
+    - ユーザー-ロール割り当て管理
+    - 権限チェック機能（hasPermission, getAllPermissions）
+    - 5分間のキャッシュTTL（設定可能）
+    - 最小権限の原則（デフォルトはread_only）
+  - PermissionMiddleware実装（`src/security/permission-middleware.ts`）
+    - 単一権限チェック（requirePermission）
+    - 複数権限チェック（requireAnyPermission, requireAllPermissions）
+    - MCPツール別権限マッピング（store_memory, search_memory, update_memory, delete_memory）
+    - 構造化されたPermissionError生成
+  - DataIsolationManager実装（`src/security/data-isolation.ts`）
+    - ユーザー別クエリフィルタ生成（PostgreSQL WHERE句、Neo4j Cypherフィルタ）
+    - パラメータ化クエリ対応（SQLインジェクション対策）
+    - データ所有権検証（validateOwnership）
+    - Admin権限での全データアクセス
+  - 54ユニットテスト全パス
+    - rbac-manager.test.ts: 23テスト
+    - permission-middleware.test.ts: 14テスト
+    - data-isolation.test.ts: 17テスト
   - _Requirements: 6.3_
 
-- [ ] 8.3 監査ログと追跡システム
-  - アクセスログの記録
-  - 監査証跡の永続化
-  - 改ざん防止ログの実装
-  - セキュリティイベント検出
-  - アラート通知機能
-  - ログ検索と分析機能
+- [x] 8.3 監査ログと追跡システム
+  - AuditLogger実装（`src/security/audit-logger.ts`）
+    - HMAC-SHA256による改ざん防止デジタル署名
+    - 必須フィールド完全実装（timestamp, event_type, user_id, session_id, ip_address, resource_id, action, result, metadata）
+    - 検索/クエリ機能（ユーザーID、イベントタイプ、時間範囲、リソースID）
+    - ページネーション対応（limit, offset）
+    - アクセス履歴追跡（getAccessHistory）
+    - ログ保持期間管理（purgeOldLogs）
+    - エクスポート機能（JSON, CSV）
+    - 21ユニットテスト全パス
+  - SecurityEventDetector実装（`src/security/security-event-detector.ts`）
+    - 異常検出パターン実装（excessive_data_access, unknown_ip_access, bulk_export_attempt, auth_failure_spike）
+    - 閾値ベース検出（100件以上、1000件以上、50回以上）
+    - ベースライン比較（通常の10倍以上）
+    - 脅威レベル分類（warning, important, critical）
+    - 既知IPアドレス管理
+    - ユーザーベースライン設定
+    - 16ユニットテスト全パス
+  - AlertManager実装（`src/security/alert-manager.ts`）
+    - マルチチャネル通知（log, email, sms, pagerDuty）
+    - 脅威レベル別通知戦略
+    - 自動応答アクション（セッション停止、IPブロック）
+    - アラート履歴管理と検索
+    - ダッシュボードリンク生成
+    - 16ユニットテスト全パス
+  - 53ユニットテスト全パス（既存120テストと合わせて173テスト）
+    - audit-logger.test.ts: 21テスト
+    - security-event-detector.test.ts: 16テスト
+    - alert-manager.test.ts: 16テスト
   - _Requirements: 6.5, 6.6_
 
-- [ ] 8.4 GDPR準拠の完全削除機能
-  - 段階的削除ワークフローの実装
-  - 論理削除から物理削除への自動移行
-  - バックアップからの削除
-  - 削除証明書の発行
-  - 削除検証メカニズム
-  - 監査メカニズムと整合性チェック
+- [x] 8.4 GDPR準拠の完全削除機能
+  - DeletionManager実装（`src/security/deletion-manager.ts`）
+  - 段階的削除ワークフロー（Phase 1: Soft Delete + Key Destruction, Phase 2: Background Purge, Phase 3: Backup Deletion）
+  - 削除証明書（DeletionReceipt）の発行機能
+  - 削除検証メカニズム（verifyDeletion）
+  - 監査ログエクスポート（JSON/CSV）
+  - 孤立削除検出（detectOrphanedDeletions）
+  - 削除メトリクス（getDeletionMetrics）
+  - 指数バックオフによる再試行ポリシー（最大3回）
+  - 24ユニットテスト全パス
   - _Requirements: 6.4_
+  - **注意**: 本実装はインメモリストレージアダプター使用。PostgreSQL/Neo4j統合は後続タスクで実施
 
 ## ハイブリッドストレージ一貫性
 
