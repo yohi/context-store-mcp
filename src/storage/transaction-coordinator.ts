@@ -91,12 +91,17 @@ export class TransactionCoordinator {
    * 部分失敗時の動作:
    * - PG成功 + Neo4j失敗 → sync_status = 'pending_graph' でマーク、バックグラウンド再試行
    * - PG失敗 → 全体ロールバック（Neo4j操作なし）
+   *
+   * べき等性の保証:
+   * - ON CONFLICT DO NOTHING を使用し、既存レコードは更新しない
+   * - 新規挿入時のみ sync_status をマークする（既存レコードは保護）
    */
   async storeMemoryWithSaga(memory: MemoryEntity): Promise<TransactionResult> {
     // Step 1: PostgreSQL に保存（リトライ付き）
+    let wasInserted = false;
     try {
       await this.retryWithBackoff(async () => {
-        await this.insertIntoPostgreSQLOrThrow(memory);
+        wasInserted = (await this.insertIntoPostgreSQLOrThrow(memory)) > 0;
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -114,32 +119,35 @@ export class TransactionCoordinator {
       const neoResult = await this.createNeo4jNode(memory);
 
       if (!neoResult.success) {
-        // Neo4j失敗時の補償トランザクション: sync_status マーキング
-        try {
-          await this.markSyncFailure(memory.id, 'neo4j_creation_failed');
-        } catch (markError) {
-          // 同期失敗マークにも失敗した場合は致命的エラーとして返す
+        // Neo4j失敗時の補償トランザクション: 新規挿入の場合のみ sync_status マーキング
+        // 理由: 既存レコードは既に同期済みの可能性があり、ステータスを上書きしない
+        if (wasInserted) {
+          try {
+            await this.markSyncFailure(memory.id, 'neo4j_creation_failed');
+          } catch (markError) {
+            // 同期失敗マークにも失敗した場合は致命的エラーとして返す
+            return {
+              success: false,
+              memoryId: memory.id,
+              error: {
+                type: 'POSTGRESQL_ERROR',
+                message: `Failed to mark sync failure after Neo4j error: ${
+                  markError instanceof Error ? markError.message : String(markError)
+                }`,
+                requiresCompensation: true,
+              },
+            };
+          }
+
           return {
-            success: false,
+            success: true, // PostgreSQL成功なので全体は成功
             memoryId: memory.id,
             error: {
-              type: 'POSTGRESQL_ERROR',
-              message: `Failed to mark sync failure after Neo4j error: ${
-                markError instanceof Error ? markError.message : String(markError)
-              }`,
-              requiresCompensation: true,
+              type: 'SYNC_FAILURE',
+              message: `Neo4j node creation failed: ${neoResult.error}. Marked for background retry.`,
             },
           };
         }
-
-        return {
-          success: true, // PostgreSQL成功なので全体は成功
-          memoryId: memory.id,
-          error: {
-            type: 'SYNC_FAILURE',
-            message: `Neo4j node creation failed: ${neoResult.error}. Marked for background retry.`,
-          },
-        };
       }
     }
 
@@ -205,15 +213,17 @@ export class TransactionCoordinator {
 
   /**
    * Insert memory into PostgreSQL
+   * @returns Number of rows inserted (0 if conflict, 1 if new insert)
    * @throws Error if insertion fails (for retry mechanism)
    */
-  private async insertIntoPostgreSQLOrThrow(memory: MemoryEntity): Promise<void> {
-    await this.config.postgresPool.query(
+  private async insertIntoPostgreSQLOrThrow(memory: MemoryEntity): Promise<number> {
+    const result = await this.config.postgresPool.query(
       `INSERT INTO memories (id, content, memory_type, metadata, created_at, updated_at, sync_status)
        VALUES ($1, $2, $3, $4, NOW(), NOW(), 'synced')
        ON CONFLICT (id) DO NOTHING`, // べき等性: 既存の場合は何もしない
       [memory.id, memory.content, memory.memoryType, JSON.stringify(memory.metadata)]
     );
+    return result.rowCount ?? 0;
   }
 
   /**
@@ -286,11 +296,16 @@ export class TransactionCoordinator {
   /**
    * Mark Sync Failure for background retry
    * @throws Error if marking sync failure fails (caller must handle)
+   *
+   * べき等性の保証:
+   * - 既に 'synced' のレコードは更新しない（競合状態を回避）
+   * - 新規挿入直後のみ 'pending_graph' に更新される
    */
   private async markSyncFailure(memoryId: MemoryId, reason: string): Promise<void> {
     try {
       await this.config.postgresPool.query(
-        `UPDATE memories SET sync_status = 'pending_graph' WHERE id = $1`,
+        `UPDATE memories SET sync_status = 'pending_graph'
+         WHERE id = $1 AND sync_status != 'synced'`,
         [memoryId]
       );
       // TODO: Insert into sync_failures table for tracking
