@@ -337,7 +337,7 @@ describe('FailoverManager - Task 9.2: Failover and Error Recovery', () => {
       vi.mocked(mockPgPool.query).mockResolvedValue({ rows: [], command: 'SELECT', rowCount: 0, oid: 0, fields: [] });
       vi.mocked(mockNeo4jDriver.verifyConnectivity).mockResolvedValue(undefined);
 
-      // Act: 250ms待機（2回のヘルスチェックが実行される）
+      // Act: 250ms待機(2回のヘルスチェックが実行される)
       await new Promise((resolve) => setTimeout(resolve, 250));
 
       // Assert
