@@ -131,6 +131,9 @@ export class CircuitBreaker {
       this.recentResults.shift();
     }
 
+    // 成功時は連続失敗カウントをリセット
+    this.failureCount = 0;
+
     if (this.state === CircuitState.HALF_OPEN) {
       this.successCount++;
       if (this.successCount >= this.config.successThreshold) {
@@ -166,7 +169,12 @@ export class CircuitBreaker {
    * Check if circuit should open
    */
   private shouldOpen(): boolean {
-    // 最低でもwindowSize分のリクエストが必要
+    // 即座の連続障害検出: failureThreshold以上の連続失敗でサーキットを開く
+    if (this.failureCount >= this.config.failureThreshold) {
+      return true;
+    }
+
+    // ウィンドウベースの障害率検出: ウィンドウが満たされた場合のみ
     if (this.recentResults.length < this.config.windowSize) {
       return false;
     }
