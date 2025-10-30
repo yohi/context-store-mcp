@@ -155,9 +155,9 @@ describe('ApiKeyManager', () => {
 
   describe('listApiKeys', () => {
     it('should list all API keys when no userId is provided', async () => {
-      manager.generateApiKey('key-1');
-      manager.generateApiKey('key-2');
-      manager.generateApiKey('key-3');
+      await manager.generateApiKey('key-1');
+      await manager.generateApiKey('key-2');
+      await manager.generateApiKey('key-3');
 
       const keys = await manager.listApiKeys();
 
@@ -181,7 +181,7 @@ describe('ApiKeyManager', () => {
     });
 
     it('should return empty array when no keys match userId', async () => {
-      manager.generateApiKey('key');
+      await manager.generateApiKey('key');
 
       const keys = await manager.listApiKeys('non-existent-user');
 
@@ -221,7 +221,7 @@ describe('ApiKeyManager', () => {
     });
 
     it('should not affect active keys', async () => {
-      manager.generateApiKey('active-key');
+      await manager.generateApiKey('active-key');
 
       const count = await manager.cleanupExpiredKeys();
 
@@ -275,15 +275,15 @@ describe('ApiKeyManager', () => {
 
   describe('getStatistics', () => {
     it('should return correct statistics', async () => {
-      manager.generateApiKey('active-1');
-      manager.generateApiKey('active-2');
+      await manager.generateApiKey('active-1');
+      await manager.generateApiKey('active-2');
 
       const { key: revokedKey } = await manager.generateApiKey('revoked');
-      manager.revokeApiKey(revokedKey.id);
+      await manager.revokeApiKey(revokedKey.id);
 
-      manager.generateApiKey('expired', ['read'], 100);
+      await manager.generateApiKey('expired', ['read'], 100);
       await new Promise((resolve) => setTimeout(resolve, 150));
-      manager.cleanupExpiredKeys(); // 期限切れステータスに更新
+      await manager.cleanupExpiredKeys(); // 期限切れステータスに更新
 
       const stats = await manager.getStatistics();
 
@@ -305,8 +305,8 @@ describe('ApiKeyManager', () => {
 
   describe('clearAll', () => {
     it('should clear all API keys', async () => {
-      manager.generateApiKey('key-1');
-      manager.generateApiKey('key-2');
+      await manager.generateApiKey('key-1');
+      await manager.generateApiKey('key-2');
 
       store.clear();
 
