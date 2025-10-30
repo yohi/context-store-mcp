@@ -242,35 +242,45 @@ export class FailoverManager {
     }
 
     // Neo4j にノードを作成（procedural memory の場合）
-    if (memory.memoryType === 'procedural' && this.mode === OperationMode.NORMAL) {
-      let session: Session | null = null;
-      try {
-        session = this.config.neo4jDriver.session();
-        await this.neo4jCircuitBreaker.execute(async () => {
-          await session!.run('MERGE (m:Memory {id: $id}) SET m.type = $type, m.created_at = datetime()', {
-            id: memory.id,
-            type: memory.memoryType,
+    if (memory.memoryType === 'procedural') {
+      if (this.mode === OperationMode.NORMAL) {
+        let session: Session | null = null;
+        try {
+          session = this.config.neo4jDriver.session();
+          await this.neo4jCircuitBreaker.execute(async () => {
+            await session!.run('MERGE (m:Memory {id: $id}) SET m.type = $type, m.created_at = datetime()', {
+              id: memory.id,
+              type: memory.memoryType,
+            });
           });
-        });
 
-        return {
-          success: true,
-          memoryId: memory.id,
-          syncStatus: 'synced',
-        };
-      } catch (error) {
-        await this.handleNeo4jFailure();
-        // Neo4j失敗でもPostgreSQLには保存されているので、pending_graphとしてマーク
+          return {
+            success: true,
+            memoryId: memory.id,
+            syncStatus: 'synced',
+          };
+        } catch (error) {
+          await this.handleNeo4jFailure();
+          // Neo4j失敗でもPostgreSQLには保存されているので、pending_graphとしてマーク
+          await this.config.postgresPool.query("UPDATE memories SET sync_status = 'pending_graph' WHERE id = $1", [memory.id]);
+          return {
+            success: true,
+            memoryId: memory.id,
+            syncStatus: 'pending_graph',
+          };
+        } finally {
+          if (session) {
+            await session.close();
+          }
+        }
+      } else if (this.mode === OperationMode.GRAPH_DISABLED) {
+        // Neo4jが無効化されている場合は、pending_graphとしてマーク
         await this.config.postgresPool.query("UPDATE memories SET sync_status = 'pending_graph' WHERE id = $1", [memory.id]);
         return {
           success: true,
           memoryId: memory.id,
           syncStatus: 'pending_graph',
         };
-      } finally {
-        if (session) {
-          await session.close();
-        }
       }
     }
 
@@ -345,8 +355,12 @@ export class FailoverManager {
    * Check if Neo4j is healthy (internal helper)
    */
   private async isNeo4jHealthy(): Promise<boolean> {
-    // NORMAL または GRAPH_DISABLED モードの場合のみNORMALになれる
-    return this.mode === OperationMode.NORMAL || this.mode === OperationMode.GRAPH_DISABLED;
+    try {
+      await this.config.neo4jDriver.verifyConnectivity();
+      return true;
+    } catch (error) {
+      return false;
+    }
   }
 
   /**

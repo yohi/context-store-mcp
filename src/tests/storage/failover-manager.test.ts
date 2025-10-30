@@ -221,6 +221,8 @@ describe('FailoverManager - Task 9.2: Failover and Error Recovery', () => {
 
       // Mock PostgreSQL recovery
       vi.mocked(mockPgPool.query).mockResolvedValue({ rows: [], command: 'SELECT', rowCount: 0, oid: 0, fields: [] });
+      // Mock Neo4j recovery
+      vi.mocked(mockNeo4jDriver.verifyConnectivity).mockResolvedValue(undefined);
 
       // Act
       await failoverManager.checkPostgresHealth();
