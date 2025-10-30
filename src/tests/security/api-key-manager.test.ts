@@ -235,7 +235,7 @@ describe('ApiKeyManager', () => {
       const { key: oldKey, plainKey: oldPlainKey } = await manager.generateApiKey('rotate-test', ['read', 'write']);
       oldKey.metadata = { userId: 'test-user' };
 
-      const result = await await manager.rotateApiKey(oldKey.id);
+      const result = await manager.rotateApiKey(oldKey.id);
 
       expect(result).not.toBeNull();
       expect(result!.key.id).not.toBe(oldKey.id);
@@ -247,7 +247,7 @@ describe('ApiKeyManager', () => {
     });
 
     it('should return null for non-existent key', async () => {
-      const result = await await manager.rotateApiKey('non-existent-id');
+      const result = await manager.rotateApiKey('non-existent-id');
 
       expect(result).toBeNull();
     });

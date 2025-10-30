@@ -253,7 +253,7 @@ export class PostgresApiKeyStoreAdapter implements IApiKeyStoreAdapter {
       DELETE FROM api_keys
       WHERE expires_at IS NOT NULL
         AND expires_at < $1
-        AND status = 'expired'
+        AND status IN ('expired', 'revoked')
     `;
 
     const result = await this.pool.query(query, [gracePeriodDate]);
@@ -401,7 +401,11 @@ export class InMemoryApiKeyStoreAdapter implements IApiKeyStoreAdapter {
     let count = 0;
 
     for (const [hashedKey, key] of this.keys.entries()) {
-      if (key.expiresAt && key.expiresAt <= gracePeriodDate && key.status === 'expired') {
+      if (
+        key.expiresAt &&
+        key.expiresAt <= gracePeriodDate &&
+        (key.status === 'expired' || key.status === 'revoked')
+      ) {
         this.keys.delete(hashedKey);
         this.keyIdIndex.delete(key.id);
         count++;
