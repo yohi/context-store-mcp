@@ -178,21 +178,27 @@ export class FailoverManager {
       let session: Session | null = null;
       try {
         session = this.config.neo4jDriver.session();
-        const result = await session.run('MATCH (m:Memory {id: $id}) RETURN m.id as id, m.type as type, m.created_at as created_at', {
-          id: memoryId,
-        });
+        try {
+          const result = await session.run('MATCH (m:Memory {id: $id}) RETURN m.id as id, m.type as type, m.created_at as created_at', {
+            id: memoryId,
+          });
 
-        if (result.records.length === 0) {
-          throw new Error('Memory not found');
+          if (result.records.length === 0) {
+            throw new Error('Memory not found');
+          }
+
+          const record = result.records[0];
+          return {
+            id: record.get('id'),
+            type: record.get('type'),
+            created_at: record.get('created_at'),
+            warning: 'Vector search unavailable (PostgreSQL offline)',
+          };
+        } catch (error) {
+          // Neo4jエラーが発生した場合はUNAVAILABLEに遷移
+          await this.handleNeo4jFailure();
+          throw error; // 元のエラーを再スロー
         }
-
-        const record = result.records[0];
-        return {
-          id: record.get('id'),
-          type: record.get('type'),
-          created_at: record.get('created_at'),
-          warning: 'Vector search unavailable (PostgreSQL offline)',
-        };
       } finally {
         if (session) {
           await session.close();
