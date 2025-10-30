@@ -166,15 +166,20 @@ export class CircuitBreaker {
    * Check if circuit should open
    */
   private shouldOpen(): boolean {
-    // 最低でもwindowSize分のリクエストが必要
-    if (this.recentResults.length < this.config.windowSize) {
-      return false;
+    const failures = this.recentResults.filter((r) => !r).length;
+
+    // 連続失敗数が閾値に達した場合、即座にOPEN
+    if (failures >= this.config.failureThreshold) {
+      return true;
     }
 
-    const failures = this.recentResults.filter((r) => !r).length;
-    const failureRate = failures / this.recentResults.length;
+    // window が埋まっている場合は失敗率もチェック
+    if (this.recentResults.length >= this.config.windowSize) {
+      const failureRate = failures / this.recentResults.length;
+      return failures >= this.config.failureThreshold && failureRate > this.config.failureRateThreshold;
+    }
 
-    return failures >= this.config.failureThreshold && failureRate > this.config.failureRateThreshold;
+    return false;
   }
 
   /**
