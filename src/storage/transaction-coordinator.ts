@@ -353,14 +353,15 @@ export class TransactionCoordinator {
    * @throws Error if marking sync failure fails (caller must handle)
    *
    * べき等性の保証:
-   * - 既に 'synced' のレコードは更新しない（競合状態を回避）
-   * - 新規挿入直後のみ 'pending_graph' に更新される
+   * - 新規挿入直後のレコード (sync_status='synced') を 'pending_graph' に更新
+   * - 既に 'pending_graph' のレコードは再更新しても問題なし（べき等）
+   * - 'failed' のレコードも更新可能（リトライのため）
    */
   private async markSyncFailure(memoryId: MemoryId, reason: string): Promise<void> {
     try {
       await this.config.postgresPool.query(
         `UPDATE memories SET sync_status = 'pending_graph'
-         WHERE id = $1 AND sync_status != 'synced'`,
+         WHERE id = $1`,
         [memoryId]
       );
       // TODO: Insert into sync_failures table for tracking
