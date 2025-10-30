@@ -9,9 +9,11 @@
  * - TTL（Time To Live）管理
  * - レート制限との統合
  * - キーのローテーション
+ * - PostgreSQL永続化（プロセス再起動時もデータ保持）
  */
 
 import crypto from 'crypto';
+import type { IApiKeyStoreAdapter } from '../storage/api-key-store-adapter.js';
 
 /**
  * APIキーの形式
@@ -31,15 +33,15 @@ const KEY_RANDOM_BYTES = 32;
 const BASE62_CHARS = '0123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz';
 
 /**
- * セキュリティペッパーの取得
+ * セキュリティペッパーの検証と取得
  *
- * HMAC-SHA256用のシークレットペッパーを環境変数から取得します。
+ * HMAC-SHA256用のシークレットペッパーを環境変数から取得し、検証します。
  * ペッパーが設定されていない場合は、明確なエラーメッセージと共に失敗します。
  *
- * @returns シークレットペッパー
+ * @returns 検証済みシークレットペッパー
  * @throws {Error} ペッパーが設定されていない場合
  */
-function getSecretPepper(): string {
+function validateAndGetPepper(): string {
   const pepper = process.env['API_KEY_PEPPER'];
 
   if (!pepper) {
@@ -68,10 +70,10 @@ function getSecretPepper(): string {
  * HMAC-SHA256を使用してAPIキーをハッシュ化
  *
  * @param plainKey 平文のAPIキー
+ * @param pepper シークレットペッパー
  * @returns ハッシュ化されたキー（16進数文字列）
  */
-function hashApiKeyWithHmac(plainKey: string): string {
-  const pepper = getSecretPepper();
+function hashApiKeyWithHmac(plainKey: string, pepper: string): string {
   return crypto.createHmac('sha256', pepper).update(plainKey).digest('hex');
 }
 
@@ -194,7 +196,23 @@ function sanitizeApiKey(key: ApiKey): ApiKeyView {
  * APIキー管理マネージャー
  */
 export class ApiKeyManager {
-  private keys: Map<string, ApiKey> = new Map();
+  private readonly pepper: string;
+  private readonly store: IApiKeyStoreAdapter;
+
+  /**
+   * コンストラクタ
+   *
+   * 初期化時にAPI_KEY_PEPPERを検証します。
+   * ペッパーが未設定の場合は例外をスローし、サービス起動を中止します。
+   *
+   * @param store ストレージアダプター（PostgreSQLまたはInMemory）
+   * @throws {Error} API_KEY_PEPPERが未設定の場合
+   */
+  constructor(store: IApiKeyStoreAdapter) {
+    // 初期化時にペッパーを検証（未設定の場合は起動時に失敗）
+    this.pepper = validateAndGetPepper();
+    this.store = store;
+  }
 
   /**
    * 新しいAPIキーを生成
@@ -204,11 +222,11 @@ export class ApiKeyManager {
    * @param expiresIn 有効期限（ミリ秒）
    * @returns 生成されたキーと平文のAPIキー
    */
-  generateApiKey(
+  async generateApiKey(
     name: string,
     scopes: string[] = ['read', 'write'],
     expiresIn?: number
-  ): { key: ApiKey; plainKey: string } {
+  ): Promise<{ key: ApiKey; plainKey: string }> {
     // ランダムなバイト列を生成
     const randomBytes = crypto.randomBytes(KEY_RANDOM_BYTES);
     const randomPart = encodeBase62(randomBytes);
@@ -217,7 +235,7 @@ export class ApiKeyManager {
     const plainKey = `${API_KEY_PREFIX}_${API_KEY_VERSION}_${randomPart}`;
 
     // キーをハッシュ化（HMAC-SHA256 with pepper）
-    const hashedKey = hashApiKeyWithHmac(plainKey);
+    const hashedKey = hashApiKeyWithHmac(plainKey, this.pepper);
 
     // プレフィックス（表示用、最初の8文字）
     const keyPrefix = `${API_KEY_PREFIX}_${API_KEY_VERSION}_${randomPart.substring(0, 8)}`;
@@ -236,8 +254,8 @@ export class ApiKeyManager {
       scopes,
     };
 
-    // メモリに保存（実際はデータベースに保存）
-    this.keys.set(hashedKey, key);
+    // データベースに保存（PostgreSQLで永続化）
+    await this.store.store(key);
 
     return { key, plainKey };
   }
@@ -261,8 +279,8 @@ export class ApiKeyManager {
     }
 
     // 1. HMAC-SHA256で検証を試みる（新しいキー）
-    const hashedKeyHmac = hashApiKeyWithHmac(plainKey);
-    let key = this.keys.get(hashedKeyHmac);
+    const hashedKeyHmac = hashApiKeyWithHmac(plainKey, this.pepper);
+    let key = await this.store.findByHashedKey(hashedKeyHmac);
 
     if (key) {
       // HMAC-SHA256で見つかった（最新のキー）
@@ -271,14 +289,14 @@ export class ApiKeyManager {
 
     // 2. レガシーSHA-256で検証（移行用フォールバック）
     const hashedKeySha256 = hashApiKeyWithSha256(plainKey);
-    key = this.keys.get(hashedKeySha256);
+    key = await this.store.findByHashedKey(hashedKeySha256);
 
     if (!key) {
       return { valid: false, reason: 'not_found' };
     }
 
     // レガシーキーが見つかった場合、ステータスを検証
-    const statusResult = this.validateKeyStatus(key);
+    const statusResult = await this.validateKeyStatus(key);
 
     if (!statusResult.valid) {
       return statusResult;
@@ -291,11 +309,11 @@ export class ApiKeyManager {
     );
 
     // 古いエントリを削除
-    this.keys.delete(hashedKeySha256);
+    await this.store.deleteByHashedKey(hashedKeySha256);
 
     // 新しいハッシュで再保存
     key.hashedKey = hashedKeyHmac;
-    this.keys.set(hashedKeyHmac, key);
+    await this.store.store(key);
 
     console.log(
       `Successfully migrated API key (ID: ${key.id}) to HMAC-SHA256. ` +
@@ -312,7 +330,7 @@ export class ApiKeyManager {
    * @param key APIキー
    * @returns 検証結果（hashedKeyを含まない安全なビュー）
    */
-  private validateKeyStatus(key: ApiKey): ApiKeyValidationResult {
+  private async validateKeyStatus(key: ApiKey): Promise<ApiKeyValidationResult> {
     // ステータスチェック
     if (key.status === 'revoked') {
       // hashedKeyを除外した安全なビューを返す
@@ -323,12 +341,14 @@ export class ApiKeyManager {
     if (key.expiresAt && key.expiresAt <= new Date()) {
       // 期限切れの場合、ステータスを更新
       key.status = 'expired';
+      await this.store.update(key);
       // hashedKeyを除外した安全なビューを返す
       return { valid: false, key: sanitizeApiKey(key), reason: 'expired' };
     }
 
     // 最終使用日時を更新
     key.lastUsedAt = new Date();
+    await this.store.update(key);
 
     // hashedKeyを除外した安全なビューを返す
     return { valid: true, key: sanitizeApiKey(key) };
@@ -340,14 +360,14 @@ export class ApiKeyManager {
    * @param keyId キーID
    * @returns 成功したか
    */
-  revokeApiKey(keyId: string): boolean {
-    for (const key of this.keys.values()) {
-      if (key.id === keyId) {
-        key.status = 'revoked';
-        return true;
-      }
+  async revokeApiKey(keyId: string): Promise<boolean> {
+    const key = await this.store.findById(keyId);
+    if (!key) {
+      return false;
     }
-    return false;
+
+    key.status = 'revoked';
+    return await this.store.update(key);
   }
 
   /**
@@ -359,33 +379,9 @@ export class ApiKeyManager {
    * @param userId ユーザーID（メタデータに保存されている想定）
    * @returns APIキーのリスト（hashedKeyを含まない安全なビュー）
    */
-  listApiKeys(userId?: string): ApiKeyView[] {
-    const rawKeys = this.listRawApiKeys(userId);
+  async listApiKeys(userId?: string): Promise<ApiKeyView[]> {
+    const rawKeys = await this.store.findAll(userId);
     return rawKeys.map((key) => sanitizeApiKey(key));
-  }
-
-  /**
-   * ユーザーの全APIキーを取得（内部使用のみ、hashedKeyを含む）
-   *
-   * このメソッドは内部管理用であり、外部に公開すべきではありません。
-   * 生のApiKeyオブジェクトが必要な内部処理でのみ使用してください。
-   *
-   * @param userId ユーザーID（メタデータに保存されている想定）
-   * @returns APIキーのリスト（hashedKeyを含む内部ビュー）
-   * @private
-   */
-  private listRawApiKeys(userId?: string): ApiKey[] {
-    const result: ApiKey[] = [];
-
-    for (const key of this.keys.values()) {
-      // ユーザーIDでフィルタリング
-      if (userId && key.metadata?.userId !== userId) {
-        continue;
-      }
-      result.push(key);
-    }
-
-    return result;
   }
 
   /**
@@ -393,25 +389,9 @@ export class ApiKeyManager {
    *
    * @returns 削除されたキーの数
    */
-  cleanupExpiredKeys(): number {
-    const now = new Date();
-    let count = 0;
-
-    for (const [hashedKey, key] of this.keys.entries()) {
-      if (key.expiresAt && key.expiresAt <= now) {
-        // 期限切れから30日経過したキーを削除
-        const gracePeriodMs = 30 * 24 * 60 * 60 * 1000; // 30日
-        if (now.getTime() - key.expiresAt.getTime() > gracePeriodMs) {
-          this.keys.delete(hashedKey);
-          count++;
-        } else if (key.status !== 'expired') {
-          // ステータスを更新
-          key.status = 'expired';
-        }
-      }
-    }
-
-    return count;
+  async cleanupExpiredKeys(): Promise<number> {
+    const gracePeriodMs = 30 * 24 * 60 * 60 * 1000; // 30日
+    return await this.store.cleanupExpired(gracePeriodMs);
   }
 
   /**
@@ -422,15 +402,9 @@ export class ApiKeyManager {
    * @param oldKeyId 古いキーID
    * @returns 新しいキーと平文のAPIキー
    */
-  rotateApiKey(oldKeyId: string, gracePeriodMs: number = 30 * 24 * 60 * 60 * 1000): { key: ApiKey; plainKey: string } | null {
+  async rotateApiKey(oldKeyId: string, gracePeriodMs: number = 30 * 24 * 60 * 60 * 1000): Promise<{ key: ApiKey; plainKey: string } | null> {
     // 古いキーを検索
-    let oldKey: ApiKey | undefined;
-    for (const key of this.keys.values()) {
-      if (key.id === oldKeyId) {
-        oldKey = key;
-        break;
-      }
-    }
+    const oldKey = await this.store.findById(oldKeyId);
 
     if (!oldKey) {
       return null;
@@ -438,16 +412,18 @@ export class ApiKeyManager {
 
     // 新しいキーを生成
     const expiresIn = oldKey.expiresAt ? oldKey.expiresAt.getTime() - oldKey.createdAt.getTime() : undefined;
-    const newKeyData = this.generateApiKey(oldKey.name, oldKey.scopes, expiresIn);
+    const newKeyData = await this.generateApiKey(oldKey.name, oldKey.scopes, expiresIn);
 
     // メタデータを引き継ぐ
     if (oldKey.metadata) {
       newKeyData.key.metadata = { ...oldKey.metadata };
+      await this.store.update(newKeyData.key);
     }
 
     // 古いキーに猶予期間を設定して無効化
     if (!oldKey.expiresAt || oldKey.expiresAt.getTime() - Date.now() > gracePeriodMs) {
       oldKey.expiresAt = new Date(Date.now() + gracePeriodMs);
+      await this.store.update(oldKey);
     }
 
     return newKeyData;
@@ -456,42 +432,12 @@ export class ApiKeyManager {
   /**
    * APIキーの統計情報を取得
    */
-  getStatistics(): {
+  async getStatistics(): Promise<{
     total: number;
     active: number;
     revoked: number;
     expired: number;
-  } {
-    let active = 0;
-    let revoked = 0;
-    let expired = 0;
-
-    for (const key of this.keys.values()) {
-      switch (key.status) {
-        case 'active':
-          active++;
-          break;
-        case 'revoked':
-          revoked++;
-          break;
-        case 'expired':
-          expired++;
-          break;
-      }
-    }
-
-    return {
-      total: this.keys.size,
-      active,
-      revoked,
-      expired,
-    };
-  }
-
-  /**
-   * テスト用：全キーをクリア
-   */
-  clearAll(): void {
-    this.keys.clear();
+  }> {
+    return await this.store.getStatistics();
   }
 }
