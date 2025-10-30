@@ -107,6 +107,7 @@ export class PostgresApiKeyStoreAdapter implements IApiKeyStoreAdapter {
         ON CONFLICT (hashed_key) DO UPDATE SET
           key_prefix = EXCLUDED.key_prefix,
           name = EXCLUDED.name,
+          user_id = EXCLUDED.user_id,
           last_used_at = EXCLUDED.last_used_at,
           expires_at = EXCLUDED.expires_at,
           status = EXCLUDED.status,
@@ -299,6 +300,15 @@ export class PostgresApiKeyStoreAdapter implements IApiKeyStoreAdapter {
    * データベース行をApiKeyオブジェクトに変換
    */
   private rowToApiKey(row: any): ApiKey {
+    // メタデータを初期化（JSON文字列の場合はパース）
+    const metadata =
+      typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata || {};
+
+    // user_idカラムからmetadata.userIdを設定（他のフィールドを上書きしない）
+    if (row.user_id) {
+      metadata.userId = row.user_id;
+    }
+
     return {
       id: row.id,
       keyPrefix: row.key_prefix,
@@ -309,7 +319,7 @@ export class PostgresApiKeyStoreAdapter implements IApiKeyStoreAdapter {
       expiresAt: row.expires_at ? new Date(row.expires_at) : undefined,
       status: row.status,
       scopes: Array.isArray(row.scopes) ? row.scopes : JSON.parse(row.scopes),
-      metadata: row.metadata || {},
+      metadata,
     };
   }
 }
