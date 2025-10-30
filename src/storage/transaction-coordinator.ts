@@ -115,7 +115,22 @@ export class TransactionCoordinator {
 
       if (!neoResult.success) {
         // Neo4j失敗時の補償トランザクション: sync_status マーキング
-        await this.markSyncFailure(memory.id, 'neo4j_creation_failed');
+        try {
+          await this.markSyncFailure(memory.id, 'neo4j_creation_failed');
+        } catch (markError) {
+          // 同期失敗マークにも失敗した場合は致命的エラーとして返す
+          return {
+            success: false,
+            memoryId: memory.id,
+            error: {
+              type: 'POSTGRESQL_ERROR',
+              message: `Failed to mark sync failure after Neo4j error: ${
+                markError instanceof Error ? markError.message : String(markError)
+              }`,
+              requiresCompensation: true,
+            },
+          };
+        }
 
         return {
           success: true, // PostgreSQL成功なので全体は成功
@@ -189,24 +204,16 @@ export class TransactionCoordinator {
   }
 
   /**
-   * Insert into PostgreSQL (throws on failure, with idempotency support)
+   * Insert memory into PostgreSQL
+   * @throws Error if insertion fails (for retry mechanism)
    */
   private async insertIntoPostgreSQLOrThrow(memory: MemoryEntity): Promise<void> {
-    try {
-      await this.config.postgresPool.query(
-        `INSERT INTO memories (id, content, memory_type, metadata, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, NOW(), NOW())
-         ON CONFLICT (id) DO NOTHING`, // べき等性: 既存の場合は何もしない
-        [memory.id, memory.content, memory.memoryType, JSON.stringify(memory.metadata)]
-      );
-    } catch (error) {
-      // UNIQUE制約違反は成功とみなす（べき等性）
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      if (errorMessage.includes('duplicate key value violates unique constraint')) {
-        return; // すでに存在する場合は成功
-      }
-      throw error; // それ以外のエラーは再スロー
-    }
+    await this.config.postgresPool.query(
+      `INSERT INTO memories (id, content, memory_type, metadata, created_at, updated_at, sync_status)
+       VALUES ($1, $2, $3, $4, NOW(), NOW(), 'synced')
+       ON CONFLICT (id) DO NOTHING`, // べき等性: 既存の場合は何もしない
+      [memory.id, memory.content, memory.memoryType, JSON.stringify(memory.metadata)]
+    );
   }
 
   /**
@@ -278,6 +285,7 @@ export class TransactionCoordinator {
 
   /**
    * Mark Sync Failure for background retry
+   * @throws Error if marking sync failure fails (caller must handle)
    */
   private async markSyncFailure(memoryId: MemoryId, reason: string): Promise<void> {
     try {
@@ -288,7 +296,8 @@ export class TransactionCoordinator {
       // TODO: Insert into sync_failures table for tracking
       console.warn(`Sync failure marked for memory ${memoryId}: ${reason}`);
     } catch (error) {
-      console.error('Failed to mark sync failure:', error);
+      // 同期失敗マークに失敗した場合、エラーを呼び出し側へ伝播
+      throw error instanceof Error ? error : new Error(String(error));
     }
   }
 
@@ -305,7 +314,8 @@ export class TransactionCoordinator {
 
     for (let attempt = 0; attempt < this.config.maxRetries; attempt++) {
       try {
-        return await operation();
+        const result = await operation();
+        return result;
       } catch (error) {
         lastError = error;
 
