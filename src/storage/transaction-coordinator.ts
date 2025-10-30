@@ -27,6 +27,34 @@ export interface MemoryEntity {
 }
 
 /**
+ * Logger interface for structured logging
+ */
+export interface Logger {
+  warn(message: string, context?: Record<string, unknown>): void;
+  error(message: string, context?: Record<string, unknown>): void;
+  info(message: string, context?: Record<string, unknown>): void;
+  debug(message: string, context?: Record<string, unknown>): void;
+}
+
+/**
+ * Default console-based logger implementation
+ */
+const defaultLogger: Logger = {
+  warn: (message: string, context?: Record<string, unknown>) => {
+    console.warn(message, context ? JSON.stringify(context) : '');
+  },
+  error: (message: string, context?: Record<string, unknown>) => {
+    console.error(message, context ? JSON.stringify(context) : '');
+  },
+  info: (message: string, context?: Record<string, unknown>) => {
+    console.info(message, context ? JSON.stringify(context) : '');
+  },
+  debug: (message: string, context?: Record<string, unknown>) => {
+    console.debug(message, context ? JSON.stringify(context) : '');
+  },
+};
+
+/**
  * Transaction Coordinator Configuration
  */
 export interface TransactionCoordinatorConfig {
@@ -34,6 +62,8 @@ export interface TransactionCoordinatorConfig {
   postgresPool: Pool;
   /** Neo4j driver */
   neo4jDriver: Driver;
+  /** Logger instance for structured logging (default: console-based logger) */
+  logger?: Logger;
   /** Maximum number of retry attempts (default: 3) */
   maxRetries?: number;
   /** Initial delay in milliseconds for retry backoff (default: 100ms) */
@@ -45,20 +75,40 @@ export interface TransactionCoordinatorConfig {
 }
 
 /**
- * Transaction Result
+ * Transaction Result - Discriminated Union
+ *
+ * - 'ok': Complete success (both PostgreSQL and Neo4j succeeded)
+ * - 'partial': Partial success (PostgreSQL succeeded, Neo4j failed or warning)
+ * - 'failed': Complete failure (PostgreSQL failed or critical error)
  */
-export interface TransactionResult {
-  /** Whether the transaction succeeded */
-  success: boolean;
-  /** Memory ID if operation succeeded */
-  memoryId?: MemoryId;
-  /** Error information if operation failed */
-  error?: {
-    type: 'POSTGRESQL_ERROR' | 'NEO4J_ERROR' | 'SYNC_FAILURE';
-    message: string;
-    requiresCompensation?: boolean;
-  };
-}
+export type TransactionResult =
+  | {
+      /** Success status */
+      status: 'ok';
+      /** Memory ID for successful operation */
+      memoryId: MemoryId;
+    }
+  | {
+      /** Partial success status */
+      status: 'partial';
+      /** Memory ID for partially successful operation */
+      memoryId: MemoryId;
+      /** Warning information for partial success */
+      warning: {
+        type: 'SYNC_FAILURE';
+        message: string;
+      };
+    }
+  | {
+      /** Failure status */
+      status: 'failed';
+      /** Error information for failed operation */
+      error: {
+        type: 'POSTGRESQL_ERROR' | 'NEO4J_ERROR' | 'SYNC_FAILURE';
+        message: string;
+        requiresCompensation?: boolean;
+      };
+    };
 
 /**
  * Transaction Coordinator
@@ -73,6 +123,7 @@ export class TransactionCoordinator {
     this.config = {
       postgresPool: config.postgresPool,
       neo4jDriver: config.neo4jDriver,
+      logger: config.logger ?? defaultLogger,
       maxRetries: config.maxRetries ?? 3,
       initialDelayMs: config.initialDelayMs ?? 100,
       maxDelayMs: config.maxDelayMs ?? 400,
@@ -91,17 +142,22 @@ export class TransactionCoordinator {
    * 部分失敗時の動作:
    * - PG成功 + Neo4j失敗 → sync_status = 'pending_graph' でマーク、バックグラウンド再試行
    * - PG失敗 → 全体ロールバック（Neo4j操作なし）
+   *
+   * べき等性の保証:
+   * - ON CONFLICT DO NOTHING を使用し、既存レコードは更新しない
+   * - 新規挿入時のみ sync_status をマークする（既存レコードは保護）
    */
   async storeMemoryWithSaga(memory: MemoryEntity): Promise<TransactionResult> {
     // Step 1: PostgreSQL に保存（リトライ付き）
+    let wasInserted = false;
     try {
       await this.retryWithBackoff(async () => {
-        await this.insertIntoPostgreSQLOrThrow(memory);
+        wasInserted = (await this.insertIntoPostgreSQLOrThrow(memory)) > 0;
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       return {
-        success: false,
+        status: 'failed',
         error: {
           type: 'POSTGRESQL_ERROR',
           message: `PostgreSQL insertion failed after retries: ${errorMessage}`,
@@ -114,22 +170,43 @@ export class TransactionCoordinator {
       const neoResult = await this.createNeo4jNode(memory);
 
       if (!neoResult.success) {
-        // Neo4j失敗時の補償トランザクション: sync_status マーキング
-        await this.markSyncFailure(memory.id, 'neo4j_creation_failed');
+        // Neo4j失敗時の補償トランザクション
+        // 新規挿入の場合のみ sync_status をマーキング
+        // 既存レコードの場合は警告のみ（既存の sync_status を保持）
+        if (wasInserted) {
+          try {
+            await this.markSyncFailure(memory.id, 'neo4j_creation_failed');
+          } catch (markError) {
+            // 同期失敗マークにも失敗した場合は致命的エラーとして返す
+            return {
+              status: 'failed',
+              error: {
+                type: 'POSTGRESQL_ERROR',
+                message: `Failed to mark sync failure after Neo4j error: ${
+                  markError instanceof Error ? markError.message : String(markError)
+                }`,
+                requiresCompensation: true,
+              },
+            };
+          }
+        }
 
+        // wasInserted に関係なく、Neo4j 失敗は部分成功として返す
         return {
-          success: true, // PostgreSQL成功なので全体は成功
+          status: 'partial', // PostgreSQL成功、Neo4j失敗 = 部分成功
           memoryId: memory.id,
-          error: {
+          warning: {
             type: 'SYNC_FAILURE',
-            message: `Neo4j node creation failed: ${neoResult.error}. Marked for background retry.`,
+            message: `Neo4j node creation failed: ${neoResult.error}${
+              wasInserted ? '. Marked for background retry.' : '. Existing record remains out of sync.'
+            }`,
           },
         };
       }
     }
 
     return {
-      success: true,
+      status: 'ok',
       memoryId: memory.id,
     };
   }
@@ -161,7 +238,7 @@ export class TransactionCoordinator {
 
     if (!pgResult.success) {
       return {
-        success: false,
+        status: 'failed',
         error: {
           type: 'POSTGRESQL_ERROR',
           message: `PostgreSQL deletion failed: ${pgResult.error}`,
@@ -173,9 +250,9 @@ export class TransactionCoordinator {
     // Neo4j削除失敗があった場合は警告を返す
     if (syncFailure) {
       return {
-        success: true,
+        status: 'partial',
         memoryId,
-        error: {
+        warning: {
           type: 'SYNC_FAILURE',
           message: `Neo4j node deletion failed: ${syncFailure}. Orphan node will be cleaned later.`,
         },
@@ -183,30 +260,24 @@ export class TransactionCoordinator {
     }
 
     return {
-      success: true,
+      status: 'ok',
       memoryId,
     };
   }
 
   /**
-   * Insert into PostgreSQL (throws on failure, with idempotency support)
+   * Insert memory into PostgreSQL
+   * @returns Number of rows inserted (0 if conflict, 1 if new insert)
+   * @throws Error if insertion fails (for retry mechanism)
    */
-  private async insertIntoPostgreSQLOrThrow(memory: MemoryEntity): Promise<void> {
-    try {
-      await this.config.postgresPool.query(
-        `INSERT INTO memories (id, content, memory_type, metadata, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, NOW(), NOW())
-         ON CONFLICT (id) DO NOTHING`, // べき等性: 既存の場合は何もしない
-        [memory.id, memory.content, memory.memoryType, JSON.stringify(memory.metadata)]
-      );
-    } catch (error) {
-      // UNIQUE制約違反は成功とみなす（べき等性）
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      if (errorMessage.includes('duplicate key value violates unique constraint')) {
-        return; // すでに存在する場合は成功
-      }
-      throw error; // それ以外のエラーは再スロー
-    }
+  private async insertIntoPostgreSQLOrThrow(memory: MemoryEntity): Promise<number> {
+    const result = await this.config.postgresPool.query(
+      `INSERT INTO memories (id, content, memory_type, metadata, created_at, updated_at, sync_status)
+       VALUES ($1, $2, $3, $4, NOW(), NOW(), 'synced')
+       ON CONFLICT (id) DO NOTHING`, // べき等性: 既存の場合は何もしない
+      [memory.id, memory.content, memory.memoryType, JSON.stringify(memory.metadata)]
+    );
+    return result.rowCount ?? 0;
   }
 
   /**
@@ -220,7 +291,8 @@ export class TransactionCoordinator {
       session = this.config.neo4jDriver.session();
       await session.run(
         `MERGE (m:Memory {id: $id})
-         SET m.type = $type, m.created_at = datetime()`,
+         ON CREATE SET m.created_at = datetime()
+         SET m.type = $type`,
         {
           id: memory.id,
           type: memory.memoryType,
@@ -278,17 +350,25 @@ export class TransactionCoordinator {
 
   /**
    * Mark Sync Failure for background retry
+   * @throws Error if marking sync failure fails (caller must handle)
+   *
+   * べき等性の保証:
+   * - 新規挿入直後のレコード (sync_status='synced') を 'pending_graph' に更新
+   * - 既に 'pending_graph' のレコードは再更新しても問題なし（べき等）
+   * - 'failed' のレコードも更新可能（リトライのため）
    */
   private async markSyncFailure(memoryId: MemoryId, reason: string): Promise<void> {
     try {
       await this.config.postgresPool.query(
-        `UPDATE memories SET sync_status = 'pending_graph' WHERE id = $1`,
+        `UPDATE memories SET sync_status = 'pending_graph'
+         WHERE id = $1`,
         [memoryId]
       );
       // TODO: Insert into sync_failures table for tracking
-      console.warn(`Sync failure marked for memory ${memoryId}: ${reason}`);
+      this.config.logger.warn('Sync failure marked for memory', { memoryId, reason });
     } catch (error) {
-      console.error('Failed to mark sync failure:', error);
+      // 同期失敗マークに失敗した場合、エラーを呼び出し側へ伝播
+      throw error instanceof Error ? error : new Error(String(error));
     }
   }
 
@@ -305,7 +385,8 @@ export class TransactionCoordinator {
 
     for (let attempt = 0; attempt < this.config.maxRetries; attempt++) {
       try {
-        return await operation();
+        const result = await operation();
+        return result;
       } catch (error) {
         lastError = error;
 
