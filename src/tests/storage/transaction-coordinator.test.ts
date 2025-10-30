@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Pool } from 'pg';
 import type { Driver } from 'neo4j-driver';
+import type { MemoryId } from '../../memory/types.js';
 import {
   TransactionCoordinator,
   type MemoryEntity,
@@ -274,20 +275,22 @@ describe('TransactionCoordinator - Task 9.1: Saga Pattern', () => {
   });
 
   describe('Exponential Backoff Retry Policy', () => {
-    it('should retry transient errors with exponential backoff (最大3回)', async () => {
-      // Arrange
-      const memory: MemoryEntity = {
-        id: 'test-memory-id-008',
-        content: 'Test retry',
-        memoryType: 'semantic',
-        metadata: {},
-      };
+    it(
+      'should retry transient errors with exponential backoff (最大3回)',
+      async () => {
+        // Arrange
+        const memory: MemoryEntity = {
+          id: 'test-memory-id-008',
+          content: 'Test retry',
+          memoryType: 'semantic',
+          metadata: {},
+        };
 
-      // Mock PostgreSQL: 2回失敗→3回目成功
-      vi.mocked(mockPgPool.query)
-        .mockRejectedValueOnce(new Error('Transient connection timeout'))
-        .mockRejectedValueOnce(new Error('Transient connection timeout'))
-        .mockResolvedValueOnce({
+        // Mock PostgreSQL: 2回失敗→3回目成功
+        vi.mocked(mockPgPool.query)
+          .mockRejectedValueOnce(new Error('Transient connection timeout'))
+          .mockRejectedValueOnce(new Error('Transient connection timeout'))
+          .mockResolvedValueOnce({
           rows: [{ id: memory.id }],
           command: 'INSERT',
           rowCount: 1,
@@ -305,13 +308,17 @@ describe('TransactionCoordinator - Task 9.1: Saga Pattern', () => {
       // Act
       const result = await coordinator.storeMemoryWithSaga(memory);
 
-      // Assert
-      expect(result.success).toBe(true);
-      // 2回のリトライ + 1回の成功 = 合計3回呼ばれる
-      expect(mockPgPool.query).toHaveBeenCalledTimes(3);
-    });
+        // Assert
+        expect(result.success).toBe(true);
+        // 2回のリトライ + 1回の成功 = 合計3回呼ばれる
+        expect(mockPgPool.query).toHaveBeenCalledTimes(3);
+      },
+      { timeout: 5000 }
+    );
 
-    it('should fail after max retries exceeded', async () => {
+    it(
+      'should fail after max retries exceeded',
+      async () => {
       // Arrange
       const memory: MemoryEntity = {
         id: 'test-memory-id-009',
@@ -326,11 +333,13 @@ describe('TransactionCoordinator - Task 9.1: Saga Pattern', () => {
       // Act
       const result = await coordinator.storeMemoryWithSaga(memory);
 
-      // Assert
-      expect(result.success).toBe(false);
-      expect(result.error?.type).toBe('POSTGRESQL_ERROR');
-      // maxRetries=3なので、合計3回試行される
-      expect(mockPgPool.query).toHaveBeenCalledTimes(3);
-    });
+        // Assert
+        expect(result.success).toBe(false);
+        expect(result.error?.type).toBe('POSTGRESQL_ERROR');
+        // maxRetries=3なので、合計3回試行される
+        expect(mockPgPool.query).toHaveBeenCalledTimes(3);
+      },
+      { timeout: 5000 }
+    );
   });
 });
