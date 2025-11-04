@@ -100,6 +100,9 @@ export interface MemoryManagerService {
     memoryId: MemoryId,
     newType: MemoryType
   ): Promise<Result<boolean, MemoryError>>;
+
+  // Get all memory IDs for reconciliation (Requirements: 5.4 - 整合性監視)
+  getAllMemoryIds(): Promise<MemoryId[]>;
 }
 
 // Memory Classification types (Requirements: 3.4)
