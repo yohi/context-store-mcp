@@ -767,4 +767,21 @@ export class MemoryManager implements MemoryManagerService {
       });
     }
   }
+
+  /**
+   * Get all memory IDs (for reconciliation)
+   * Requirements: 5.4 (整合性監視)
+   */
+  async getAllMemoryIds(): Promise<MemoryId[]> {
+    const ids: MemoryId[] = [];
+
+    for (const [id, memory] of this.memories.entries()) {
+      // Only include non-deleted memories
+      if (!memory.isDeleted) {
+        ids.push(id);
+      }
+    }
+
+    return ids;
+  }
 }
