@@ -63,6 +63,7 @@ export class ScheduledReconciliationJob {
   private config: ReconciliationJobConfig;
   private timerId: NodeJS.Timeout | null = null;
   private statistics: ReconciliationStatistics;
+  private isRunning: boolean = false;
 
   constructor(
     private readonly reconciliationService: ReconciliationService,
@@ -72,7 +73,8 @@ export class ScheduledReconciliationJob {
       interval: config?.interval ?? 3600000, // デフォルト: 1時間
       autoRepair: config?.autoRepair ?? false, // デフォルト: 検出のみ
       alertThreshold: config?.alertThreshold ?? 10, // デフォルト: 10%
-      alertHandler: config?.alertHandler,
+      ...(config?.alertHandler && { alertHandler: config.alertHandler }),
+      ...(config?.errorHandler && { errorHandler: config.errorHandler }),
     };
 
     this.statistics = {
@@ -96,7 +98,27 @@ export class ScheduledReconciliationJob {
     }
 
     this.timerId = setInterval(async () => {
-      await this.runOnce();
+      // 並行実行を防ぐ
+      if (this.isRunning) {
+        console.warn('Reconciliation job is already running, skipping this interval');
+        return;
+      }
+
+      this.isRunning = true;
+      try {
+        await this.runOnce();
+      } catch (error) {
+        // エラーをログ出力（runOnce内でも処理されるが、念のため）
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorStack = error instanceof Error ? error.stack : undefined;
+        console.error('Unhandled error in scheduled reconciliation job:', {
+          message: errorMessage,
+          stack: errorStack,
+          timestamp: new Date().toISOString(),
+        });
+      } finally {
+        this.isRunning = false;
+      }
     }, this.config.interval);
   }
 
@@ -163,7 +185,7 @@ export class ScheduledReconciliationJob {
       });
 
       // テスト環境ではerrorHandlerにエラーを渡す（設定されている場合）
-      if (process.env.NODE_ENV === 'test' && this.config.errorHandler) {
+      if (process.env['NODE_ENV'] === 'test' && this.config.errorHandler) {
         this.config.errorHandler(error);
       }
 
