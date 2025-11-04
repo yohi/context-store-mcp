@@ -207,19 +207,26 @@ export class FailoverManager {
     }
 
     // NORMAL または GRAPH_DISABLED モードの場合は PostgreSQL から取得
-    const result = await this.config.postgresPool.query('SELECT id, memory_type, created_at FROM memories WHERE id = $1', [
-      memoryId,
-    ]);
+    try {
+      const result = await this.config.postgresPool.query('SELECT id, memory_type, created_at FROM memories WHERE id = $1', [
+        memoryId,
+      ]);
 
-    if (result.rows.length === 0) {
-      throw new Error('Memory not found');
+      if (result.rows.length === 0) {
+        throw new Error('Memory not found');
+      }
+
+      return {
+        id: result.rows[0].id,
+        type: result.rows[0].memory_type,
+        created_at: result.rows[0].created_at,
+      };
+    } catch (error) {
+      // PostgreSQL エラーの場合はフェイルオーバー処理を実行
+      await this.handlePostgresFailure();
+      // 呼び出し元に操作が失敗したことを通知するため再スロー
+      throw error;
     }
-
-    return {
-      id: result.rows[0].id,
-      type: result.rows[0].memory_type,
-      created_at: result.rows[0].created_at,
-    };
   }
 
   /**
@@ -268,12 +275,25 @@ export class FailoverManager {
         } catch (error) {
           await this.handleNeo4jFailure();
           // Neo4j失敗でもPostgreSQLには保存されているので、pending_graphとしてマーク
-          await this.config.postgresPool.query("UPDATE memories SET sync_status = 'pending_graph' WHERE id = $1", [memory.id]);
-          return {
-            success: true,
-            memoryId: memory.id,
-            syncStatus: 'pending_graph',
-          };
+          try {
+            await this.config.postgresPool.query("UPDATE memories SET sync_status = 'pending_graph' WHERE id = $1", [memory.id]);
+            return {
+              success: true,
+              memoryId: memory.id,
+              syncStatus: 'pending_graph',
+            };
+          } catch (pgError) {
+            this.logger.error('Failed to update sync_status after Neo4j failure', {
+              memoryId: memory.id,
+              error: pgError instanceof Error ? pgError.message : String(pgError),
+            });
+            // PostgreSQL更新も失敗した場合はfailedステータスを返す
+            return {
+              success: false,
+              memoryId: memory.id,
+              syncStatus: 'failed',
+            };
+          }
         } finally {
           if (session) {
             await session.close();
@@ -281,12 +301,26 @@ export class FailoverManager {
         }
       } else if (this.mode === OperationMode.GRAPH_DISABLED) {
         // Neo4jが無効化されている場合は、pending_graphとしてマーク
-        await this.config.postgresPool.query("UPDATE memories SET sync_status = 'pending_graph' WHERE id = $1", [memory.id]);
-        return {
-          success: true,
-          memoryId: memory.id,
-          syncStatus: 'pending_graph',
-        };
+        try {
+          await this.config.postgresPool.query("UPDATE memories SET sync_status = 'pending_graph' WHERE id = $1", [memory.id]);
+          return {
+            success: true,
+            memoryId: memory.id,
+            syncStatus: 'pending_graph',
+          };
+        } catch (error) {
+          this.logger.error('Failed to update sync_status in GRAPH_DISABLED mode', {
+            memoryId: memory.id,
+            mode: this.mode,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          // PostgreSQL更新失敗時はエラーレスポンスを返す
+          return {
+            success: false,
+            memoryId: memory.id,
+            syncStatus: 'error',
+          };
+        }
       }
     }
 
@@ -310,25 +344,39 @@ export class FailoverManager {
     }
 
     // PostgreSQLからフラット検索
-    const result = await this.config.postgresPool.query(
-      'SELECT id, content, memory_type FROM memories WHERE content ILIKE $1 LIMIT 10',
-      [`%${query}%`]
-    );
+    try {
+      const result = await this.config.postgresPool.query(
+        'SELECT id, content, memory_type FROM memories WHERE content ILIKE $1 LIMIT 10',
+        [`%${query}%`]
+      );
 
-    const results: SearchResult[] = result.rows.map((row) => ({
-      id: row.id,
-      content: row.content,
-      memory_type: row.memory_type,
-    }));
+      const results: SearchResult[] = result.rows.map((row) => ({
+        id: row.id,
+        content: row.content,
+        memory_type: row.memory_type,
+      }));
 
-    // GRAPH_DISABLED モードの場合は警告を追加
-    if (this.mode === OperationMode.GRAPH_DISABLED) {
-      results.forEach((r) => {
-        r.warning = 'Graph relationships unavailable (Neo4j offline)';
+      // GRAPH_DISABLED モードの場合は警告を追加
+      if (this.mode === OperationMode.GRAPH_DISABLED) {
+        results.forEach((r) => {
+          r.warning = 'Graph relationships unavailable (Neo4j offline)';
+        });
+      }
+
+      return results;
+    } catch (error) {
+      this.logger.error('Failed to search memories in PostgreSQL', {
+        query,
+        mode: this.mode,
+        error: error instanceof Error ? error.message : String(error),
       });
-    }
 
-    return results;
+      // PostgreSQL失敗時はフェイルオーバーハンドラを呼び出し
+      await this.handlePostgresFailure();
+
+      // 空配列を返してクラッシュを防ぐ
+      return [];
+    }
   }
 
   /**
