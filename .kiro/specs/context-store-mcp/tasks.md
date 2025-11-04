@@ -311,15 +311,17 @@
 ## ハイブリッドストレージ一貫性
 
 - [ ] 9. ストレージ間の一貫性とフェイルオーバー
-- [ ] 9.1 トランザクション調整とSagaパターン
-  - PostgreSQL-Neo4j間の調整戦略
-  - 補償トランザクションの実装
-  - 部分失敗時のロールバック
-  - べき等性の保証
-  - トランザクション境界の定義
+- [x] 9.1 トランザクション調整とSagaパターン
+  - PostgreSQL-Neo4j間の調整戦略（Sagaパターン実装完了）
+  - 補償トランザクションの実装（sync_status マーキング機構）
+  - 部分失敗時のロールバック（PG成功+Neo4j失敗、PG失敗全体ロールバック）
+  - べき等性の保証（ON CONFLICT DO NOTHING, MERGE対応）
+  - トランザクション境界の定義（PG内ACID、PG-Neo4j間は結果整合性）
+  - 指数バックオフリトライ（最大3回、100ms/200ms/400ms）
+  - 9ユニットテスト全パス
   - _Requirements: 5.3, 5.4_
 
-- [ ] 9.2 フェイルオーバーとエラーリカバリー
+- [x] 9.2 フェイルオーバーとエラーリカバリー
   - コンポーネント別フェイルオーバーモード
   - 再試行ポリシーとバックオフ戦略
   - サーキットブレーカーパターン
@@ -327,12 +329,26 @@
   - 同期失敗の追跡と再試行
   - _Requirements: 5.3_
 
-- [ ] 9.3 整合性監視と自動修復
-  - 定期整合性チェックジョブ
-  - ストレージ間の差分検出
-  - 孤立データの自動削除
-  - 同期失敗アラートの発火
-  - 整合性レポート生成
+- [x] 9.3 整合性監視と自動修復
+  - ReconciliationService実装（`src/storage/reconciliation-service.ts`）
+    - ストレージ間差分検出（detectDivergence）
+    - PostgreSQL-Neo4j間の差分検出（missingInNeo4j, orphanedInNeo4j）
+    - 自動修復機能（repairMissingInNeo4j, repairOrphanedInNeo4j）
+    - 整合性レポート生成（generateConsistencyReport）
+    - アラート判定機能（shouldTriggerAlert）
+    - 完全調整実行（performFullReconciliation）
+  - ScheduledReconciliationJob実装（`src/storage/scheduled-reconciliation-job.ts`）
+    - 定期実行ジョブ（start, stop, runOnce）
+    - 設定可能な実行間隔と自動修復オプション
+    - アラート発火機能（alertHandler）
+    - 実行統計情報トラッキング（getStatistics）
+  - StorageAdapterインターフェース拡張（`src/storage/storage-adapter.ts`）
+    - getAllMemoryIds メソッド追加
+  - MemoryManager拡張（`src/memory/memory-manager.ts`）
+    - getAllMemoryIds 実装（削除済み記憶を除外）
+  - 24ユニットテスト全パス（15 ReconciliationService + 9 ScheduledReconciliationJob）
+    - src/tests/storage/reconciliation.test.ts: 15テスト
+    - src/tests/storage/scheduled-reconciliation.test.ts: 9テスト
   - _Requirements: 5.4, 5.5_
 
 ## パフォーマンス最適化

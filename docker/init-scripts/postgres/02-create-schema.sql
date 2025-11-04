@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS memories (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     content TEXT NOT NULL,
     memory_type VARCHAR(20) NOT NULL CHECK (memory_type IN ('episodic', 'semantic', 'procedural')),
+    sync_status VARCHAR(20) DEFAULT 'synced' CHECK (sync_status IN ('synced', 'pending_graph', 'failed', 'error')),
     metadata JSONB DEFAULT '{}',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -119,6 +120,7 @@ CREATE INDEX IF NOT EXISTS idx_memories_is_deleted ON memories(is_deleted);
 CREATE INDEX IF NOT EXISTS idx_memories_last_accessed ON memories(last_accessed_at);
 CREATE INDEX IF NOT EXISTS idx_memories_importance_score ON memories(importance_score);
 CREATE INDEX IF NOT EXISTS idx_memories_protected ON memories(is_protected) WHERE is_protected = true;
+CREATE INDEX IF NOT EXISTS idx_memories_sync_status ON memories(sync_status) WHERE sync_status != 'synced';
 
 -- memory_vectorsテーブルのHNSWインデックス
 CREATE INDEX IF NOT EXISTS idx_memory_vectors_embedding ON memory_vectors
