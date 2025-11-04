@@ -5,7 +5,7 @@
  */
 
 import type { StorageAdapter } from './storage-adapter.js';
-import type { MemoryId } from '../types/memory.js';
+import type { MemoryId } from '../memory/types.js';
 
 /**
  * 差分検出結果

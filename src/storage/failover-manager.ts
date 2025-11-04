@@ -41,6 +41,8 @@ export interface FailoverManagerConfig {
   healthCheckInterval?: number;
   /** Enable automatic health checks (default: false) */
   enableAutoHealthCheck?: boolean;
+  /** Logger instance (default: console) */
+  logger?: Console;
 }
 
 /**
@@ -90,6 +92,7 @@ export class FailoverManager {
   private readonly postgresCircuitBreaker: CircuitBreaker;
   private readonly neo4jCircuitBreaker: CircuitBreaker;
   private healthCheckTimer: NodeJS.Timeout | null = null;
+  private readonly logger: Console;
 
   constructor(config: FailoverManagerConfig) {
     this.config = {
@@ -97,7 +100,10 @@ export class FailoverManager {
       neo4jDriver: config.neo4jDriver,
       healthCheckInterval: config.healthCheckInterval ?? 30000,
       enableAutoHealthCheck: config.enableAutoHealthCheck ?? false,
+      logger: config.logger ?? console,
     };
+
+    this.logger = this.config.logger;
 
     // Circuit Breaker の初期化
     this.postgresCircuitBreaker = new CircuitBreaker({

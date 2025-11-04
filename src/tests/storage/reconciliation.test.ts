@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { StorageAdapter } from '../../storage/storage-adapter.js';
-import type { MemoryId } from '../../types/memory.js';
+import type { MemoryId } from '../../memory/types.js';
 
 // ReconciliationServiceをインポート（まだ存在しない）
 import { ReconciliationService } from '../../storage/reconciliation-service.js';
