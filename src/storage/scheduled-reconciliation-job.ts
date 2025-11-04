@@ -18,6 +18,8 @@ export interface ReconciliationJobConfig {
   alertThreshold: number;
   /** アラートハンドラー */
   alertHandler?: (alert: ReconciliationAlert) => void;
+  /** エラーハンドラー（テスト用） */
+  errorHandler?: (error: unknown) => void;
 }
 
 /**
@@ -151,12 +153,21 @@ export class ScheduledReconciliationJob {
       this.statistics.successRate =
         ((this.statistics.totalRuns - this.statistics.failureCount) / this.statistics.totalRuns) * 100;
 
-      // エラーを再スロー（テスト環境で確認可能にする）
-      if (process.env.NODE_ENV === 'test') {
-        // テスト環境ではエラーを無視（統計情報のみ記録）
-        return;
+      // エラーをログ出力
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      console.error('Reconciliation job failed:', {
+        message: errorMessage,
+        stack: errorStack,
+        timestamp: new Date().toISOString(),
+      });
+
+      // テスト環境ではerrorHandlerにエラーを渡す（設定されている場合）
+      if (process.env.NODE_ENV === 'test' && this.config.errorHandler) {
+        this.config.errorHandler(error);
       }
 
+      // エラーを再スロー（テスト環境でも失敗を観測可能にする）
       throw error;
     }
   }
