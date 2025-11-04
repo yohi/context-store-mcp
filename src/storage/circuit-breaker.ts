@@ -179,9 +179,9 @@ export class CircuitBreaker {
       return false;
     }
 
+    // window が埋まっている場合は失敗率もチェック
     const failures = this.recentResults.filter((r) => !r).length;
     const failureRate = failures / this.recentResults.length;
-
     return failures >= this.config.failureThreshold && failureRate > this.config.failureRateThreshold;
   }
 
