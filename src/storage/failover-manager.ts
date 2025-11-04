@@ -61,7 +61,7 @@ export interface MemoryMetadata {
 export interface StoreMemoryResult {
   success: boolean;
   memoryId?: string;
-  syncStatus?: 'synced' | 'pending_graph';
+  syncStatus?: 'synced' | 'pending_graph' | 'failed' | 'error';
   error?: string;
 }
 
@@ -267,10 +267,12 @@ export class FailoverManager {
         try {
           session = this.config.neo4jDriver.session();
           await this.neo4jCircuitBreaker.execute(async () => {
-            await session!.run('MERGE (m:Memory {id: $id}) SET m.type = $type, m.created_at = datetime()', {
-              id: memory.id,
-              type: memory.memoryType,
-            });
+            if (session) {
+              await session.run('MERGE (m:Memory {id: $id}) SET m.type = $type, m.created_at = datetime()', {
+                id: memory.id,
+                type: memory.memoryType,
+              });
+            }
           });
 
           return {
@@ -289,10 +291,10 @@ export class FailoverManager {
               syncStatus: 'pending_graph',
             };
           } catch (pgError) {
-            this.logger.error('Failed to update sync_status after Neo4j failure', {
-              memoryId: memory.id,
-              error: pgError instanceof Error ? pgError.message : String(pgError),
-            });
+            const errorMessage = pgError instanceof Error ? pgError.message : String(pgError);
+            this.logger.error(
+              `Failed to update sync_status after Neo4j failure: memoryId=${memory.id}, error=${errorMessage}`
+            );
             // PostgreSQL更新も失敗した場合はfailedステータスを返す
             return {
               success: false,
@@ -315,11 +317,10 @@ export class FailoverManager {
             syncStatus: 'pending_graph',
           };
         } catch (error) {
-          this.logger.error('Failed to update sync_status in GRAPH_DISABLED mode', {
-            memoryId: memory.id,
-            mode: this.mode,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          this.logger.error(
+            `Failed to update sync_status in GRAPH_DISABLED mode: memoryId=${memory.id}, mode=${this.mode}, error=${errorMessage}`
+          );
           // PostgreSQL更新失敗時はエラーレスポンスを返す
           return {
             success: false,
@@ -371,11 +372,10 @@ export class FailoverManager {
 
       return results;
     } catch (error) {
-      this.logger.error('Failed to search memories in PostgreSQL', {
-        query,
-        mode: this.mode,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Failed to search memories in PostgreSQL: query="${query}", mode=${this.mode}, error=${errorMessage}`
+      );
 
       // PostgreSQL失敗時はフェイルオーバーハンドラを呼び出し
       await this.handlePostgresFailure();
