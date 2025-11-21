@@ -137,7 +137,18 @@ export class BackgroundJobManager {
       console.error('Redis client error:', err);
     });
 
-    await this.redisClient.connect();
+    try {
+      await this.redisClient.connect();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error(
+        `Failed to connect to Redis at ${this.config.redisUrl}: ${errorMessage}`,
+        error
+      );
+      throw new Error(
+        `BackgroundJobManager initialization failed: Unable to connect to Redis at ${this.config.redisUrl}. ${errorMessage}`
+      );
+    }
   }
 
   /**
@@ -162,11 +173,28 @@ export class BackgroundJobManager {
       createdAt: Date.now(),
     };
 
+    // ペイロードをシリアライズ（Redisへの書き込み前にエラーをキャッチ）
+    let serializedPayload: string;
+    try {
+      serializedPayload = JSON.stringify(job.payload);
+    } catch (serializationError) {
+      const errorMessage = serializationError instanceof Error
+        ? serializationError.message
+        : 'Unknown serialization error';
+      console.error(
+        `Failed to serialize job payload for type "${params.type}": ${errorMessage}`,
+        serializationError
+      );
+      throw new Error(
+        `Failed to serialize job payload: ${errorMessage}. Job type: ${params.type}`
+      );
+    }
+
     // ジョブ情報をハッシュに保存
     await this.redisClient.hSet(`jobs:data:${jobId}`, {
       id: job.id,
       type: job.type,
-      payload: JSON.stringify(job.payload),
+      payload: serializedPayload,
       priority: job.priority,
       status: job.status,
       maxRetries: job.maxRetries.toString(),
@@ -255,6 +283,8 @@ export class BackgroundJobManager {
       const jobData = await this.redisClient.hGetAll(`jobs:data:${jobId}`);
       if (!jobData || !jobData['type']) {
         console.warn(`Job ${jobId} not found or missing type`);
+        // ジョブIDは既にキューから取り出されているため、DLQに移動して失われないようにする
+        await this.redisClient.lPush('jobs:queue:dlq', jobId);
         return;
       }
 
@@ -297,7 +327,17 @@ export class BackgroundJobManager {
       // ハンドラーを取得
       const handler = this.handlers.get(job.type);
       if (!handler) {
-        throw new Error(`No handler registered for job type: ${job.type}`);
+        // ハンドラー未登録は永続的な失敗として扱い、リトライせずDLQに移動
+        const errorMessage = `No handler registered for job type: ${job.type}`;
+        console.error(`Job ${jobId} failed permanently: ${errorMessage}`);
+
+        await this.updateJobStatus(jobId, JobStatus.FAILED, {
+          completedAt: Date.now().toString(),
+          error: errorMessage,
+        });
+
+        await this.redisClient.lPush('jobs:queue:dlq', jobId);
+        return;
       }
 
       // AbortControllerを作成してタイムアウト時にキャンセルできるようにする
