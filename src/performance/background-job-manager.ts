@@ -97,8 +97,15 @@ export interface BackgroundJobManagerConfig {
 
 /**
  * ジョブハンドラー型
+ * @param payload - ジョブのペイロード
+ * @param jobId - ジョブID
+ * @param signal - AbortSignal (タイムアウト時にキャンセルされる)
  */
-export type JobHandler = (payload: Record<string, any>, jobId: string) => Promise<any>;
+export type JobHandler = (
+  payload: Record<string, any>,
+  jobId: string,
+  signal: AbortSignal
+) => Promise<any>;
 
 /**
  * BackgroundJobManagerクラス
@@ -130,7 +137,18 @@ export class BackgroundJobManager {
       console.error('Redis client error:', err);
     });
 
-    await this.redisClient.connect();
+    try {
+      await this.redisClient.connect();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error(
+        `Failed to connect to Redis at ${this.config.redisUrl}: ${errorMessage}`,
+        error
+      );
+      throw new Error(
+        `BackgroundJobManager initialization failed: Unable to connect to Redis at ${this.config.redisUrl}. ${errorMessage}`
+      );
+    }
   }
 
   /**
@@ -155,11 +173,28 @@ export class BackgroundJobManager {
       createdAt: Date.now(),
     };
 
+    // ペイロードをシリアライズ（Redisへの書き込み前にエラーをキャッチ）
+    let serializedPayload: string;
+    try {
+      serializedPayload = JSON.stringify(job.payload);
+    } catch (serializationError) {
+      const errorMessage = serializationError instanceof Error
+        ? serializationError.message
+        : 'Unknown serialization error';
+      console.error(
+        `Failed to serialize job payload for type "${params.type}": ${errorMessage}`,
+        serializationError
+      );
+      throw new Error(
+        `Failed to serialize job payload: ${errorMessage}. Job type: ${params.type}`
+      );
+    }
+
     // ジョブ情報をハッシュに保存
     await this.redisClient.hSet(`jobs:data:${jobId}`, {
       id: job.id,
       type: job.type,
-      payload: JSON.stringify(job.payload),
+      payload: serializedPayload,
       priority: job.priority,
       status: job.status,
       maxRetries: job.maxRetries.toString(),
@@ -248,18 +283,40 @@ export class BackgroundJobManager {
       const jobData = await this.redisClient.hGetAll(`jobs:data:${jobId}`);
       if (!jobData || !jobData['type']) {
         console.warn(`Job ${jobId} not found or missing type`);
+        // ジョブIDは既にキューから取り出されているため、DLQに移動して失われないようにする
+        await this.redisClient.lPush('jobs:queue:dlq', jobId);
+        return;
+      }
+
+      // payloadを安全にパース
+      let payload: Record<string, any> = {};
+      const rawPayload = jobData['payload'] ?? '{}';
+      try {
+        payload = JSON.parse(rawPayload);
+      } catch (parseError) {
+        console.warn(
+          `Failed to parse payload for job ${jobId}. Raw payload: ${rawPayload}`,
+          parseError
+        );
+        // パース失敗時はジョブを失敗としてマーク
+        await this.updateJobStatus(jobId, JobStatus.FAILED, {
+          completedAt: Date.now().toString(),
+          error: `Invalid JSON payload: ${parseError instanceof Error ? parseError.message : 'Unknown parse error'}`,
+        });
         return;
       }
 
       const job: Job = {
         id: jobData['id'] ?? jobId,
         type: jobData['type'],
-        payload: JSON.parse(jobData['payload'] ?? '{}'),
+        payload,
         priority: (jobData['priority'] as JobPriority) ?? JobPriority.NORMAL,
         status: (jobData['status'] as JobStatus) ?? JobStatus.PENDING,
         maxRetries: parseInt(jobData['maxRetries'] ?? '3', 10),
         retryCount: parseInt(jobData['retryCount'] ?? '0', 10),
-        createdAt: parseInt(jobData['createdAt'] ?? Date.now().toString(), 10),
+        createdAt: jobData['createdAt'] && jobData['createdAt'].trim() !== ''
+          ? parseInt(jobData['createdAt'], 10)
+          : 0,
       };
 
       // ステータスを処理中に更新
@@ -270,19 +327,47 @@ export class BackgroundJobManager {
       // ハンドラーを取得
       const handler = this.handlers.get(job.type);
       if (!handler) {
-        throw new Error(`No handler registered for job type: ${job.type}`);
+        // ハンドラー未登録は永続的な失敗として扱い、リトライせずDLQに移動
+        const errorMessage = `No handler registered for job type: ${job.type}`;
+        console.error(`Job ${jobId} failed permanently: ${errorMessage}`);
+
+        await this.updateJobStatus(jobId, JobStatus.FAILED, {
+          completedAt: Date.now().toString(),
+          error: errorMessage,
+        });
+
+        await this.redisClient.lPush('jobs:queue:dlq', jobId);
+        return;
       }
+
+      // AbortControllerを作成してタイムアウト時にキャンセルできるようにする
+      const abortController = new AbortController();
 
       // タイムアウト付きでハンドラーを実行
       const result = await this.executeWithTimeout(
-        handler(job.payload, job.id),
-        this.config.jobTimeout
+        handler(job.payload, job.id, abortController.signal),
+        this.config.jobTimeout,
+        abortController
       );
 
       // 成功
+      // result を安全にシリアライズ
+      let serializedResult: string;
+      try {
+        serializedResult = JSON.stringify(result);
+      } catch (serializationError) {
+        // 循環参照や非シリアライズ可能な値の場合
+        console.warn(
+          `Failed to serialize result for job ${jobId}:`,
+          serializationError instanceof Error ? serializationError.message : 'Unknown serialization error'
+        );
+        // フォールバック: 型情報を含む安全な文字列
+        serializedResult = `[Non-serializable result: ${typeof result}]`;
+      }
+
       await this.updateJobStatus(jobId, JobStatus.COMPLETED, {
         completedAt: Date.now().toString(),
-        result: JSON.stringify(result),
+        result: serializedResult,
       });
     } catch (error) {
       // エラー処理
@@ -292,14 +377,32 @@ export class BackgroundJobManager {
 
   /**
    * タイムアウト付きで関数を実行
+   * タイムアウト時にAbortControllerを使用してジョブをキャンセルし、リソースリークを防ぐ
    */
-  private async executeWithTimeout<T>(promise: Promise<T>, timeout: number): Promise<T> {
-    return Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        setTimeout(() => reject(new Error('Job execution timeout')), timeout);
-      }),
-    ]);
+  private async executeWithTimeout<T>(
+    promise: Promise<T>,
+    timeout: number,
+    abortController: AbortController
+  ): Promise<T> {
+    let timeoutId: NodeJS.Timeout | undefined;
+
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_, reject) => {
+          timeoutId = setTimeout(() => {
+            // タイムアウト時にAbortControllerをトリガーしてジョブをキャンセル
+            abortController.abort();
+            reject(new Error('Job execution timeout'));
+          }, timeout);
+        }),
+      ]);
+    } finally {
+      // タイムアウトをクリア
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+    }
   }
 
   /**
@@ -324,9 +427,15 @@ export class BackgroundJobManager {
       });
 
       // 遅延後に再キュー
+      // シャットダウン時に this.redisClient が null になる可能性があるため、
+      // setTimeout スケジュール前にローカル変数にキャプチャ
+      const redis = this.redisClient;
+      const priority = (jobData['priority'] as JobPriority) ?? JobPriority.NORMAL;
       setTimeout(async () => {
-        const priority = (jobData['priority'] as JobPriority) ?? JobPriority.NORMAL;
-        await this.redisClient!.lPush(`jobs:queue:${priority}`, jobId);
+        // redis が null でないことを確認してから lPush を呼び出す
+        if (redis && redis.isOpen) {
+          await redis.lPush(`jobs:queue:${priority}`, jobId);
+        }
       }, this.config.retryDelay);
     } else {
       // 最大リトライ回数を超えた場合、デッドレターキューに移動
@@ -370,19 +479,40 @@ export class BackgroundJobManager {
       return null;
     }
 
+    // payloadを安全にパース
+    let payload: Record<string, any> = {};
+    const rawPayload = jobData['payload'] ?? '{}';
+    try {
+      payload = JSON.parse(rawPayload);
+    } catch (parseError) {
+      console.warn(
+        `Failed to parse payload for job ${jobId}. Raw payload: ${rawPayload}`,
+        parseError
+      );
+      // パース失敗時は空オブジェクトを使用
+    }
+
     return {
       id: jobData['id'],
       type: jobData['type'] ?? 'unknown',
-      payload: JSON.parse(jobData['payload'] ?? '{}'),
+      payload,
       priority: (jobData['priority'] as JobPriority) ?? JobPriority.NORMAL,
       status: (jobData['status'] as JobStatus) ?? JobStatus.PENDING,
       maxRetries: parseInt(jobData['maxRetries'] ?? '3', 10),
       retryCount: parseInt(jobData['retryCount'] ?? '0', 10),
-      createdAt: parseInt(jobData['createdAt'] ?? Date.now().toString(), 10),
-      startedAt: jobData['startedAt'] ? parseInt(jobData['startedAt'], 10) : undefined,
-      completedAt: jobData['completedAt'] ? parseInt(jobData['completedAt'], 10) : undefined,
+      createdAt: jobData['createdAt'] && jobData['createdAt'].trim() !== ''
+        ? parseInt(jobData['createdAt'], 10)
+        : 0,
+      startedAt: jobData['startedAt'] && jobData['startedAt'].trim() !== ''
+        ? parseInt(jobData['startedAt'], 10)
+        : undefined,
+      completedAt: jobData['completedAt'] && jobData['completedAt'].trim() !== ''
+        ? parseInt(jobData['completedAt'], 10)
+        : undefined,
       error: jobData['error'],
-      progress: jobData['progress'] ? parseInt(jobData['progress'], 10) : undefined,
+      progress: jobData['progress'] && jobData['progress'].trim() !== ''
+        ? parseInt(jobData['progress'], 10)
+        : undefined,
       progressMessage: jobData['progressMessage'],
     };
   }

@@ -106,9 +106,9 @@ describe('IndexOptimizer - Task 10.1: Index Optimization', () => {
         efConstruction: 128,
       });
 
-      expect(mockPgPool.query).toHaveBeenCalledWith('DROP INDEX IF EXISTS memories_embedding_hnsw_idx');
+      expect(mockPgPool.query).toHaveBeenCalledWith('DROP INDEX IF EXISTS "memories_embedding_hnsw_idx"');
       expect(mockPgPool.query).toHaveBeenCalledWith(
-        expect.stringContaining('CREATE INDEX memories_embedding_hnsw_idx')
+        expect.stringContaining('CREATE INDEX "memories_embedding_hnsw_idx"')
       );
       expect(mockPgPool.query).toHaveBeenCalledWith(expect.stringContaining('m = 32'));
       expect(mockPgPool.query).toHaveBeenCalledWith(expect.stringContaining('ef_construction = 128'));
@@ -164,7 +164,7 @@ describe('IndexOptimizer - Task 10.1: Index Optimization', () => {
 
       await optimizer.reindexTable('memories');
 
-      expect(mockPgPool.query).toHaveBeenCalledWith('REINDEX TABLE memories');
+      expect(mockPgPool.query).toHaveBeenCalledWith('REINDEX TABLE "memories"');
     });
   });
 

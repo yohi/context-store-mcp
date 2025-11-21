@@ -130,6 +130,23 @@ describe('BatchProcessor - Task 10.1: Batch Processing', () => {
       expect(stats.requestsRemaining).toBeLessThanOrEqual(100);
     });
 
+    it('should use dynamic token estimation', async () => {
+      const items = ['short', 'longer content', 'very long content for testing'];
+      const processorFn = async (item: string) => item;
+
+      await processor.processBatch(items, processorFn, {
+        itemToContent: (item) => item,
+      });
+
+      const stats = processor.getRateLimitStats();
+
+      // 'short' -> 5 chars -> ceil(5/4) = 2
+      // 'longer content' -> 14 chars -> ceil(14/4) = 4
+      // 'very long content for testing' -> 29 chars -> ceil(29/4) = 8
+      // Total: 14 tokens
+      expect(stats.tokenCount).toBe(14);
+    });
+
     it('should provide rate limit statistics', () => {
       const stats = processor.getRateLimitStats();
 
