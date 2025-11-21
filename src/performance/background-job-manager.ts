@@ -284,7 +284,9 @@ export class BackgroundJobManager {
         status: (jobData['status'] as JobStatus) ?? JobStatus.PENDING,
         maxRetries: parseInt(jobData['maxRetries'] ?? '3', 10),
         retryCount: parseInt(jobData['retryCount'] ?? '0', 10),
-        createdAt: jobData['createdAt'] ? parseInt(jobData['createdAt'], 10) : 0,
+        createdAt: jobData['createdAt'] && jobData['createdAt'].trim() !== ''
+          ? parseInt(jobData['createdAt'], 10)
+          : 0,
       };
 
       // ステータスを処理中に更新
@@ -309,9 +311,23 @@ export class BackgroundJobManager {
       );
 
       // 成功
+      // result を安全にシリアライズ
+      let serializedResult: string;
+      try {
+        serializedResult = JSON.stringify(result);
+      } catch (serializationError) {
+        // 循環参照や非シリアライズ可能な値の場合
+        console.warn(
+          `Failed to serialize result for job ${jobId}:`,
+          serializationError instanceof Error ? serializationError.message : 'Unknown serialization error'
+        );
+        // フォールバック: 型情報を含む安全な文字列
+        serializedResult = `[Non-serializable result: ${typeof result}]`;
+      }
+
       await this.updateJobStatus(jobId, JobStatus.COMPLETED, {
         completedAt: Date.now().toString(),
-        result: JSON.stringify(result),
+        result: serializedResult,
       });
     } catch (error) {
       // エラー処理
@@ -444,11 +460,19 @@ export class BackgroundJobManager {
       status: (jobData['status'] as JobStatus) ?? JobStatus.PENDING,
       maxRetries: parseInt(jobData['maxRetries'] ?? '3', 10),
       retryCount: parseInt(jobData['retryCount'] ?? '0', 10),
-      createdAt: jobData['createdAt'] ? parseInt(jobData['createdAt'], 10) : 0,
-      startedAt: jobData['startedAt'] ? parseInt(jobData['startedAt'], 10) : undefined,
-      completedAt: jobData['completedAt'] ? parseInt(jobData['completedAt'], 10) : undefined,
+      createdAt: jobData['createdAt'] && jobData['createdAt'].trim() !== ''
+        ? parseInt(jobData['createdAt'], 10)
+        : 0,
+      startedAt: jobData['startedAt'] && jobData['startedAt'].trim() !== ''
+        ? parseInt(jobData['startedAt'], 10)
+        : undefined,
+      completedAt: jobData['completedAt'] && jobData['completedAt'].trim() !== ''
+        ? parseInt(jobData['completedAt'], 10)
+        : undefined,
       error: jobData['error'],
-      progress: jobData['progress'] ? parseInt(jobData['progress'], 10) : undefined,
+      progress: jobData['progress'] && jobData['progress'].trim() !== ''
+        ? parseInt(jobData['progress'], 10)
+        : undefined,
       progressMessage: jobData['progressMessage'],
     };
   }
