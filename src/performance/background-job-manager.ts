@@ -324,10 +324,13 @@ export class BackgroundJobManager {
       });
 
       // 遅延後に再キュー
+      // シャットダウン時に this.redisClient が null になる可能性があるため、
+      // setTimeout スケジュール前にローカル変数にキャプチャ
       const redis = this.redisClient;
       const priority = (jobData['priority'] as JobPriority) ?? JobPriority.NORMAL;
       setTimeout(async () => {
-        if (redis) {
+        // redis が null でないことを確認してから lPush を呼び出す
+        if (redis && redis.isOpen) {
           await redis.lPush(`jobs:queue:${priority}`, jobId);
         }
       }, this.config.retryDelay);
