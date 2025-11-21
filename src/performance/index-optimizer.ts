@@ -444,22 +444,25 @@ export class IndexOptimizer {
     let bloatRatio = 0;
     if (this.pgPool) {
       try {
-        // 識別子の検証（戻り値は使用しないが、検証のために呼び出す）
+        // 識別子の検証
+        this.validateAndQuoteIdentifier(idx.schemaName);
         this.validateAndQuoteIdentifier(idx.indexName);
         this.validateAndQuoteIdentifier(idx.tableName);
 
-        // クエリパラメータとして渡すために元の名前を使用するが、
-        // regclassキャストのためにスキーマ修飾が必要な場合があるため、
-        // ここでは簡易的にpg_relation_sizeの引数として安全な文字列を渡す
+        // スキーマ修飾された識別子を作成
+        // regclassキャストを使用してPostgreSQLに識別子を解決させる
+        const qualifiedIndexName = `${idx.schemaName}.${idx.indexName}`;
+        const qualifiedTableName = `${idx.schemaName}.${idx.tableName}`;
+
         const result = await this.pgPool.query(
           `
           SELECT
             CASE
-              WHEN pg_relation_size($2) = 0 THEN 0
-              ELSE (pg_relation_size($1)::float / pg_relation_size($2)::float) * 100
+              WHEN pg_relation_size($2::regclass) = 0 THEN 0
+              ELSE (pg_relation_size($1::regclass)::float / pg_relation_size($2::regclass)::float) * 100
             END AS bloat_ratio
         `,
-          [idx.indexName, idx.tableName]
+          [qualifiedIndexName, qualifiedTableName]
         );
 
         bloatRatio = parseFloat(result.rows[0]?.bloat_ratio ?? '0');

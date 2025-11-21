@@ -33,13 +33,62 @@ describe('BackgroundJobManager - Task 10.1: Async Processing', () => {
   let manager: BackgroundJobManager;
 
   beforeEach(() => {
+    let shuttingDown = false;
+
+    // Redisクライアントのモック
+    // BackgroundJobManagerのインスタンス作成
+    manager = new BackgroundJobManager({
+      redisUrl: 'redis://localhost:6379',
+      maxWorkers: 2,
+      jobTimeout: 30000,
+    });
+
+    let brPopCallCount = 0;
+    // brPopのモック応答キュー
+    const mockBrPopResponses: any[] = [];
+
+    // テストヘルパー: brPopの応答をキューに追加
+    (global as any).queueMockBrPopResponse = (response: any) => {
+      mockBrPopResponses.push(response);
+    };
+
     // Redisクライアントのモック
     mockRedisClient = {
       connect: vi.fn().mockResolvedValue(undefined),
-      disconnect: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn().mockImplementation(async () => {
+        shuttingDown = true;
+        mockRedisClient.isOpen = false;
+        // console.log('Redis mock: Disconnect called, shuttingDown = true');
+      }),
       lPush: vi.fn().mockResolvedValue(1),
       // デフォルトはタイムアウト（null返却）
-      brPop: vi.fn().mockResolvedValue(null),
+      // メモリリーク防止のため、vi.fn()ではなく通常の関数を使用
+      brPop: async () => {
+        brPopCallCount++;
+        if (brPopCallCount > 1000) {
+          console.error('Infinite loop detected in brPop mock');
+          throw new Error('Infinite loop detected in brPop mock');
+        }
+
+        // モック応答があればそれを返す
+        if (mockBrPopResponses.length > 0) {
+          const response = mockBrPopResponses.shift();
+          // 即座に返すのではなく、少し待機して非同期性をシミュレート
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          return response;
+        }
+
+        // Managerがシャットダウン中か、Redisが切断されていたら
+        // 即座にnullを返す（ホットループ防止のため0ms待機）
+        const isManagerShuttingDown = (manager as any)?.shuttingDown;
+        if (shuttingDown || !mockRedisClient.isOpen || isManagerShuttingDown) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          return null;
+        }
+        // 通常のタイムアウト待機
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return null;
+      },
       hSet: vi.fn().mockResolvedValue(1),
       hGetAll: vi.fn(),
       del: vi.fn().mockResolvedValue(1),
@@ -47,18 +96,12 @@ describe('BackgroundJobManager - Task 10.1: Async Processing', () => {
       on: vi.fn(),
       isOpen: true, // Redis接続状態
     };
-
-    // BackgroundJobManagerのインスタンス作成
-    manager = new BackgroundJobManager({
-      redisUrl: 'redis://localhost:6379',
-      maxWorkers: 2, // テスト時はWorker数を減らす
-      jobTimeout: 30000,
-    });
   });
 
   afterEach(async () => {
     try {
       await manager.shutdown();
+      // console.log('Manager shutdown completed');
     } catch (error) {
       // Shutdown errors are acceptable in tests
       console.warn('Shutdown error in test:', error);
@@ -160,13 +203,11 @@ describe('BackgroundJobManager - Task 10.1: Async Processing', () => {
         payload: { data: 'test' },
       });
 
-      // モック: 最初の1回だけジョブを返し、その後はnull（タイムアウト）
-      mockRedisClient.brPop
-        .mockResolvedValueOnce({
-          key: 'jobs:queue:normal',
-          element: jobId,
-        })
-        .mockResolvedValue(null);
+      // モック: 最初の1回だけジョブを返す
+      (global as any).queueMockBrPopResponse({
+        key: 'jobs:queue:normal',
+        element: jobId,
+      });
 
       mockRedisClient.hGetAll.mockResolvedValue({
         id: jobId,
@@ -183,15 +224,29 @@ describe('BackgroundJobManager - Task 10.1: Async Processing', () => {
       // ジョブが処理されるまで待機
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      expect(handler).toHaveBeenCalledWith({ data: 'test' }, expect.any(String));
+      expect(handler).toHaveBeenCalledWith({ data: 'test' }, expect.any(String), expect.any(Object));
     });
 
     it('should handle job timeout', async () => {
+      // 短いタイムアウトでManagerを再作成
+      await manager.shutdown(); // 前のManagerをクリーンアップ
+      manager = new BackgroundJobManager({
+        redisUrl: 'redis://localhost:6379',
+        maxWorkers: 2,
+        jobTimeout: 50, // 50msでタイムアウト
+      });
       await manager.initialize();
 
       // タイムアウトするハンドラーを登録
+      let signalAborted = false;
       const handler = vi.fn().mockImplementation(
-        () => new Promise((resolve) => setTimeout(resolve, 35000)) // 30秒を超える
+        (_payload, _jobId, signal: AbortSignal) => {
+          // AbortSignalのabortイベントをリッスン
+          signal.addEventListener('abort', () => {
+            signalAborted = true;
+          });
+          return new Promise((resolve) => setTimeout(resolve, 200)); // タイムアウトより長く待つ
+        }
       );
       manager.registerHandler('slow_job', handler);
 
@@ -200,12 +255,10 @@ describe('BackgroundJobManager - Task 10.1: Async Processing', () => {
         payload: { data: 'test' },
       });
 
-      mockRedisClient.brPop
-        .mockResolvedValueOnce({
-          key: 'jobs:queue:normal',
-          element: jobId,
-        })
-        .mockResolvedValue(null);
+      (global as any).queueMockBrPopResponse({
+        key: 'jobs:queue:normal',
+        element: jobId,
+      });
 
       mockRedisClient.hGetAll.mockResolvedValue({
         id: jobId,
@@ -214,17 +267,26 @@ describe('BackgroundJobManager - Task 10.1: Async Processing', () => {
         payload: JSON.stringify({ data: 'test' }),
         createdAt: Date.now().toString(),
         maxRetries: '3',
-        retryCount: '0',
+        retryCount: '3', // リトライ上限に達している状態にする
       });
 
       await manager.startWorkers();
 
-      // タイムアウトまで待機
+      // タイムアウトまで待機 (50ms + マージン)
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       // タイムアウトによりジョブが失敗することを確認
-      const status = await manager.getJobStatus(jobId);
-      expect(status?.status).toBe(JobStatus.FAILED);
+      // hSetはオブジェクトで呼ばれる可能性があるため、objectContainingを使用
+      expect(mockRedisClient.hSet).toHaveBeenCalledWith(
+        `jobs:data:${jobId}`,
+        expect.objectContaining({
+          status: JobStatus.FAILED,
+          error: 'Job execution timeout'
+        })
+      );
+
+      // AbortSignalがabortされたことを確認
+      expect(signalAborted).toBe(true);
     });
   });
 
@@ -233,7 +295,7 @@ describe('BackgroundJobManager - Task 10.1: Async Processing', () => {
       await manager.initialize();
 
       let attemptCount = 0;
-      const handler = vi.fn().mockImplementation(() => {
+      const handler = vi.fn().mockImplementation((_payload, _jobId, _signal: AbortSignal) => {
         attemptCount++;
         if (attemptCount < 3) {
           throw new Error('Temporary failure');
@@ -249,12 +311,10 @@ describe('BackgroundJobManager - Task 10.1: Async Processing', () => {
         maxRetries: 3,
       });
 
-      // ジョブ処理のシミュレーション: 3回だけジョブを返し、その後はnull
-      mockRedisClient.brPop
-        .mockResolvedValueOnce({ key: 'jobs:queue:normal', element: jobId })
-        .mockResolvedValueOnce({ key: 'jobs:queue:normal', element: jobId })
-        .mockResolvedValueOnce({ key: 'jobs:queue:normal', element: jobId })
-        .mockResolvedValue(null);
+      // ジョブ処理のシミュレーション（3回試行）
+      (global as any).queueMockBrPopResponse({ key: 'jobs:queue:normal', element: jobId });
+      (global as any).queueMockBrPopResponse({ key: 'jobs:queue:normal', element: jobId });
+      (global as any).queueMockBrPopResponse({ key: 'jobs:queue:normal', element: jobId });
 
       let retryCount = 0;
       mockRedisClient.hGetAll.mockImplementation(() => {
@@ -292,9 +352,7 @@ describe('BackgroundJobManager - Task 10.1: Async Processing', () => {
         maxRetries: 2,
       });
 
-      mockRedisClient.brPop
-        .mockResolvedValueOnce({ key: 'jobs:queue:normal', element: jobId })
-        .mockResolvedValue(null);
+      (global as any).queueMockBrPopResponse({ key: 'jobs:queue:normal', element: jobId });
 
       mockRedisClient.hGetAll.mockResolvedValue({
         id: jobId,
@@ -347,9 +405,7 @@ describe('BackgroundJobManager - Task 10.1: Async Processing', () => {
         payload: { data: 'test' },
       });
 
-      mockRedisClient.brPop
-        .mockResolvedValueOnce({ key: 'jobs:queue:normal', element: jobId })
-        .mockResolvedValue(null);
+      (global as any).queueMockBrPopResponse({ key: 'jobs:queue:normal', element: jobId });
 
       mockRedisClient.hGetAll.mockResolvedValue({
         id: jobId,
@@ -393,7 +449,7 @@ describe('BackgroundJobManager - Task 10.1: Async Processing', () => {
 
       let jobCompleted = false;
       const handler = vi.fn().mockImplementation(
-        () =>
+        (_payload, _jobId, _signal: AbortSignal) =>
           new Promise((resolve) => {
             setTimeout(() => {
               jobCompleted = true;
@@ -409,9 +465,7 @@ describe('BackgroundJobManager - Task 10.1: Async Processing', () => {
         payload: { data: 'test' },
       });
 
-      mockRedisClient.brPop
-        .mockResolvedValueOnce({ key: 'jobs:queue:normal', element: jobId })
-        .mockResolvedValue(null);
+      (global as any).queueMockBrPopResponse({ key: 'jobs:queue:normal', element: jobId });
 
       mockRedisClient.hGetAll.mockResolvedValue({
         id: jobId,
