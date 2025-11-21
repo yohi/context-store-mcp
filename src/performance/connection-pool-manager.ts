@@ -29,8 +29,6 @@ export interface PostgresPoolConfig {
   idleTimeoutMillis?: number;
   /** 接続タイムアウト (ミリ秒, デフォルト: 2000) */
   connectionTimeoutMillis?: number;
-  /** 接続最大生存時間 (ミリ秒, デフォルト: 600000) */
-  maxLifetimeMillis?: number;
 }
 
 /**
@@ -107,7 +105,6 @@ export class ConnectionPoolManager {
       min: 5,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 2000,
-      maxLifetimeMillis: 600000,
     };
 
     const pgPoolSettings = { ...pgPoolDefaults, ...postgresConfig.poolConfig };
@@ -122,8 +119,6 @@ export class ConnectionPoolManager {
       min: pgPoolSettings.min,
       idleTimeoutMillis: pgPoolSettings.idleTimeoutMillis,
       connectionTimeoutMillis: pgPoolSettings.connectionTimeoutMillis,
-      // NOTE: pg@8.14.0では maxLifetimeMillis はサポートされていない
-      // アプリケーション側で接続の再作成を管理する必要がある
     };
 
     // Neo4j接続プール設定

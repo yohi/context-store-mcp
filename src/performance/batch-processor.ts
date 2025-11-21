@@ -63,7 +63,10 @@ export class BatchProcessor {
   public async processBatch<T, R>(
     items: T[],
     processor: (item: T) => Promise<R>,
-    options?: { priority?: JobPriority }
+    options?: {
+      priority?: JobPriority;
+      itemToContent?: (item: T) => string;
+    }
   ): Promise<BatchResult<R>> {
     const startTime = Date.now();
     const successful: R[] = [];
@@ -74,8 +77,13 @@ export class BatchProcessor {
 
     for (const batch of batches) {
       // 並列処理（最大同時実行数制限）
-      const tasks = batch.map((item) => async () =>
-        this.processWithRateLimit(async () => {
+      // 並列処理（最大同時実行数制限）
+      const tasks = batch.map((item) => async () => {
+        const content =
+          options?.itemToContent?.(item) ?? JSON.stringify(item);
+        const tokenCount = this.estimateTokenCount(content);
+
+        return this.processWithRateLimit(async () => {
           try {
             const result = await processor(item);
             successful.push(result);
@@ -84,8 +92,8 @@ export class BatchProcessor {
             failed.push({ item, error: error as Error });
             throw error;
           }
-        })
-      );
+        }, tokenCount);
+      });
 
       // 最大同時実行数を制御
       await this.executeWithConcurrencyLimit(tasks, this.config.maxConcurrency);
@@ -144,9 +152,15 @@ export class BatchProcessor {
   /**
    * レート制限付き処理実行
    */
-  private async processWithRateLimit<T>(fn: () => Promise<T>): Promise<T> {
+  /**
+   * レート制限付き処理実行
+   */
+  private async processWithRateLimit<T>(
+    fn: () => Promise<T>,
+    tokenCount: number = 100
+  ): Promise<T> {
     await this.waitForRateLimit();
-    this.incrementCounters();
+    this.incrementCounters(tokenCount);
     return fn();
   }
 
@@ -172,15 +186,34 @@ export class BatchProcessor {
       this.requestCount = 0;
       this.tokenCount = 0;
       this.lastResetTime = Date.now();
+      return;
+    }
+
+    // TPM制限チェック
+    if (this.tokenCount >= this.config.rateLimitTPM) {
+      const waitTime = 60000 - elapsed;
+      await new Promise((resolve) => setTimeout(resolve, waitTime));
+      this.requestCount = 0;
+      this.tokenCount = 0;
+      this.lastResetTime = Date.now();
     }
   }
 
   /**
    * カウンター増加
    */
-  private incrementCounters(): void {
+  private incrementCounters(tokenCount: number = 100): void {
     this.requestCount++;
-    this.tokenCount += 1000; // 推定トークン数
+    this.tokenCount += tokenCount;
+  }
+
+  /**
+   * トークン数推定
+   */
+  private estimateTokenCount(content: string): number {
+    // 簡易的な推定: 日本語も考慮して文字数/4程度とする
+    // 実際にはtiktokenなどを使用するのが望ましいが、ここでは簡易実装
+    return Math.ceil(content.length / 4);
   }
 
   /**

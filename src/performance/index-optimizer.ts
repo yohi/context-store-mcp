@@ -82,8 +82,8 @@ export interface IndexStats {
  * IndexOptimizer設定
  */
 export interface IndexOptimizerConfig {
-  pgPool?: PgPool;
-  neo4jDriver?: Neo4jDriver;
+  pgPool?: PgPool | null;
+  neo4jDriver?: Neo4jDriver | null;
   unusedThreshold?: number; // インデックススキャン回数の閾値
   bloatThreshold?: number; // 肥大化率の閾値 (%)
   monitoringInterval?: number; // ミリ秒
@@ -95,25 +95,18 @@ export interface IndexOptimizerConfig {
 export class IndexOptimizer {
   private pgPool: PgPool | null = null;
   private neo4jDriver: Neo4jDriver | null = null;
-  private config: Required<IndexOptimizerConfig>;
+  private config: Required<Omit<IndexOptimizerConfig, 'pgPool' | 'neo4jDriver'>>;
   private monitoringTimer: NodeJS.Timeout | null = null;
   private indexHealthCache: Map<string, IndexHealth> = new Map();
 
   constructor(config: IndexOptimizerConfig) {
+    this.pgPool = config.pgPool ?? null;
+    this.neo4jDriver = config.neo4jDriver ?? null;
     this.config = {
-      pgPool: config.pgPool ?? null,
-      neo4jDriver: config.neo4jDriver ?? null,
       unusedThreshold: config.unusedThreshold ?? 10,
       bloatThreshold: config.bloatThreshold ?? 30,
       monitoringInterval: config.monitoringInterval ?? 3600000, // 1時間
     };
-
-    if (config.pgPool) {
-      this.pgPool = config.pgPool;
-    }
-    if (config.neo4jDriver) {
-      this.neo4jDriver = config.neo4jDriver;
-    }
   }
 
   /**
@@ -219,21 +212,28 @@ export class IndexOptimizer {
     const m = config.m ?? 16;
     const efConstruction = config.efConstruction ?? 64;
 
-    const indexName = `${tableName}_${columnName}_hnsw_idx`;
+    // 識別子の検証とクォート
+    const safeTableName = this.validateAndQuoteIdentifier(tableName);
+    const safeColumnName = this.validateAndQuoteIdentifier(columnName);
+
+    const rawIndexName = `${tableName}_${columnName}_hnsw_idx`;
+    const safeIndexName = this.validateAndQuoteIdentifier(rawIndexName);
 
     try {
       // 既存インデックスを削除
-      await this.pgPool.query(`DROP INDEX IF EXISTS ${indexName}`);
+      await this.pgPool.query(`DROP INDEX IF EXISTS ${safeIndexName}`);
 
       // 最適化されたHNSWインデックスを作成
       await this.pgPool.query(`
-        CREATE INDEX ${indexName}
-        ON ${tableName}
-        USING hnsw (${columnName} vector_cosine_ops)
+        CREATE INDEX ${safeIndexName}
+        ON ${safeTableName}
+        USING hnsw (${safeColumnName} vector_cosine_ops)
         WITH (m = ${m}, ef_construction = ${efConstruction})
       `);
 
-      console.log(`HNSW index optimized: ${indexName} (m=${m}, ef_construction=${efConstruction})`);
+      console.log(
+        `HNSW index optimized: ${rawIndexName} (m=${m}, ef_construction=${efConstruction})`
+      );
     } catch (error) {
       console.error('Failed to optimize HNSW index:', error);
       throw error;
@@ -250,6 +250,11 @@ export class IndexOptimizer {
   ): Promise<void> {
     if (!this.neo4jDriver) {
       throw new Error('Neo4j driver not initialized');
+    }
+
+    // 識別子の検証
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(label) || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(property)) {
+      throw new Error('Invalid label or property name');
     }
 
     const session = this.neo4jDriver.session();
@@ -279,6 +284,11 @@ export class IndexOptimizer {
   public async dropNeo4jIndex(indexName: string): Promise<void> {
     if (!this.neo4jDriver) {
       throw new Error('Neo4j driver not initialized');
+    }
+
+    // 識別子の検証
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(indexName)) {
+      throw new Error('Invalid index name');
     }
 
     const session = this.neo4jDriver.session();
@@ -373,12 +383,26 @@ export class IndexOptimizer {
     }
 
     try {
-      await this.pgPool.query(`REINDEX TABLE ${tableName}`);
+      const safeTableName = this.validateAndQuoteIdentifier(tableName);
+      await this.pgPool.query(`REINDEX TABLE ${safeTableName}`);
       console.log(`Table reindexed: ${tableName}`);
     } catch (error) {
       console.error('Failed to reindex table:', error);
       throw error;
     }
+  }
+
+  /**
+   * 識別子を検証してクォートする
+   * SQLインジェクション対策
+   */
+  private validateAndQuoteIdentifier(identifier: string): string {
+    // 英数字とアンダースコアのみ許可
+    if (!/^[a-zA-Z0-9_]+$/.test(identifier)) {
+      throw new Error(`Invalid identifier: ${identifier}`);
+    }
+    // 二重引用符で囲み、内部の二重引用符をエスケープ
+    return `"${identifier.replace(/"/g, '""')}"`;
   }
 
   /**
@@ -391,7 +415,7 @@ export class IndexOptimizer {
         const indexes = await this.getPostgresIndexes();
 
         for (const idx of indexes) {
-          const health = this.calculateIndexHealth(idx);
+          const health = await this.calculateIndexHealth(idx);
           this.indexHealthCache.set(`pg:${idx.indexName}`, health);
         }
       }
@@ -413,9 +437,36 @@ export class IndexOptimizer {
   /**
    * PostgreSQLインデックスヘルスを計算
    */
-  private calculateIndexHealth(idx: PostgresIndexInfo): IndexHealth {
+  private async calculateIndexHealth(idx: PostgresIndexInfo): Promise<IndexHealth> {
     const usageRate = idx.indexScanCount;
-    const bloatRatio = 0; // 簡略化（実際は別クエリで計算）
+
+    // インデックス肥大化率を計算
+    let bloatRatio = 0;
+    if (this.pgPool) {
+      try {
+        // 識別子の検証（戻り値は使用しないが、検証のために呼び出す）
+        this.validateAndQuoteIdentifier(idx.indexName);
+        this.validateAndQuoteIdentifier(idx.tableName);
+
+        // クエリパラメータとして渡すために元の名前を使用するが、
+        // regclassキャストのためにスキーマ修飾が必要な場合があるため、
+        // ここでは簡易的にpg_relation_sizeの引数として安全な文字列を渡す
+        const result = await this.pgPool.query(
+          `
+          SELECT
+            CASE
+              WHEN pg_relation_size($2) = 0 THEN 0
+              ELSE (pg_relation_size($1)::float / pg_relation_size($2)::float) * 100
+            END AS bloat_ratio
+        `,
+          [idx.indexName, idx.tableName]
+        );
+
+        bloatRatio = parseFloat(result.rows[0]?.bloat_ratio ?? '0');
+      } catch (error) {
+        console.warn(`Failed to calculate bloat ratio for ${idx.indexName}:`, error);
+      }
+    }
 
     let health: 'healthy' | 'warning' | 'critical' = 'healthy';
     const recommendations: string[] = [];

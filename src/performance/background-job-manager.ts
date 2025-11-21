@@ -324,9 +324,12 @@ export class BackgroundJobManager {
       });
 
       // 遅延後に再キュー
+      const redis = this.redisClient;
+      const priority = (jobData['priority'] as JobPriority) ?? JobPriority.NORMAL;
       setTimeout(async () => {
-        const priority = (jobData['priority'] as JobPriority) ?? JobPriority.NORMAL;
-        await this.redisClient!.lPush(`jobs:queue:${priority}`, jobId);
+        if (redis) {
+          await redis.lPush(`jobs:queue:${priority}`, jobId);
+        }
       }, this.config.retryDelay);
     } else {
       // 最大リトライ回数を超えた場合、デッドレターキューに移動

@@ -66,15 +66,16 @@ describe('QueryOptimizer - Task 10.1: Query Optimization', () => {
             'QUERY PLAN': [
               {
                 Plan: {
-                  nodeType: 'Index Scan',
-                  relationName: 'memories',
-                  startupCost: 0.0,
-                  totalCost: 8.27,
-                  planRows: 1,
-                  planWidth: 100,
-                  actualTime: [0.02, 0.03],
-                  actualRows: 1,
-                  actualLoops: 1,
+                  'Node Type': 'Index Scan',
+                  'Relation Name': 'memories',
+                  'Startup Cost': 0.0,
+                  'Total Cost': 8.27,
+                  'Plan Rows': 1,
+                  'Plan Width': 100,
+                  'Actual Startup Time': 0.02,
+                  'Actual Total Time': 0.03,
+                  'Actual Rows': 1,
+                  'Actual Loops': 1,
                 },
                 'Planning Time': 0.5,
                 'Execution Time': 1.2,
@@ -104,15 +105,16 @@ describe('QueryOptimizer - Task 10.1: Query Optimization', () => {
             'QUERY PLAN': [
               {
                 Plan: {
-                  nodeType: 'Seq Scan',
-                  relationName: 'memories',
-                  startupCost: 0.0,
-                  totalCost: 15000.0,
-                  planRows: 100000,
-                  planWidth: 100,
-                  actualTime: [10.5, 150.0],
-                  actualRows: 100000,
-                  actualLoops: 1,
+                  'Node Type': 'Seq Scan',
+                  'Relation Name': 'memories',
+                  'Startup Cost': 0.0,
+                  'Total Cost': 15000.0,
+                  'Plan Rows': 100000,
+                  'Plan Width': 100,
+                  'Actual Startup Time': 10.5,
+                  'Actual Total Time': 150.0,
+                  'Actual Rows': 100001, // 閾値(100000)を超えるように設定
+                  'Actual Loops': 1,
                 },
                 'Planning Time': 2.0,
                 'Execution Time': 155.0,
@@ -137,13 +139,13 @@ describe('QueryOptimizer - Task 10.1: Query Optimization', () => {
             'QUERY PLAN': [
               {
                 Plan: {
-                  nodeType: 'Nested Loop',
-                  startupCost: 0.0,
-                  totalCost: 5000.0,
-                  planRows: 2000,
-                  planWidth: 200,
-                  actualRows: 2000,
-                  actualLoops: 1,
+                  'Node Type': 'Nested Loop',
+                  'Startup Cost': 0.0,
+                  'Total Cost': 5000.0,
+                  'Plan Rows': 2000,
+                  'Plan Width': 200,
+                  'Actual Rows': 2000,
+                  'Actual Loops': 1,
                 },
                 'Planning Time': 1.0,
                 'Execution Time': 50.0,
@@ -209,9 +211,9 @@ describe('QueryOptimizer - Task 10.1: Query Optimization', () => {
     it('should profile PostgreSQL query and record execution time', async () => {
       const testQuery = 'SELECT * FROM memories WHERE id = 1';
 
-      mockPgPool.query.mockResolvedValue({
-        rows: [{ id: 1, content: 'test' }],
-      });
+      mockPgPool.query.mockImplementation(
+        () => new Promise((resolve) => setTimeout(() => resolve({ rows: [{ id: 1, content: 'test' }] }), 10))
+      );
 
       await optimizer.profileQuery(testQuery, 'postgresql');
 
@@ -246,7 +248,9 @@ describe('QueryOptimizer - Task 10.1: Query Optimization', () => {
     it('should update profile statistics on repeated queries', async () => {
       const testQuery = 'SELECT COUNT(*) FROM memories';
 
-      mockPgPool.query.mockResolvedValue({ rows: [{ count: 100 }] });
+      mockPgPool.query.mockImplementation(
+        () => new Promise((resolve) => setTimeout(() => resolve({ rows: [{ count: 100 }] }), 10))
+      );
 
       // 3回実行
       await optimizer.profileQuery(testQuery, 'postgresql');
@@ -263,12 +267,38 @@ describe('QueryOptimizer - Task 10.1: Query Optimization', () => {
 
   describe('Slow Query Detection', () => {
     it('should detect and record slow queries', async () => {
+      vi.useFakeTimers();
       const slowQuery = 'SELECT * FROM memories WHERE content LIKE \'%long%\'';
 
       // 遅延をシミュレート
-      mockPgPool.query.mockImplementation(
-        () => new Promise((resolve) => setTimeout(() => resolve({ rows: [] }), 150))
-      );
+      mockPgPool.query.mockImplementation((query: string) => {
+        if (query.includes('EXPLAIN')) {
+          return Promise.resolve({
+            rows: [
+              {
+                'QUERY PLAN': [
+                  {
+                    Plan: {
+                      'Node Type': 'Seq Scan',
+                      'Relation Name': 'memories',
+                      'Startup Cost': 0.0,
+                      'Total Cost': 100.0,
+                      'Plan Rows': 10,
+                      'Plan Width': 100,
+                      'Actual Rows': 10,
+                      'Actual Loops': 1,
+                    },
+                    'Planning Time': 0.1,
+                    'Execution Time': 0.2,
+                  },
+                ],
+              },
+            ],
+          });
+        }
+        vi.advanceTimersByTime(150);
+        return Promise.resolve({ rows: [] });
+      });
 
       await optimizer.profileQuery(slowQuery, 'postgresql');
 
@@ -278,21 +308,30 @@ describe('QueryOptimizer - Task 10.1: Query Optimization', () => {
       expect(slowQueries[0].query).toBe(slowQuery);
       expect(slowQueries[0].executionTime).toBeGreaterThanOrEqual(100);
       expect(slowQueries[0].database).toBe('postgresql');
+
+      vi.useRealTimers();
     });
 
     it('should limit slow query history to 100 entries', async () => {
-      mockPgPool.query.mockImplementation(
-        () => new Promise((resolve) => setTimeout(() => resolve({ rows: [] }), 150))
-      );
+      // スロークエリ閾値を0にして、遅延なしでも記録されるようにする
+      const fastOptimizer = new QueryOptimizer({
+        pgPool: mockPgPool,
+        neo4jDriver: mockNeo4jDriver,
+        slowQueryThreshold: 0,
+        enableAutoExplain: false, // EXPLAINは不要
+      });
+
+      mockPgPool.query.mockResolvedValue({ rows: [] });
 
       // 110個のスロークエリを生成
       for (let i = 0; i < 110; i++) {
-        await optimizer.profileQuery(`SELECT ${i}`, 'postgresql');
+        await fastOptimizer.profileQuery(`SELECT ${i}`, 'postgresql');
       }
 
-      const slowQueries = optimizer.getSlowQueries();
+      const slowQueries = fastOptimizer.getSlowQueries();
 
       expect(slowQueries.length).toBeLessThanOrEqual(100);
+      await fastOptimizer.shutdown();
     });
   });
 
@@ -325,34 +364,37 @@ describe('QueryOptimizer - Task 10.1: Query Optimization', () => {
 
   describe('Optimization Recommendations', () => {
     it('should generate optimization recommendations from slow queries', async () => {
+      vi.useFakeTimers();
       const slowQuery = 'SELECT * FROM memories WHERE content = \'test\'';
 
-      mockPgPool.query
-        .mockResolvedValueOnce({
-          rows: [
-            {
-              'QUERY PLAN': [
-                {
-                  Plan: {
-                    nodeType: 'Seq Scan',
-                    relationName: 'memories',
-                    startupCost: 0.0,
-                    totalCost: 12000.0,
-                    planRows: 50000,
-                    planWidth: 100,
-                    actualRows: 50000,
-                    actualLoops: 1,
+      mockPgPool.query.mockImplementation((query: string) => {
+        if (query.includes('EXPLAIN')) {
+          return Promise.resolve({
+            rows: [
+              {
+                'QUERY PLAN': [
+                  {
+                    Plan: {
+                      'Node Type': 'Seq Scan',
+                      'Relation Name': 'memories',
+                      'Startup Cost': 0.0,
+                      'Total Cost': 12000.0,
+                      'Plan Rows': 50000,
+                      'Plan Width': 100,
+                      'Actual Rows': 50000,
+                      'Actual Loops': 1,
+                    },
+                    'Planning Time': 1.0,
+                    'Execution Time': 200.0,
                   },
-                  'Planning Time': 1.0,
-                  'Execution Time': 200.0,
-                },
-              ],
-            },
-          ],
-        })
-        .mockImplementation(
-          () => new Promise((resolve) => setTimeout(() => resolve({ rows: [] }), 150))
-        );
+                ],
+              },
+            ],
+          });
+        }
+        vi.advanceTimersByTime(2500);
+        return Promise.resolve({ rows: [] });
+      });
 
       await optimizer.profileQuery(slowQuery, 'postgresql');
 
@@ -362,13 +404,42 @@ describe('QueryOptimizer - Task 10.1: Query Optimization', () => {
       expect(recommendations[0].query).toBe(slowQuery);
       expect(recommendations[0].severity).toBe('medium');
       expect(recommendations[0].recommendation).toContain('Add index');
+
+      vi.useRealTimers();
     });
 
     it('should calculate severity based on execution time', async () => {
+      vi.useFakeTimers();
+
       // Critical: > 10秒
-      mockPgPool.query.mockImplementation(
-        () => new Promise((resolve) => setTimeout(() => resolve({ rows: [] }), 11000))
-      );
+      mockPgPool.query.mockImplementation((query: string) => {
+        if (query.includes('EXPLAIN')) {
+          return Promise.resolve({
+            rows: [
+              {
+                'QUERY PLAN': [
+                  {
+                    Plan: {
+                      'Node Type': 'Seq Scan',
+                      'Relation Name': 'memories',
+                      'Startup Cost': 0.0,
+                      'Total Cost': 12000.0,
+                      'Plan Rows': 50000,
+                      'Plan Width': 100,
+                      'Actual Rows': 50000,
+                      'Actual Loops': 1,
+                    },
+                    'Planning Time': 1.0,
+                    'Execution Time': 200.0,
+                  },
+                ],
+              },
+            ],
+          });
+        }
+        vi.advanceTimersByTime(11000);
+        return Promise.resolve({ rows: [] });
+      });
 
       await optimizer.profileQuery('SELECT 1', 'postgresql');
 
@@ -378,7 +449,9 @@ describe('QueryOptimizer - Task 10.1: Query Optimization', () => {
       if (recommendations.length > 0) {
         expect(['critical', 'high']).toContain(recommendations[0].severity);
       }
-    });
+
+      vi.useRealTimers();
+    }, 12000); // 11秒のシミュレーション遅延に対応するため12秒のタイムアウトを設定
   });
 
   describe('Error Handling', () => {

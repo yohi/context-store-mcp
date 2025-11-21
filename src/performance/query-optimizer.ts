@@ -26,7 +26,7 @@ export interface ExplainNode {
   totalCost: number;
   planRows: number;
   planWidth: number;
-  actualTime?: [number, number];
+  actualTime?: [number, number] | undefined;
   actualRows?: number;
   actualLoops?: number;
   plans?: ExplainNode[];
@@ -69,7 +69,7 @@ export interface SlowQuery {
   executionTime: number;
   occurredAt: Date;
   database: 'postgresql' | 'neo4j';
-  explainPlan?: ExplainResult;
+  explainPlan?: ExplainResult | undefined;
 }
 
 /**
@@ -87,8 +87,8 @@ export interface OptimizationRecommendation {
  * QueryOptimizer設定
  */
 export interface QueryOptimizerConfig {
-  pgPool?: PgPool;
-  neo4jDriver?: Neo4jDriver;
+  pgPool?: PgPool | null;
+  neo4jDriver?: Neo4jDriver | null;
   slowQueryThreshold?: number; // ミリ秒
   enableAutoExplain?: boolean;
   enableProfiling?: boolean;
@@ -159,11 +159,14 @@ export class QueryOptimizer {
 
     try {
       // EXPLAIN ANALYZE実行
-      const result: QueryResult = await this.pgPool.query(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query}`);
+      const result: QueryResult = await this.pgPool.query(
+        `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query}`
+      );
       const explainData = result.rows[0]['QUERY PLAN'][0];
 
       const executionTime = Date.now() - startTime;
-      const plan: ExplainNode = explainData.Plan;
+      // キーを正規化
+      const plan: ExplainNode = this.normalizeExplainNode(explainData.Plan);
 
       // 警告とリコメンデーションを生成
       const warnings = this.detectWarnings(plan);
@@ -186,6 +189,31 @@ export class QueryOptimizer {
   }
 
   /**
+   * 実行計画ノードのキーを正規化
+   */
+  private normalizeExplainNode(node: any): ExplainNode {
+    const normalized: ExplainNode = {
+      nodeType: node['Node Type'],
+      relationName: node['Relation Name'],
+      startupCost: node['Startup Cost'],
+      totalCost: node['Total Cost'],
+      planRows: node['Plan Rows'],
+      planWidth: node['Plan Width'],
+      actualTime:
+        node['Actual Startup Time'] && node['Actual Total Time']
+          ? [node['Actual Startup Time'], node['Actual Total Time']]
+          : undefined,
+      actualRows: node['Actual Rows'],
+      actualLoops: node['Actual Loops'],
+      plans: node['Plans']
+        ? node['Plans'].map((child: any) => this.normalizeExplainNode(child))
+        : undefined,
+    };
+
+    return normalized;
+  }
+
+  /**
    * Neo4jクエリのプロファイリングを実行
    */
   public async explainNeo4jQuery(query: string): Promise<ExplainResult> {
@@ -199,7 +227,7 @@ export class QueryOptimizer {
     try {
       // PROFILE実行
       const result = await session.run(`PROFILE ${query}`);
-      const profile = result.summary.profile;
+      const profile = result.summary.profile as any; // 型定義の不一致を回避
 
       const executionTime = Date.now() - startTime;
 
@@ -273,7 +301,7 @@ export class QueryOptimizer {
 
       // スロークエリを記録
       if (executionTime > this.config.slowQueryThreshold) {
-        this.recordSlowQuery(query, executionTime, database);
+        await this.recordSlowQuery(query, executionTime, database);
       }
 
       return result;
