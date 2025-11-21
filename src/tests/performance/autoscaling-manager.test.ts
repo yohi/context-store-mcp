@@ -86,9 +86,16 @@ describe('AutoscalingManager - Task 10.2: Scalability and Automation', () => {
       expect(scaleUpSpy).toHaveBeenCalled();
     });
 
+
     it('should trigger scale-down when CPU falls below threshold', async () => {
+      const now = Date.now();
+      vi.spyOn(Date, 'now').mockReturnValue(now);
+
       // Worker数を増やしてからscaleDownできるようにする
-      manager.setWorkerCount(5);
+      await (manager as any).scaleUp(3);
+
+      // cooldown期間を過ぎた時刻に進める
+      vi.spyOn(Date, 'now').mockReturnValue(now + 65000); // 65秒後
 
       const scaleDownSpy = vi.spyOn(manager as any, 'scaleDown');
 
@@ -106,8 +113,8 @@ describe('AutoscalingManager - Task 10.2: Scalability and Automation', () => {
     });
 
     it('should not scale beyond max workers limit', async () => {
-      const initialCount = 10; // maxWorkers設定
-      manager.setWorkerCount(initialCount);
+      // maxWorkers(10)まで増やす
+      await (manager as any).scaleUp(8);
 
       vi.spyOn(manager, 'getResourceMetrics').mockResolvedValue({
         cpuUsage: 0.9,
@@ -123,8 +130,7 @@ describe('AutoscalingManager - Task 10.2: Scalability and Automation', () => {
     });
 
     it('should not scale below min workers limit', async () => {
-      const initialCount = 2; // minWorkers設定
-      manager.setWorkerCount(initialCount);
+      // 既にminWorkers(2)なのでそのまま
 
       vi.spyOn(manager, 'getResourceMetrics').mockResolvedValue({
         cpuUsage: 0.05,
@@ -142,8 +148,8 @@ describe('AutoscalingManager - Task 10.2: Scalability and Automation', () => {
 
   describe('Scaling Operations', () => {
     it('should scale up by adding workers', async () => {
-      const initialCount = 5;
-      manager.setWorkerCount(initialCount);
+      // 初期状態(2)から3増やして5にする
+      await (manager as any).scaleUp(3);
 
       const addWorkerSpy = vi.fn();
       manager.onWorkerAdded(addWorkerSpy);
@@ -156,8 +162,8 @@ describe('AutoscalingManager - Task 10.2: Scalability and Automation', () => {
     });
 
     it('should scale down by removing workers', async () => {
-      const initialCount = 8;
-      manager.setWorkerCount(initialCount);
+      // 初期状態(2)から6増やして8にする
+      await (manager as any).scaleUp(6);
 
       const removeWorkerSpy = vi.fn();
       manager.onWorkerRemoved(removeWorkerSpy);
@@ -199,6 +205,72 @@ describe('AutoscalingManager - Task 10.2: Scalability and Automation', () => {
 
       // cooldown期間を過ぎたのでスケーリングされる
       expect(scaleUpSpy).toHaveBeenCalled();
+    });
+
+    it('should isolate worker added callback failures', async () => {
+      // 初期状態(2)から3増やして5にする
+      await (manager as any).scaleUp(3);
+
+      const callback1 = vi.fn();
+      const callback2 = vi.fn(() => {
+        throw new Error('Callback 2 failed');
+      });
+      const callback3 = vi.fn();
+
+      manager.onWorkerAdded(callback1);
+      manager.onWorkerAdded(callback2);
+      manager.onWorkerAdded(callback3);
+
+      // エラーログをモック
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => { });
+
+      await (manager as any).scaleUp(1);
+
+      // すべてのコールバックが呼ばれることを確認
+      expect(callback1).toHaveBeenCalled();
+      expect(callback2).toHaveBeenCalled();
+      expect(callback3).toHaveBeenCalled();
+
+      // エラーがログに記録されることを確認
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Worker added callback #1 failed'),
+        expect.any(Error)
+      );
+
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('should isolate worker removed callback failures', async () => {
+      // 初期状態(2)から6増やして8にする
+      await (manager as any).scaleUp(6);
+
+      const callback1 = vi.fn();
+      const callback2 = vi.fn(() => {
+        throw new Error('Callback 2 failed');
+      });
+      const callback3 = vi.fn();
+
+      manager.onWorkerRemoved(callback1);
+      manager.onWorkerRemoved(callback2);
+      manager.onWorkerRemoved(callback3);
+
+      // エラーログをモック
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => { });
+
+      await (manager as any).scaleDown(1);
+
+      // すべてのコールバックが呼ばれることを確認
+      expect(callback1).toHaveBeenCalled();
+      expect(callback2).toHaveBeenCalled();
+      expect(callback3).toHaveBeenCalled();
+
+      // エラーがログに記録されることを確認
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Worker removed callback #1 failed'),
+        expect.any(Error)
+      );
+
+      consoleErrorSpy.mockRestore();
     });
   });
 
@@ -249,6 +321,14 @@ describe('AutoscalingManager - Task 10.2: Scalability and Automation', () => {
       const optimizationSpy = vi.fn();
       manager.registerOptimizationTask('vacuum', optimizationSpy);
 
+      // CPU使用率が低い場合は最適化を実行
+      vi.spyOn(manager, 'getResourceMetrics').mockResolvedValue({
+        cpuUsage: 0.2, // 20% (低負荷)
+        memoryUsage: 0.3,
+        activeConnections: 5,
+        queueDepth: 0,
+      });
+
       await manager.runBackgroundOptimizations();
 
       expect(optimizationSpy).toHaveBeenCalled();
@@ -257,6 +337,14 @@ describe('AutoscalingManager - Task 10.2: Scalability and Automation', () => {
     it('should run index optimization in background', async () => {
       const indexOptSpy = vi.fn().mockResolvedValue(undefined);
       manager.registerOptimizationTask('index_rebuild', indexOptSpy);
+
+      // CPU使用率が低い場合は最適化を実行
+      vi.spyOn(manager, 'getResourceMetrics').mockResolvedValue({
+        cpuUsage: 0.2, // 20% (低負荷)
+        memoryUsage: 0.3,
+        activeConnections: 5,
+        queueDepth: 0,
+      });
 
       await manager.runBackgroundOptimizations();
 

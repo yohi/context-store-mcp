@@ -76,7 +76,8 @@ export class AutoscalingManager {
   private lastScalingTime: number = 0;
   private cooldownPeriod: number = 60000; // 60秒
   private requestCount: number = 0;
-  private lastRequestTime: number = Date.now();
+  private windowStart: number = 0; // サンプリングウィンドウの開始時刻
+  private readonly throughputWindowMs: number = 60000; // スループット計算ウィンドウ (60秒)
   private responseTimes: number[] = [];
   private maxResponseTimes: number = 100; // 最大保持数
   private partitionUsage: Map<number, number> = new Map();
@@ -100,28 +101,18 @@ export class AutoscalingManager {
    * リソースメトリクスを取得
    */
   public async getResourceMetrics(): Promise<ResourceMetrics> {
-    // CPU使用率の計算
-    const cpus = os.cpus();
-    let totalIdle = 0;
-    let totalTick = 0;
-
-    for (const cpu of cpus) {
-      for (const type in cpu.times) {
-        totalTick += cpu.times[type as keyof typeof cpu.times];
-      }
-      totalIdle += cpu.times.idle;
-    }
-
-    const cpuUsage = 1 - totalIdle / totalTick;
+    // CPU使用率の計算 (2サンプルのデルタ方式)
+    const cpuUsage = await this.calculateCpuUsage();
 
     // メモリ使用率の計算
     const totalMem = os.totalmem();
     const freeMem = os.freemem();
     const memoryUsage = (totalMem - freeMem) / totalMem;
 
-    // アクティブ接続数とキュー深度（仮の実装）
-    const activeConnections = this.workerCount * 10; // 仮の値
-    const queueDepth = Math.max(0, this.requestCount - this.workerCount * 5);
+    // アクティブ接続数とキュー深度
+    // 実際のソースが利用可能な場合はそれを使用し、そうでない場合は安全なデフォルト値を使用
+    const activeConnections = this.getActiveConnections();
+    const queueDepth = this.getQueueDepth();
 
     return {
       cpuUsage: Math.min(1, Math.max(0, cpuUsage)),
@@ -132,22 +123,111 @@ export class AutoscalingManager {
   }
 
   /**
+   * CPU使用率を2サンプルのデルタ計算で取得
+   * os.cpus()は累積時間を返すため、2つのスナップショット間の差分を計算する
+   */
+  private async calculateCpuUsage(): Promise<number> {
+    // 第1スナップショット
+    const snapshot1 = os.cpus();
+
+    // 短い間隔を待つ (200ms)
+    await new Promise(resolve => setTimeout(resolve, 200));
+
+    // 第2スナップショット
+    const snapshot2 = os.cpus();
+
+    // 全コアのデルタを集計
+    let totalDeltaIdle = 0;
+    let totalDeltaTotal = 0;
+
+    for (let i = 0; i < snapshot1.length; i++) {
+      const cpu1 = snapshot1[i];
+      const cpu2 = snapshot2[i];
+
+      // 両方のスナップショットが存在することを確認
+      if (!cpu1 || !cpu2) {
+        continue;
+      }
+
+      // 各コアのtotal時間を計算
+      let total1 = 0;
+      let total2 = 0;
+
+      for (const type in cpu1.times) {
+        total1 += cpu1.times[type as keyof typeof cpu1.times];
+        total2 += cpu2.times[type as keyof typeof cpu2.times];
+      }
+
+      // デルタを計算
+      const deltaIdle = cpu2.times.idle - cpu1.times.idle;
+      const deltaTotal = total2 - total1;
+
+      totalDeltaIdle += deltaIdle;
+      totalDeltaTotal += deltaTotal;
+    }
+
+    // CPU使用率を計算: 1 - (アイドル時間の割合)
+    if (totalDeltaTotal === 0) {
+      return 0; // ゼロ除算を避ける
+    }
+
+    const cpuUsage = 1 - (totalDeltaIdle / totalDeltaTotal);
+
+    // 0から1の範囲にクランプ
+    return Math.min(1, Math.max(0, cpuUsage));
+  }
+
+  /**
+   * アクティブ接続数を取得
+   * 実際のconnectionManagerが利用可能な場合はそれを使用し、そうでない場合は推定値を返す
+   */
+  private getActiveConnections(): number {
+    // 実際のconnectionManagerが実装されていないため、
+    // requestCountベースの推定値を使用
+    // より正確な実装が必要な場合は、connectionManagerを注入して使用する
+    return Math.min(this.requestCount, this.workerCount * 10);
+  }
+
+  /**
+   * キュー深度を取得
+   * 実際のrequestQueueが利用可能な場合はそれを使用し、そうでない場合は推定値を返す
+   */
+  private getQueueDepth(): number {
+    // 実際のrequestQueueが実装されていないため、
+    // requestCountとworkerCountから推定
+    // より正確な実装が必要な場合は、requestQueueを注入して使用する
+    return Math.max(0, this.requestCount - this.workerCount * 5);
+  }
+
+  /**
    * リクエストを記録
    */
   public recordRequest(): void {
+    const now = Date.now();
+
+    // ウィンドウが期限切れの場合はリセット
+    if (this.windowStart === 0 || now - this.windowStart > this.throughputWindowMs) {
+      this.windowStart = now;
+      this.requestCount = 0;
+    }
+
     this.requestCount++;
-    this.lastRequestTime = Date.now();
   }
 
   /**
    * スループットを取得（req/sec）
    */
   public getThroughput(): number {
-    if (this.requestCount === 0) return 0;
-    const timeDiff = (Date.now() - this.lastRequestTime) / 1000;
-    // 時間差が非常に小さい場合は、requestCountをそのまま返す
-    if (timeDiff < 0.001) return this.requestCount;
-    return this.requestCount / timeDiff;
+    if (this.requestCount === 0 || this.windowStart === 0) return 0;
+
+    const now = Date.now();
+    const windowDuration = (now - this.windowStart) / 1000; // 秒単位
+
+    // 最小ウィンドウ期間を使用してゼロ除算を防ぐ
+    const minWindowDuration = 0.1; // 100ms
+    const effectiveDuration = Math.max(windowDuration, minWindowDuration);
+
+    return this.requestCount / effectiveDuration;
   }
 
   /**
@@ -220,7 +300,17 @@ export class AutoscalingManager {
     // コールバック実行
     const addCount = toWorkers - fromWorkers;
     for (let i = 0; i < addCount; i++) {
-      this.workerAddedCallbacks.forEach((callback) => callback());
+      this.workerAddedCallbacks.forEach((callback, index) => {
+        try {
+          callback();
+        } catch (error) {
+          console.error(
+            `Worker added callback #${index} failed during scale-up (${fromWorkers} -> ${toWorkers}):`,
+            error
+          );
+          // エラーをログに記録して続行
+        }
+      });
     }
   }
 
@@ -238,7 +328,17 @@ export class AutoscalingManager {
     // コールバック実行
     const removeCount = fromWorkers - toWorkers;
     for (let i = 0; i < removeCount; i++) {
-      this.workerRemovedCallbacks.forEach((callback) => callback());
+      this.workerRemovedCallbacks.forEach((callback, index) => {
+        try {
+          callback();
+        } catch (error) {
+          console.error(
+            `Worker removed callback #${index} failed during scale-down (${fromWorkers} -> ${toWorkers}):`,
+            error
+          );
+          // エラーをログに記録して続行
+        }
+      });
     }
   }
 
@@ -249,12 +349,6 @@ export class AutoscalingManager {
     return this.workerCount;
   }
 
-  /**
-   * Worker数を設定（テスト用）
-   */
-  public setWorkerCount(count: number): void {
-    this.workerCount = count;
-  }
 
   /**
    * Workerが追加されたときのコールバック登録
