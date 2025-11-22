@@ -44,6 +44,17 @@ export interface Memory {
   isDeleted: boolean;
   isProtected: boolean;
   deletedAt?: Date | null; // Timestamp when soft-deleted (GDPR compliance)
+  version: number; // Version number (starts at 1)
+}
+
+// Memory history entry (snapshot of previous version)
+export interface MemoryHistoryEntry {
+  id: string; // UUID for history entry
+  memoryId: MemoryId;
+  version: number;
+  content: string;
+  metadata: MemoryMetadata;
+  timestamp: Date; // When this version was archived (updatedAt of the memory at that time)
 }
 
 // Parameters for storing a new memory
@@ -55,7 +66,7 @@ export interface StoreMemoryParams {
 
 // Parameters for updating an existing memory
 // Excludes immutable fields (id, createdAt) and system-managed fields
-// (updatedAt, lastAccessedAt, accessCount) to prevent modification
+// (updatedAt, lastAccessedAt, accessCount, version) to prevent modification
 export type UpdateMemoryParams = Partial<
   Pick<
     Memory,
@@ -75,6 +86,10 @@ export interface MemoryManagerService {
   updateMemory(id: MemoryId, updates: UpdateMemoryParams): Promise<Result<boolean, MemoryError>>;
   deleteMemory(id: MemoryId): Promise<Result<boolean, MemoryError>>;
   mergeMemories(ids: MemoryId[]): Promise<Result<MemoryId, MemoryError>>;
+  getMemoryHistory(id: MemoryId): Promise<MemoryHistoryEntry[]>;
+
+  // Similarity search (Requirements: 1.3 - 類似記憶の自動検出)
+  findSimilarMemories(content: string, limit?: number): Promise<Memory[]>;
 
   // Memory management operations
   performGarbageCollection(): Promise<void>;
