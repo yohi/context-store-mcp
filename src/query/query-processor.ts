@@ -387,9 +387,13 @@ export class QueryProcessor {
       case 'last_week': {
         // ISO週の前週の月曜日00:00:00.000から日曜日23:59:59.999まで
         const currentDay = now.getUTCDay(); // 0=日曜, 1=月曜, ..., 6=土曜
-        const daysToLastMonday = currentDay === 0 ? 6 : currentDay + 6; // 前週の月曜日までの日数 (currentDay + (7-1) if current!=0?? No.)
-        // If today is Mon(1). Last Monday is 7 days ago. 1 + 6 = 7. Correct.
-        // If today is Sun(0). Last Monday is 6 days ago (Mon -> ... -> Sun). 0 + 6 = 6. Correct.
+        
+        // 現在の週の月曜日からの経過日数を計算 (月=0, ..., 日=6)
+        const daysSinceMonday = (currentDay + 6) % 7;
+        
+        // 前週の月曜日は、現在の月曜日から7日前
+        // つまり、現在から daysSinceMonday + 7 日前
+        const daysToLastMonday = daysSinceMonday + 7;
 
         start = new Date(now);
         start.setUTCDate(start.getUTCDate() - daysToLastMonday);
