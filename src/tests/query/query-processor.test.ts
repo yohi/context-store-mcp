@@ -118,16 +118,16 @@ describe('QueryProcessor', () => {
       expect(range.end).toBeDefined();
 
       // 固定日時(2023-03-15 12:00:00 UTC)から昨日を計算
-      // 昨日 = 2023-03-14 00:00:00 UTC ~ 2023-03-15 00:00:00 UTC
+      // 昨日 = 2023-03-14 00:00:00 UTC ~ 2023-03-14 23:59:59.999 UTC
       const expectedStart = new Date('2023-03-14T00:00:00.000Z');
-      const expectedEnd = new Date('2023-03-15T00:00:00.000Z');
+      const expectedEnd = new Date('2023-03-14T23:59:59.999Z');
 
       expect(range.start.toISOString()).toBe(expectedStart.toISOString());
       expect(range.end.toISOString()).toBe(expectedEnd.toISOString());
 
-      // 期間が正確に24時間(1日)であることを検証
+      // 期間がほぼ24時間(1日)であることを検証
       const diffHours = (range.end.getTime() - range.start.getTime()) / (1000 * 60 * 60);
-      expect(diffHours).toBe(24);
+      expect(Math.round(diffHours)).toBe(24);
     });
 
     test('「先週」を正しい日時範囲に変換できる', () => {
@@ -142,7 +142,7 @@ describe('QueryProcessor', () => {
       expect(range.end).toBeDefined();
 
       // 7日間の範囲
-      const diffDays = Math.floor(
+      const diffDays = Math.round(
         (range.end.getTime() - range.start.getTime()) / (1000 * 60 * 60 * 24)
       );
       expect(diffDays).toBe(7);

@@ -372,61 +372,64 @@ export class QueryProcessor {
     switch (value) {
       case 'today':
         start = new Date(now);
-        start.setHours(0, 0, 0, 0);
+        start.setUTCHours(0, 0, 0, 0);
         break;
 
       case 'yesterday':
         start = new Date(now);
-        start.setDate(start.getDate() - 1);
-        start.setHours(0, 0, 0, 0);
+        start.setUTCDate(start.getUTCDate() - 1);
+        start.setUTCHours(0, 0, 0, 0);
 
         end = new Date(start);
-        end.setHours(23, 59, 59, 999);
+        end.setUTCHours(23, 59, 59, 999);
         break;
 
       case 'last_week': {
         // ISO週の前週の月曜日00:00:00.000から日曜日23:59:59.999まで
-        const currentDay = now.getDay(); // 0=日曜, 1=月曜, ..., 6=土曜
-        const daysToLastMonday = currentDay === 0 ? 6 : currentDay + 6; // 前週の月曜日までの日数
+        const currentDay = now.getUTCDay(); // 0=日曜, 1=月曜, ..., 6=土曜
+        const daysToLastMonday = currentDay === 0 ? 6 : currentDay + 6; // 前週の月曜日までの日数 (currentDay + (7-1) if current!=0?? No.)
+        // If today is Mon(1). Last Monday is 7 days ago. 1 + 6 = 7. Correct.
+        // If today is Sun(0). Last Monday is 6 days ago (Mon -> ... -> Sun). 0 + 6 = 6. Correct.
 
         start = new Date(now);
-        start.setDate(start.getDate() - daysToLastMonday);
-        start.setHours(0, 0, 0, 0);
+        start.setUTCDate(start.getUTCDate() - daysToLastMonday);
+        start.setUTCHours(0, 0, 0, 0);
 
         end = new Date(start);
-        end.setDate(end.getDate() + 6); // 日曜日まで
-        end.setHours(23, 59, 59, 999);
+        end.setUTCDate(end.getUTCDate() + 6); // 日曜日まで
+        end.setUTCHours(23, 59, 59, 999);
         break;
       }
 
       case 'last_month': {
         // 前月の1日00:00:00.000から最終日23:59:59.999まで
-        const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
-        const month = now.getMonth() === 0 ? 11 : now.getMonth() - 1;
+        const year = now.getUTCMonth() === 0 ? now.getUTCFullYear() - 1 : now.getUTCFullYear();
+        const month = now.getUTCMonth() === 0 ? 11 : now.getUTCMonth() - 1;
 
-        start = new Date(year, month, 1, 0, 0, 0, 0);
+        start = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
 
         // 前月の最終日を取得（次月の0日目 = 前月の最終日）
-        end = new Date(year, month + 1, 0, 23, 59, 59, 999);
+        // Date.UTC handles month overflow correctly
+        end = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999));
         break;
       }
 
       case 'last_7_days':
         start = new Date(now);
-        start.setDate(start.getDate() - 7);
-        start.setHours(0, 0, 0, 0);
+        start.setUTCDate(start.getUTCDate() - 7);
+        start.setUTCHours(0, 0, 0, 0);
         break;
 
       case 'last_30_days':
         start = new Date(now);
-        start.setDate(start.getDate() - 30);
-        start.setHours(0, 0, 0, 0);
+        start.setUTCDate(start.getUTCDate() - 30);
+        start.setUTCHours(0, 0, 0, 0);
         break;
 
       case 'last_90_days':
         start = new Date(now);
-        start.setDate(start.getDate() - 90);
-        start.setHours(0, 0, 0, 0);
+        start.setUTCDate(start.getUTCDate() - 90);
+        start.setUTCHours(0, 0, 0, 0);
         break;
 
       default:
@@ -723,6 +726,7 @@ export class QueryProcessor {
     const rawWeights = options?.weights ?? { semantic: 0.7, structural: 0.3 };
     const limit = options?.limit ?? 10;
     const alpha = options?.scoringConfig?.alpha ?? 1.0;
+    const epsilon = options?.scoringConfig?.epsilon ?? 1e-6;
 
     // 重みの正規化 (合計が1.0になるように)
     const totalWeight = rawWeights.semantic + rawWeights.structural;
@@ -774,6 +778,7 @@ export class QueryProcessor {
       const structuralScore = Math.exp(-alpha * distance);
       return {
         ...result,
+        distance, // 距離を保持
         normalizedScore: structuralScore,
       };
     });
@@ -787,6 +792,7 @@ export class QueryProcessor {
         metadata?: any;
         semanticScore: number;
         structuralScore: number;
+        distance?: number;
         combined: number;
       }
     >();
@@ -809,6 +815,7 @@ export class QueryProcessor {
       if (existing) {
         // 既存のエントリに構造スコアを追加
         existing.structuralScore = result.normalizedScore;
+        existing.distance = result.distance;
       } else {
         // 新しいエントリを作成（セマンティックスコア = 0）
         mergedMap.set(result.id, {
@@ -817,6 +824,7 @@ export class QueryProcessor {
           metadata: result,
           semanticScore: 0,
           structuralScore: result.normalizedScore,
+          distance: result.distance,
           combined: 0, // 後で計算
         });
       }
@@ -830,10 +838,29 @@ export class QueryProcessor {
       entry.combined = finalScore;
     }
 
-    // 7. 統合スコアでソート（降順）
-    const sortedResults = Array.from(mergedMap.values()).sort(
-      (a, b) => b.combined - a.combined
-    );
+    // 7. 統合スコアとタイブレークルールでソート
+    const sortedResults = Array.from(mergedMap.values()).sort((a, b) => {
+      // 1. 統合スコアの差がepsilonより大きい場合
+      if (Math.abs(b.combined - a.combined) > epsilon) {
+        return b.combined - a.combined;
+      }
+
+      // タイブレーク 1: 意味的スコア優先 (大きい方が良い)
+      if (Math.abs(b.semanticScore - a.semanticScore) > epsilon) {
+        return b.semanticScore - a.semanticScore;
+      }
+
+      // タイブレーク 2: パス長優先 (短い方が良い -> distanceが小さい方が良い)
+      // distanceが未定義の場合は無限大として扱う（優先度最低）
+      const distA = a.distance ?? Number.POSITIVE_INFINITY;
+      const distB = b.distance ?? Number.POSITIVE_INFINITY;
+      if (Math.abs(distA - distB) > epsilon) {
+        return distA - distB;
+      }
+
+      // タイブレーク 3: ID順 (辞書順)
+      return a.id.localeCompare(b.id);
+    });
 
     // 8. limitを適用して結果を返す
     return sortedResults.slice(0, limit).map((result) => ({
@@ -843,7 +870,11 @@ export class QueryProcessor {
         structural: result.structuralScore,
         combined: result.combined,
       },
-      metadata: result.metadata ?? {},
+      metadata: {
+        ...result.metadata,
+        pathLength: result.distance,
+        cosineSimilarity: result.semanticScore,
+      },
     }));
   }
 
