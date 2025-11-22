@@ -65,30 +65,28 @@ describe('MemoryManager - History Management (Task 3.2)', () => {
     const history = await memoryManager.getMemoryHistory(memoryId);
     expect(history).toHaveLength(2);
 
-    // History should be ordered (usually latest first or oldest first, let's expect oldest first for now or check versions)
-    const v1 = history.find(h => h.version === 1);
-    const v2 = history.find(h => h.version === 2);
-
-    expect(v1).toBeDefined();
-    expect(v2).toBeDefined();
-    expect(v1?.content).toBe('Version 1 Content');
-    expect(v2?.content).toBe('Version 2 Content');
+    // Verify chronological order (oldest first)
+    expect(history[0].version).toBe(1);
+    expect(history[0].content).toBe('Version 1 Content');
+    
+    expect(history[1].version).toBe(2);
+    expect(history[1].content).toBe('Version 2 Content');
   });
 
-  it('should not create history entry if content/metadata is not changed', async () => {
-    // In strict versioning, maybe any update calls it? 
-    // But usually if nothing changes, we might skip or still version?
-    // Let's assume any call to updateMemory that succeeds should increment version for consistency with `updatedAt`
+  it('should increment version and record history even if content/metadata unchanged', async () => {
+    // Any successful update call should increment version for consistency with `updatedAt`
+    // and create a history record, even if the content appears identical.
     
     const memoryBefore = memoryManager.getMemoryForTest(memoryId);
+    const historyBefore = await memoryManager.getMemoryHistory(memoryId);
+
     await memoryManager.updateMemory(memoryId, { content: 'Version 1 Content' }); // Same content
     
     const memoryAfter = memoryManager.getMemoryForTest(memoryId);
     expect(memoryAfter?.version).toBeGreaterThan(memoryBefore!.version);
     
-    // Actually, if nothing changed, optimize? 
-    // Design says: "MemoryContent Entity ... Immutability (update creates new version)"
-    // So we expect version increment.
+    const historyAfter = await memoryManager.getMemoryHistory(memoryId);
+    expect(historyAfter.length).toBeGreaterThan(historyBefore.length);
   });
 
   it('should return empty history for new memory', async () => {
@@ -96,13 +94,7 @@ describe('MemoryManager - History Management (Task 3.2)', () => {
     expect(history).toEqual([]);
   });
   
-  it('should return error when requesting history for non-existent memory', async () => {
-      // Currently getMemoryHistory returns MemoryHistoryEntry[], maybe it should return Result?
-      // Interface says Promise<MemoryHistoryEntry[]>
-      // If memory doesn't exist, returning empty array is probably safe, or throw?
-      // Let's check standard behavior. usually empty array if not found or throws.
-      // Let's return empty array for now as per interface simplicity, or verify behavior.
-      
+  it('should return empty history for non-existent memory', async () => {
       const history = await memoryManager.getMemoryHistory('non-existent');
       expect(history).toEqual([]);
   });
