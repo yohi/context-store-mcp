@@ -44,6 +44,19 @@ export function createContextStoreServer(): Server {
                 type: 'string',
                 description: '記憶する内容',
               },
+              metadata: {
+                type: 'object',
+                description: 'メタデータ (source, timestamp, tags, memoryType)',
+                properties: {
+                  source: { type: 'string' },
+                  timestamp: { type: 'string' },
+                  tags: { type: 'array', items: { type: 'string' } },
+                  memoryType: {
+                    type: 'string',
+                    enum: ['episodic', 'semantic', 'procedural'],
+                  },
+                },
+              },
             },
             required: ['content'],
           },
@@ -57,6 +70,25 @@ export function createContextStoreServer(): Server {
               query: {
                 type: 'string',
                 description: '検索クエリ',
+              },
+              filters: {
+                type: 'object',
+                description: '検索フィルタ',
+                properties: {
+                  timeRange: {
+                    type: 'object',
+                    properties: {
+                      start: { type: 'string' },
+                      end: { type: 'string' },
+                    },
+                  },
+                  memoryTypes: {
+                    type: 'array',
+                    items: { type: 'string' },
+                  },
+                  tags: { type: 'array', items: { type: 'string' } },
+                  limit: { type: 'number' },
+                },
               },
             },
             required: ['query'],
@@ -113,6 +145,7 @@ export function createContextStoreServer(): Server {
         if (!('content' in args)) {
           throw new Error('Missing required parameter: content');
         }
+        // args.metadata is optional
         return {
           content: [{ type: 'text', text: 'Memory stored successfully' }],
         };
@@ -123,6 +156,7 @@ export function createContextStoreServer(): Server {
         if (!('query' in args)) {
           throw new Error('Missing required parameter: query');
         }
+        // args.filters is optional
         return {
           content: [{ type: 'text', text: 'Search results' }],
         };

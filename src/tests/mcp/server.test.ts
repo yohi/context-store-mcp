@@ -1,117 +1,320 @@
-/**
- * MCPサーバーコア機能テスト
- * Task 2.1: MCPサーバーのコア機能実装
- *
- * このテストは以下を検証します:
- * - MCP標準に準拠したサーバー初期化
- * - ツールとリソースの定義
- * - セッション管理機能
- * - JSON-RPC メッセージ処理
- * - エラーハンドリング
- *
- * Requirements: 4.1, 4.2, 4.3
- */
-
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  ListResourcesRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
+import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import { createContextStoreServer } from '../../mcp/server.js';
 
-describe('MCPサーバーコア機能テスト', () => {
-  let server: Server;
+// Mock Transport to capture messages
+class MockTransport implements Transport {
+  onmessage?: (message: JSONRPCMessage) => void;
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  
+  public sentMessages: JSONRPCMessage[] = [];
 
-  beforeEach(() => {
-    // 各テストの前にサーバーインスタンスを初期化
-    server = createContextStoreServer();
-  });
+  async start(): Promise<void> {}
 
-  afterAll(async () => {
-    // テスト終了時のクリーンアップ
-    if (server) {
-      await server.close();
+  async send(message: JSONRPCMessage): Promise<void> {
+    this.sentMessages.push(message);
+  }
+
+  async close(): Promise<void> {
+    if (this.onclose) {
+      this.onclose();
     }
+  }
+
+  // Helper to simulate incoming message
+  receive(message: JSONRPCMessage) {
+    if (this.onmessage) {
+      this.onmessage(message);
+    }
+  }
+}
+
+describe('MCP Server Core Features', () => {
+  let server: Server;
+  let transport: MockTransport;
+
+  beforeEach(async () => {
+    server = createContextStoreServer();
+    transport = new MockTransport();
+    await server.connect(transport);
   });
 
-  describe('サーバー初期化', () => {
-    it('MCPサーバーが正しく初期化されること', () => {
-      expect(server).toBeDefined();
-      expect(server).toBeInstanceOf(Server);
-    });
-
-    it('サーバー情報が正しく設定されていること', () => {
-      // Server SDKではgetServerInfoメソッドは公開されていないため、
-      // サーバーインスタンスの存在確認のみ行う
-      expect(server).toBeDefined();
-      expect(server).toBeInstanceOf(Server);
-    });
-
-    it('サーバーがツール機能をサポートすることを宣言すること', () => {
-      // capabilities は内部プロパティのため、
-      // 実際にツールリストが取得できるかで確認する
-      expect(server).toBeDefined();
-    });
-
-    it('サーバーがリソース機能をサポートすることを宣言すること', () => {
-      // capabilities は内部プロパティのため、
-      // 実際にリソースリストが取得できるかで確認する
-      expect(server).toBeDefined();
-    });
+  afterEach(async () => {
+    await server.close();
   });
 
-  describe('ツール定義 - 機能テスト', () => {
-    it('store_memoryツールハンドラーが存在すること', () => {
-      // サーバーインスタンスが作成されていることを確認
-      expect(server).toBeDefined();
+  it('should handle initialization handshake', async () => {
+    // Simulate initialize request
+    transport.receive({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'test-client', version: '1.0.0' }
+      }
     });
 
-    it('search_memoryツールハンドラーが存在すること', () => {
-      expect(server).toBeDefined();
-    });
+    // Wait for response
+    await new Promise(resolve => setTimeout(resolve, 10));
 
-    it('delete_memoryツールハンドラーが存在すること', () => {
-      expect(server).toBeDefined();
-    });
-
-    it('update_memoryツールハンドラーが存在すること', () => {
-      expect(server).toBeDefined();
-    });
+    const response = transport.sentMessages.find(m => (m as any).id === 1);
+    expect(response).toBeDefined();
+    expect((response as any).result).toBeDefined();
+    expect((response as any).result.serverInfo.name).toBe('context-store-mcp');
   });
 
-  describe('リソース定義 - 機能テスト', () => {
-    it('memory_statsリソースハンドラーが存在すること', () => {
-      expect(server).toBeDefined();
+  it('should list available tools', async () => {
+    // Initialize first
+    transport.receive({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } }
+    });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    transport.receive({
+      jsonrpc: '2.0',
+      method: 'notifications/initialized'
     });
 
-    it('memory_typesリソースハンドラーが存在すること', () => {
-      expect(server).toBeDefined();
+    // Request tools list
+    transport.receive({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/list'
     });
+
+    await new Promise(resolve => setTimeout(resolve, 10));
+
+    const response = transport.sentMessages.find(m => (m as any).id === 2);
+    expect(response).toBeDefined();
+    const result = (response as any).result;
+    expect(result.tools).toBeDefined();
+    expect(result.tools).toHaveLength(4);
+    
+    const toolNames = result.tools.map((t: any) => t.name);
+    expect(toolNames).toContain('store_memory');
+    expect(toolNames).toContain('search_memory');
+    expect(toolNames).toContain('delete_memory');
+    expect(toolNames).toContain('update_memory');
   });
 
-  describe('エラーハンドリング', () => {
-    it('サーバーが例外を適切に処理すること', () => {
-      // 基本的なエラーハンドリング機能の確認
-      expect(server).toBeDefined();
+  it('should list available resources', async () => {
+    // Initialize first
+    transport.receive({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } }
+    });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    transport.receive({
+      jsonrpc: '2.0',
+      method: 'notifications/initialized'
     });
 
-    it('エラーメッセージが適切に生成されること', () => {
-      // エラーメッセージ生成機能の確認
-      expect(server).toBeDefined();
+    // Request resources list
+    transport.receive({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'resources/list'
     });
+
+    await new Promise(resolve => setTimeout(resolve, 10));
+
+    const response = transport.sentMessages.find(m => (m as any).id === 2);
+    expect(response).toBeDefined();
+    const result = (response as any).result;
+    expect(result.resources).toBeDefined();
+    expect(result.resources).toHaveLength(2);
+    
+    const resourceNames = result.resources.map((r: any) => r.name);
+    expect(resourceNames).toContain('memory_stats');
+    expect(resourceNames).toContain('memory_types');
   });
 
-  describe('セッション管理', () => {
-    it('接続が確立可能であること', () => {
-      // サーバーが接続可能な状態であることを確認
-      expect(server).toBeDefined();
+  it('should handle store_memory tool call', async () => {
+    // Initialize
+    transport.receive({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } }
+    });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    transport.receive({
+        jsonrpc: '2.0',
+        method: 'notifications/initialized'
     });
 
-    it('複数のクライアント接続をサポートすること', () => {
-      // 複数接続のサポートを確認
-      expect(server).toBeDefined();
+    // Call tool
+    transport.receive({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: {
+        name: 'store_memory',
+        arguments: {
+          content: 'test memory content'
+        }
+      }
     });
+
+    await new Promise(resolve => setTimeout(resolve, 10));
+
+    const response = transport.sentMessages.find(m => (m as any).id === 2);
+    expect(response).toBeDefined();
+    expect((response as any).error).toBeUndefined();
+    expect((response as any).result.content[0].text).toContain('successfully');
+  });
+
+  it('should handle store_memory tool call with metadata', async () => {
+    // Initialize
+    transport.receive({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } }
+    });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    transport.receive({
+        jsonrpc: '2.0',
+        method: 'notifications/initialized'
+    });
+
+    // Call tool
+    transport.receive({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: {
+        name: 'store_memory',
+        arguments: {
+          content: 'test memory content',
+          metadata: {
+            source: 'user',
+            tags: ['test']
+          }
+        }
+      }
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 10));
+
+    const response = transport.sentMessages.find(m => (m as any).id === 2);
+    expect(response).toBeDefined();
+    expect((response as any).error).toBeUndefined();
+    expect((response as any).result.content[0].text).toContain('successfully');
+  });
+
+  it('should handle search_memory tool call with filters', async () => {
+    // Initialize
+    transport.receive({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } }
+    });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    transport.receive({
+        jsonrpc: '2.0',
+        method: 'notifications/initialized'
+    });
+
+    // Call tool
+    transport.receive({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: {
+        name: 'search_memory',
+        arguments: {
+          query: 'test query',
+          filters: {
+            limit: 5,
+            tags: ['important']
+          }
+        }
+      }
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 10));
+
+    const response = transport.sentMessages.find(m => (m as any).id === 2);
+    expect(response).toBeDefined();
+    expect((response as any).error).toBeUndefined();
+    expect((response as any).result.content[0].text).toContain('Search results');
+  });
+
+  it('should return error for missing arguments in store_memory', async () => {
+    // Initialize
+    transport.receive({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } }
+    });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    transport.receive({
+        jsonrpc: '2.0',
+        method: 'notifications/initialized'
+    });
+
+    // Call tool with missing content
+    transport.receive({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: {
+        name: 'store_memory',
+        arguments: {} // Missing content
+      }
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 10));
+
+    const response = transport.sentMessages.find(m => (m as any).id === 2);
+    expect(response).toBeDefined();
+    expect((response as any).error).toBeDefined();
+    // Note: SDK might wrap the error, checking message
+    expect((response as any).error.message).toContain('Missing required parameter');
+  });
+
+  it('should return error for unknown tool', async () => {
+    // Initialize
+    transport.receive({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } }
+    });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    transport.receive({
+        jsonrpc: '2.0',
+        method: 'notifications/initialized'
+    });
+
+    // Call unknown tool
+    transport.receive({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: {
+        name: 'unknown_tool',
+        arguments: {}
+      }
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 10));
+
+    const response = transport.sentMessages.find(m => (m as any).id === 2);
+    expect(response).toBeDefined();
+    expect((response as any).error).toBeDefined();
+    expect((response as any).error.message).toContain('Unknown tool');
   });
 });
