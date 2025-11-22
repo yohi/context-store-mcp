@@ -443,8 +443,8 @@ describe('QueryProcessor', () => {
       });
 
       test('デフォルトの重みで結果をマージできる (semantic: 0.7, structural: 0.3)', async () => {
-        const semanticResults = [{ id: '1', similarity: 0.9, metadata: {} }];
-        const graphResults = [{ id: '1', distance: 0, metadata: {} }]; // distance 0 -> score 1.0
+        const semanticResults = [{ id: '1', content: 'content-1', similarity: 0.9, metadata: {} }];
+        const graphResults = [{ id: '1', content: 'content-1', distance: 0, metadata: {} }]; // distance 0 -> score 1.0
 
         mockVectorAdapter.searchSimilar.mockResolvedValue(semanticResults);
         mockGraphAdapter.search.mockResolvedValue(graphResults);
@@ -456,8 +456,8 @@ describe('QueryProcessor', () => {
       });
 
       test('カスタム重みで結果をマージできる', async () => {
-        const semanticResults = [{ id: '1', similarity: 0.9, metadata: {} }];
-        const graphResults = [{ id: '1', distance: 0, metadata: {} }]; // score 1.0
+        const semanticResults = [{ id: '1', content: 'content-1', similarity: 0.9, metadata: {} }];
+        const graphResults = [{ id: '1', content: 'content-1', distance: 0, metadata: {} }]; // score 1.0
 
         mockVectorAdapter.searchSimilar.mockResolvedValue(semanticResults);
         mockGraphAdapter.search.mockResolvedValue(graphResults);
@@ -471,8 +471,8 @@ describe('QueryProcessor', () => {
 
       test('スコアが正しく正規化される (0.0 - 1.0)', async () => {
         // This is implicitly tested by calculation tests, but we verify it doesn't exceed 1.0
-        const semanticResults = [{ id: '1', similarity: 1.0, metadata: {} }];
-        const graphResults = [{ id: '1', distance: 0, metadata: {} }];
+        const semanticResults = [{ id: '1', content: 'content-1', similarity: 1.0, metadata: {} }];
+        const graphResults = [{ id: '1', content: 'content-1', distance: 0, metadata: {} }];
 
         mockVectorAdapter.searchSimilar.mockResolvedValue(semanticResults);
         mockGraphAdapter.search.mockResolvedValue(graphResults);
@@ -484,8 +484,8 @@ describe('QueryProcessor', () => {
       test('グラフスコアの指数減衰が正しく適用される', async () => {
         // distance 1 vs distance 2
         const graphResults = [
-          { id: '1', distance: 1, metadata: {} },
-          { id: '2', distance: 2, metadata: {} },
+          { id: '1', content: 'content-1', distance: 1, metadata: {} },
+          { id: '2', content: 'content-2', distance: 2, metadata: {} },
         ];
         mockVectorAdapter.searchSimilar.mockResolvedValue([]);
         mockGraphAdapter.search.mockResolvedValue(graphResults);
@@ -504,7 +504,7 @@ describe('QueryProcessor', () => {
       });
 
       test('重みが正規化される (合計が1.0でない場合)', async () => {
-        const semanticResults = [{ id: '1', similarity: 1.0, metadata: {} }];
+        const semanticResults = [{ id: '1', content: 'content-1', similarity: 1.0, metadata: {} }];
         mockVectorAdapter.searchSimilar.mockResolvedValue(semanticResults);
         mockGraphAdapter.search.mockResolvedValue([]);
 
@@ -533,8 +533,8 @@ describe('QueryProcessor', () => {
         const distB = -Math.log(0.4);
 
         const graphResults = [
-          { id: 'A', distance: distA, metadata: {} },
-          { id: 'B', distance: distB, metadata: {} },
+          { id: 'A', content: 'A', distance: distA, metadata: {} },
+          { id: 'B', content: 'B', distance: distB, metadata: {} },
         ];
 
         mockVectorAdapter.searchSimilar.mockResolvedValue(semanticResults);
@@ -548,8 +548,8 @@ describe('QueryProcessor', () => {
       });
 
       test('メタデータ(pathLength/cosineSimilarity)が含まれる', async () => {
-        const semanticResults = [{ id: '1', similarity: 0.9, metadata: {} }];
-        const graphResults = [{ id: '1', distance: 2, metadata: {} }];
+        const semanticResults = [{ id: '1', content: 'content-1', similarity: 0.9, metadata: {} }];
+        const graphResults = [{ id: '1', content: 'content-1', distance: 2, metadata: {} }];
 
         mockVectorAdapter.searchSimilar.mockResolvedValue(semanticResults);
         mockGraphAdapter.search.mockResolvedValue(graphResults);
