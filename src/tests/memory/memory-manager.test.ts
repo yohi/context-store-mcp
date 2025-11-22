@@ -1487,4 +1487,11 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
       }
     });
   });
+
+  describe('findSimilarMemories (Task 3.2 - Similarity Detection)', () => {
+    it('should exist and return a promise resolving to an array', async () => {
+      const results = await memoryManager.findSimilarMemories('test content');
+      expect(Array.isArray(results)).toBe(true);
+    });
+  });
 });

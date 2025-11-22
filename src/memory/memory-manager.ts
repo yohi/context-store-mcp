@@ -17,6 +17,7 @@ import type {
   MemoryLinkType,
   SearchParams,
   MemoryType,
+  MemoryHistoryEntry,
 } from './types.js';
 
 export class MemoryManager implements MemoryManagerService {
@@ -24,6 +25,8 @@ export class MemoryManager implements MemoryManagerService {
   private memories: Map<MemoryId, Memory> = new Map();
   // In-memory storage for memory links (will be replaced with Neo4j in later tasks)
   private links: Map<string, MemoryLink> = new Map();
+  // In-memory storage for memory history
+  private history: Map<MemoryId, MemoryHistoryEntry[]> = new Map();
 
   /**
    * Store a new memory with automatic ID generation and timestamp management
@@ -66,6 +69,7 @@ export class MemoryManager implements MemoryManagerService {
       isDeleted: false,
       isProtected: false,
       deletedAt: null, // Not deleted initially
+      version: 1, // Initial version
     };
 
     // Store in memory (will be replaced with PostgreSQL later)
@@ -119,6 +123,9 @@ export class MemoryManager implements MemoryManagerService {
       normalizedMetadata = withoutType;
     }
 
+    // Save current state to history before update
+    this.saveHistory(existing);
+
     // Create updated memory, filtering out protected fields
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const {
@@ -127,6 +134,7 @@ export class MemoryManager implements MemoryManagerService {
       isDeleted: _isDeleted,
       deletedAt: _deletedAt,
       metadata: _metadata,
+      version: _version, // Exclude version from updates
       ...allowedUpdates
     } = updates;
 
@@ -141,6 +149,7 @@ export class MemoryManager implements MemoryManagerService {
       isDeleted: existing.isDeleted, // isDeleted cannot be changed via update
       deletedAt: existing.deletedAt ?? null, // deletedAt cannot be changed via update, normalize undefined to null
       updatedAt: new Date(), // Always update updatedAt
+      version: existing.version + 1, // Increment version
     };
 
     this.memories.set(id, updatedMemory);
@@ -179,12 +188,16 @@ export class MemoryManager implements MemoryManagerService {
       };
     }
 
+    // Save current state to history before deletion (optional but good practice)
+    this.saveHistory(existing);
+
     // Soft delete: mark as deleted with timestamp (GDPR compliance)
     const deletedMemory: Memory = {
       ...existing,
       isDeleted: true,
       deletedAt: new Date(),
       updatedAt: new Date(),
+      version: existing.version + 1, // Increment version for deletion event? Usually deletion is a status change.
     };
 
     this.memories.set(id, deletedMemory);
@@ -193,6 +206,45 @@ export class MemoryManager implements MemoryManagerService {
       success: true,
       value: true,
     };
+  }
+
+  /**
+   * Get history of a memory
+   * Requirements: Task 3.2
+   */
+  async getMemoryHistory(id: MemoryId): Promise<MemoryHistoryEntry[]> {
+    return this.history.get(id) || [];
+  }
+
+  /**
+   * Find similar memories using vector search
+   * Requirements: 1.3 (類似記憶の自動検出), Task 3.2
+   * Note: This is a placeholder for in-memory implementation.
+   * Full implementation will require VectorStoreAdapter (Task 5.1) and PostgreSQL.
+   */
+  async findSimilarMemories(content: string, limit: number = 5): Promise<Memory[]> {
+    // Placeholder: In the future, this will use VectorStoreAdapter to search by embedding.
+    // For now, we can return an empty array or implement a basic text search if strictly needed.
+    // Given the requirements link to Vector Search, we'll return empty until integration.
+    return [];
+  }
+
+  /**
+   * Save a memory snapshot to history
+   */
+  private saveHistory(memory: Memory): void {
+    const entry: MemoryHistoryEntry = {
+      id: randomUUID(),
+      memoryId: memory.id,
+      version: memory.version,
+      content: memory.content,
+      metadata: { ...memory.metadata }, // Deep copy metadata
+      timestamp: memory.updatedAt,
+    };
+
+    const currentHistory = this.history.get(memory.id) || [];
+    currentHistory.push(entry);
+    this.history.set(memory.id, currentHistory);
   }
 
   /**
