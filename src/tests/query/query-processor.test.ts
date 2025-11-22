@@ -118,16 +118,16 @@ describe('QueryProcessor', () => {
       expect(range.end).toBeDefined();
 
       // 固定日時(2023-03-15 12:00:00 UTC)から昨日を計算
-      // 昨日 = 2023-03-14 00:00:00 UTC ~ 2023-03-15 00:00:00 UTC
+      // 昨日 = 2023-03-14 00:00:00 UTC ~ 2023-03-14 23:59:59.999 UTC
       const expectedStart = new Date('2023-03-14T00:00:00.000Z');
-      const expectedEnd = new Date('2023-03-15T00:00:00.000Z');
+      const expectedEnd = new Date('2023-03-14T23:59:59.999Z');
 
       expect(range.start.toISOString()).toBe(expectedStart.toISOString());
       expect(range.end.toISOString()).toBe(expectedEnd.toISOString());
 
-      // 期間が正確に24時間(1日)であることを検証
+      // 期間がほぼ24時間(1日)であることを検証
       const diffHours = (range.end.getTime() - range.start.getTime()) / (1000 * 60 * 60);
-      expect(diffHours).toBe(24);
+      expect(Math.round(diffHours)).toBe(24);
     });
 
     test('「先週」を正しい日時範囲に変換できる', () => {
@@ -141,11 +141,37 @@ describe('QueryProcessor', () => {
       expect(range.start).toBeDefined();
       expect(range.end).toBeDefined();
 
-      // 7日間の範囲
-      const diffDays = Math.floor(
-        (range.end.getTime() - range.start.getTime()) / (1000 * 60 * 60 * 24)
-      );
-      expect(diffDays).toBe(7);
+      // 前週の月曜日(6日)から日曜日(12日)まで
+      // 基準日(2023-03-15 水)の先週
+      const expectedStart = new Date('2023-03-06T00:00:00.000Z');
+      const expectedEnd = new Date('2023-03-12T23:59:59.999Z');
+
+      expect(range.start.toISOString()).toBe(expectedStart.toISOString());
+      expect(range.end.toISOString()).toBe(expectedEnd.toISOString());
+    });
+
+    test('「先週」を正しい日時範囲に変換できる (日曜日実行時)', () => {
+      // 一時的に日曜日 (2023-03-19) に設定
+      vi.setSystemTime(new Date('2023-03-19T12:00:00Z'));
+
+      try {
+        const timeFilter: TimeFilter = {
+          type: 'relative',
+          value: 'last_week',
+        };
+
+        const range = processor.interpretTimeFilter(timeFilter);
+
+        // 前週の月曜日(6日)から日曜日(12日)まで
+        const expectedStart = new Date('2023-03-06T00:00:00.000Z');
+        const expectedEnd = new Date('2023-03-12T23:59:59.999Z');
+
+        expect(range.start.toISOString()).toBe(expectedStart.toISOString());
+        expect(range.end.toISOString()).toBe(expectedEnd.toISOString());
+      } finally {
+        // テスト後にデフォルトの日時 (2023-03-15) に戻す
+        vi.setSystemTime(new Date('2023-03-15T12:00:00Z'));
+      }
     });
 
     test('「過去30日」を正しい日時範囲に変換できる', () => {
@@ -380,67 +406,158 @@ describe('QueryProcessor', () => {
    * - キャッシュ無効化戦略
    */
   describe('タスク7.2: ハイブリッド検索とキャッシング', () => {
+    let mockVectorAdapter: any;
+    let mockGraphAdapter: any;
+    let hybridProcessor: QueryProcessor;
+
+    beforeEach(() => {
+      mockVectorAdapter = {
+        searchSimilar: vi.fn().mockResolvedValue([]),
+      };
+      mockGraphAdapter = {
+        search: vi.fn().mockResolvedValue([]),
+      };
+      hybridProcessor = new QueryProcessor({
+        vectorAdapter: mockVectorAdapter,
+        graphAdapter: mockGraphAdapter,
+      });
+    });
+
     describe('ハイブリッド検索 - ベクトルとグラフの統合', () => {
       test('ベクトル検索とグラフ検索の結果を統合できる', async () => {
-        // TODO: Implement hybrid search functionality
-        // This test will fail until hybridSearch method is implemented
-        const query = 'TypeScript のエラー対処法に関連する情報';
-        const options = {
-          weights: { semantic: 0.7, structural: 0.3 },
-          limit: 10,
-        };
+        const semanticResults = [
+          { id: '1', content: 'content1', similarity: 0.8, metadata: {} },
+        ];
+        const graphResults = [
+          { id: '2', content: 'content2', distance: 1, metadata: {} },
+        ];
 
-        // Expect processor to have hybridSearch method
-        expect(processor).toHaveProperty('hybridSearch');
+        mockVectorAdapter.searchSimilar.mockResolvedValue(semanticResults);
+        mockGraphAdapter.search.mockResolvedValue(graphResults);
+
+        const results = await hybridProcessor.hybridSearch('query');
+
+        expect(results).toHaveLength(2);
+        expect(results.find((r) => r.memory.id === '1')).toBeDefined();
+        expect(results.find((r) => r.memory.id === '2')).toBeDefined();
       });
 
       test('デフォルトの重みで結果をマージできる (semantic: 0.7, structural: 0.3)', async () => {
-        // TODO: Implement default weights for hybrid search
-        const query = 'デバッグ手順';
+        const semanticResults = [{ id: '1', content: 'content-1', similarity: 0.9, metadata: {} }];
+        const graphResults = [{ id: '1', content: 'content-1', distance: 0, metadata: {} }]; // distance 0 -> score 1.0
 
-        // Default weights should be semantic: 0.7, structural: 0.3
-        expect(processor).toHaveProperty('hybridSearch');
+        mockVectorAdapter.searchSimilar.mockResolvedValue(semanticResults);
+        mockGraphAdapter.search.mockResolvedValue(graphResults);
+
+        const results = await hybridProcessor.hybridSearch('query');
+
+        // Score = 0.7 * 0.9 + 0.3 * 1.0 = 0.63 + 0.3 = 0.93
+        expect(results[0].scores.combined).toBeCloseTo(0.93);
       });
 
       test('カスタム重みで結果をマージできる', async () => {
-        // TODO: Implement custom weights for hybrid search
-        const query = 'プロジェクト構造';
-        const options = {
-          weights: { semantic: 0.5, structural: 0.5 },
-        };
+        const semanticResults = [{ id: '1', content: 'content-1', similarity: 0.9, metadata: {} }];
+        const graphResults = [{ id: '1', content: 'content-1', distance: 0, metadata: {} }]; // score 1.0
 
-        expect(processor).toHaveProperty('hybridSearch');
+        mockVectorAdapter.searchSimilar.mockResolvedValue(semanticResults);
+        mockGraphAdapter.search.mockResolvedValue(graphResults);
+
+        const options = { weights: { semantic: 0.5, structural: 0.5 } };
+        const results = await hybridProcessor.hybridSearch('query', options);
+
+        // Score = 0.5 * 0.9 + 0.5 * 1.0 = 0.45 + 0.5 = 0.95
+        expect(results[0].scores.combined).toBeCloseTo(0.95);
       });
 
       test('スコアが正しく正規化される (0.0 - 1.0)', async () => {
-        // TODO: Implement score normalization
-        // Final score = w_semantic * semantic_score + w_structural * structural_score
-        // Both semantic_score and structural_score should be in [0.0, 1.0]
-        expect(processor).toHaveProperty('hybridSearch');
+        // This is implicitly tested by calculation tests, but we verify it doesn't exceed 1.0
+        const semanticResults = [{ id: '1', content: 'content-1', similarity: 1.0, metadata: {} }];
+        const graphResults = [{ id: '1', content: 'content-1', distance: 0, metadata: {} }];
+
+        mockVectorAdapter.searchSimilar.mockResolvedValue(semanticResults);
+        mockGraphAdapter.search.mockResolvedValue(graphResults);
+
+        const results = await hybridProcessor.hybridSearch('query');
+        expect(results[0].scores.combined).toBeCloseTo(1.0);
       });
 
       test('グラフスコアの指数減衰が正しく適用される', async () => {
-        // TODO: Implement graph score decay
-        // structural_score = exp(-α * path_length)
-        // デフォルト α = 1.0
-        expect(processor).toHaveProperty('hybridSearch');
+        // distance 1 vs distance 2
+        const graphResults = [
+          { id: '1', content: 'content-1', distance: 1, metadata: {} },
+          { id: '2', content: 'content-2', distance: 2, metadata: {} },
+        ];
+        mockVectorAdapter.searchSimilar.mockResolvedValue([]);
+        mockGraphAdapter.search.mockResolvedValue(graphResults);
+
+        // Use structural weight 1.0 to isolate graph score
+        const results = await hybridProcessor.hybridSearch('query', {
+          weights: { semantic: 0, structural: 1 },
+        });
+
+        const r1 = results.find((r) => r.memory.id === '1');
+        const r2 = results.find((r) => r.memory.id === '2');
+
+        // exp(-1) ~= 0.3678, exp(-2) ~= 0.1353
+        expect(r1?.scores.structural).toBeCloseTo(Math.exp(-1));
+        expect(r2?.scores.structural).toBeCloseTo(Math.exp(-2));
       });
 
       test('重みが正規化される (合計が1.0でない場合)', async () => {
-        // TODO: Implement weight normalization
-        // If w_semantic + w_structural ≠ 1.0, normalize them
-        const weights = { semantic: 0.6, structural: 0.2 }; // Sum = 0.8
+        const semanticResults = [{ id: '1', content: 'content-1', similarity: 1.0, metadata: {} }];
+        mockVectorAdapter.searchSimilar.mockResolvedValue(semanticResults);
+        mockGraphAdapter.search.mockResolvedValue([]);
 
-        // Expected normalized: semantic = 0.75, structural = 0.25
-        expect(processor).toHaveProperty('hybridSearch');
+        // weights sum to 2.0 (1.0, 1.0) -> normalized (0.5, 0.5)
+        const options = { weights: { semantic: 1.0, structural: 1.0 } };
+        const results = await hybridProcessor.hybridSearch('query', options);
+
+        // Score = 0.5 * 1.0 + 0.5 * 0 = 0.5
+        expect(results[0].scores.combined).toBeCloseTo(0.5);
       });
 
       test('同一スコアの場合、タイブレークルールが適用される', async () => {
-        // TODO: Implement tiebreak rules
-        // 1. semantic_score が高い方を優先
-        // 2. path_length が短い方を優先
-        // 3. UUID の辞書順
-        expect(processor).toHaveProperty('hybridSearch');
+        // A: sem 0.4, struct 0.6 => combined 0.5
+        // B: sem 0.6, struct 0.4 => combined 0.5
+        // Expect B then A because B has higher semantic score.
+
+        const semanticResults = [
+          { id: 'A', similarity: 0.4, content: 'A', metadata: {} },
+          { id: 'B', similarity: 0.6, content: 'B', metadata: {} },
+        ];
+
+        // struct score needed:
+        // A: 0.6 = exp(-d) -> d = -ln(0.6)
+        // B: 0.4 = exp(-d) -> d = -ln(0.4)
+        const distA = -Math.log(0.6);
+        const distB = -Math.log(0.4);
+
+        const graphResults = [
+          { id: 'A', content: 'A', distance: distA, metadata: {} },
+          { id: 'B', content: 'B', distance: distB, metadata: {} },
+        ];
+
+        mockVectorAdapter.searchSimilar.mockResolvedValue(semanticResults);
+        mockGraphAdapter.search.mockResolvedValue(graphResults);
+
+        const options = { weights: { semantic: 0.5, structural: 0.5 } };
+        const results = await hybridProcessor.hybridSearch('query', options);
+
+        expect(results[0].memory.id).toBe('B');
+        expect(results[1].memory.id).toBe('A');
+      });
+
+      test('メタデータ(pathLength/cosineSimilarity)が含まれる', async () => {
+        const semanticResults = [{ id: '1', content: 'content-1', similarity: 0.9, metadata: {} }];
+        const graphResults = [{ id: '1', content: 'content-1', distance: 2, metadata: {} }];
+
+        mockVectorAdapter.searchSimilar.mockResolvedValue(semanticResults);
+        mockGraphAdapter.search.mockResolvedValue(graphResults);
+
+        const results = await hybridProcessor.hybridSearch('query');
+
+        expect(results[0].metadata).toHaveProperty('cosineSimilarity', 0.9);
+        expect(results[0].metadata).toHaveProperty('pathLength', 2);
       });
     });
 
@@ -476,7 +593,9 @@ describe('QueryProcessor', () => {
 
         // キャッシュに保存
         const queryHash = processorWithCache.generateQueryHash(query, filters);
-        const searchResults = [{ id: '1', content: 'React hooks info', score: 0.95 }];
+        const searchResults = [
+          { id: '1', content: 'React hooks info', score: 0.95 },
+        ];
         processorWithCache.cacheSearchResult(queryHash, searchResults);
 
         // 2回目の検索はキャッシュヒット
@@ -572,7 +691,9 @@ describe('QueryProcessor', () => {
 
         // キャッシュにデータを追加
         const queryHash = processorWithCache.generateQueryHash('test query');
-        processorWithCache.cacheSearchResult(queryHash, [{ id: '1', content: 'test' }]);
+        processorWithCache.cacheSearchResult(queryHash, [
+          { id: '1', content: 'test' },
+        ]);
 
         // キャッシュに存在することを確認
         expect(processorWithCache.getCachedResult('test query')).not.toBeNull();
@@ -661,15 +782,29 @@ describe('QueryProcessor', () => {
 
     describe('パフォーマンス最適化', () => {
       test('ハイブリッド検索が2秒以内に完了する (P95目標)', async () => {
-        // TODO: Performance test - should complete within 2 seconds
-        // This is a placeholder - actual performance test requires real data
-        expect(true).toBe(true);
+        // Performance test simply verifying async execution for now
+        mockVectorAdapter.searchSimilar.mockResolvedValue([]);
+        mockGraphAdapter.search.mockResolvedValue([]);
+
+        const start = performance.now();
+        await hybridProcessor.hybridSearch('query');
+        const end = performance.now();
+
+        expect(end - start).toBeLessThan(2000);
       });
 
       test('キャッシュヒット時は100ms以内に応答する', async () => {
-        // TODO: Performance test for cache hit
-        // Should be much faster than actual search
-        expect(true).toBe(true);
+        const cache = new LRUCache<any>({ maxSize: 100 });
+        const processorWithCache = new QueryProcessor({ cache });
+
+        const hash = processorWithCache.generateQueryHash('query');
+        processorWithCache.cacheSearchResult(hash, []);
+
+        const start = performance.now();
+        processorWithCache.getCachedResult('query');
+        const end = performance.now();
+
+        expect(end - start).toBeLessThan(100);
       });
     });
   });
