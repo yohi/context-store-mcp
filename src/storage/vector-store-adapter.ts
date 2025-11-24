@@ -868,14 +868,14 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
     });
 
     // オフセット適用前の結果を取得（limit + offset 分）
-    const resultsBeforeDiversity = enhancedResults.slice(0, limit + offset);
+    // const resultsBeforeDiversity = enhancedResults.slice(0, limit + offset);
 
     // 多様性を考慮する場合（MMRアルゴリズム）
-    let finalResults = resultsBeforeDiversity;
-    if (diversityEnabled && resultsBeforeDiversity.length > 1) {
-      // MMRは limit のみを考慮（offset適用は後で行う）
+    let finalResults = enhancedResults;
+    if (diversityEnabled && enhancedResults.length > 1) {
+      // MMRは limit + offset のサイズで実行
       const mmrLimit = limit + offset;
-      finalResults = this.applyMaximalMarginalRelevance(resultsBeforeDiversity, mmrLimit);
+      finalResults = this.applyMaximalMarginalRelevance(enhancedResults, mmrLimit);
     }
 
     // オフセットとリミットを適用

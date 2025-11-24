@@ -263,7 +263,7 @@ describe('MemoryClassifier Accuracy Measurement', () => {
     });
   });
 
-  describe('trainClassifier (placeholder)', () => {
+  describe('trainClassifier', () => {
     it('should accept training samples without errors', async () => {
       const trainingSamples = [
         {
@@ -278,11 +278,11 @@ describe('MemoryClassifier Accuracy Measurement', () => {
         },
       ];
 
-      // Should not throw (Phase 4.2 implementation is placeholder)
+      // Should not throw
       await expect(classifier.trainClassifier(trainingSamples)).resolves.toBeUndefined();
     });
 
-    it('should log training sample count', async () => {
+    it('should log completion message', async () => {
       const consoleSpy = vi.spyOn(console, 'log');
 
       await classifier.trainClassifier([
@@ -292,7 +292,7 @@ describe('MemoryClassifier Accuracy Measurement', () => {
         },
       ]);
 
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Training with 1 samples'));
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Training completed'));
 
       consoleSpy.mockRestore();
     });
