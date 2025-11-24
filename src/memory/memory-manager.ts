@@ -20,6 +20,16 @@ import type {
   MemoryHistoryEntry,
 } from './types.js';
 
+import type { VectorStoreAdapter } from '../storage/vector-store-adapter.js';
+import type { GraphStoreAdapter } from '../storage/graph-store-adapter.js';
+import type { TransactionCoordinator } from '../storage/transaction-coordinator.js';
+
+export interface MemoryManagerConfig {
+  vectorStore?: VectorStoreAdapter;
+  graphStore?: GraphStoreAdapter;
+  transactionCoordinator?: TransactionCoordinator;
+}
+
 export class MemoryManager implements MemoryManagerService {
   // In-memory storage for testing (will be replaced with PostgreSQL in later tasks)
   private memories: Map<MemoryId, Memory> = new Map();
@@ -27,6 +37,18 @@ export class MemoryManager implements MemoryManagerService {
   private links: Map<string, MemoryLink> = new Map();
   // In-memory storage for memory history
   private history: Map<MemoryId, MemoryHistoryEntry[]> = new Map();
+
+  private vectorStore?: VectorStoreAdapter;
+  private graphStore?: GraphStoreAdapter;
+  private transactionCoordinator?: TransactionCoordinator;
+
+  constructor(config?: MemoryManagerConfig) {
+    if (config) {
+      if (config.vectorStore) this.vectorStore = config.vectorStore;
+      if (config.graphStore) this.graphStore = config.graphStore;
+      if (config.transactionCoordinator) this.transactionCoordinator = config.transactionCoordinator;
+    }
+  }
 
   /**
    * Store a new memory with automatic ID generation and timestamp management
@@ -74,6 +96,31 @@ export class MemoryManager implements MemoryManagerService {
 
     // Store in memory (will be replaced with PostgreSQL later)
     this.memories.set(memoryId, memory);
+
+    // Use Transaction Coordinator if available
+    if (this.transactionCoordinator) {
+      const entity = {
+        id: memoryId,
+        content: memory.content,
+        memoryType: memory.memoryType,
+        metadata: memory.metadata,
+      };
+
+      const result = await this.transactionCoordinator.storeMemoryWithSaga(entity);
+
+      if (result.status === 'failed') {
+        // Rollback in-memory storage
+        this.memories.delete(memoryId);
+        return {
+          success: false,
+          error: {
+            type: 'STORAGE_ERROR',
+            message: result.error.message,
+          },
+        };
+      }
+      // Note: We ignore partial success warnings for now as the Saga handles eventual consistency
+    }
 
     return {
       success: true,
@@ -202,6 +249,23 @@ export class MemoryManager implements MemoryManagerService {
 
     this.memories.set(id, deletedMemory);
 
+    // Use Transaction Coordinator if available
+    if (this.transactionCoordinator) {
+      const result = await this.transactionCoordinator.deleteMemoryWithSaga(id);
+
+      if (result.status === 'failed') {
+        // Rollback in-memory storage (restore original)
+        this.memories.set(id, existing);
+        return {
+          success: false,
+          error: {
+            type: 'STORAGE_ERROR',
+            message: result.error.message,
+          },
+        };
+      }
+    }
+
     return {
       success: true,
       value: true,
@@ -223,6 +287,28 @@ export class MemoryManager implements MemoryManagerService {
    * Full implementation will require VectorStoreAdapter (Task 5.1) and PostgreSQL.
    */
   async findSimilarMemories(content: string, limit: number = 5): Promise<Memory[]> {
+    if (this.vectorStore) {
+      const results = await this.vectorStore.searchSimilar(content, limit);
+      return results.map((r) => ({
+        id: r.id,
+        content: r.content,
+        // Reconstruct Memory object from search result
+        // Note: VectorSearchResult might miss some fields like memoryType if not in metadata
+        // We assume metadata contains necessary fields or use defaults
+        memoryType: (r.metadata.memoryType as MemoryType) || 'semantic',
+        metadata: r.metadata as unknown as MemoryMetadata,
+        // Use real timestamps and metadata from search result
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        lastAccessedAt: r.lastAccessedAt || new Date(),
+        accessCount: r.accessCount || 0,
+        importanceScore: r.importanceScore || 0,
+        isDeleted: false,
+        isProtected: false,
+        version: r.version || 1,
+      }));
+    }
+
     // Placeholder: In the future, this will use VectorStoreAdapter to search by embedding.
     // For now, we can return an empty array or implement a basic text search if strictly needed.
     // Given the requirements link to Vector Search, we'll return empty until integration.

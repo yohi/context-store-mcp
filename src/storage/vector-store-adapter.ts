@@ -46,6 +46,18 @@ export interface VectorSearchResult {
   similarity: number;
   /** メタデータ */
   metadata: Metadata;
+  /** 作成日時 */
+  createdAt: Date;
+  /** 更新日時 */
+  updatedAt: Date;
+  /** 最終アクセス日時 (Optional) */
+  lastAccessedAt?: Date;
+  /** アクセス回数 (Optional) */
+  accessCount?: number;
+  /** 重要度スコア (Optional) */
+  importanceScore?: number;
+  /** バージョン (Optional) */
+  version?: number;
 }
 
 /**
@@ -509,6 +521,8 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
         m.id,
         m.content,
         m.metadata,
+        m.created_at,
+        m.updated_at,
         1 - (mv.embedding <=> $1::vector) AS similarity
        FROM memories m
        JOIN memory_vectors mv ON m.id = mv.memory_id
@@ -519,12 +533,22 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
       [this.toPgvector(normalizedQuery), this.similarityThreshold, limit]
     );
 
-    return result.rows.map((row) => ({
-      id: row.id,
-      content: row.content,
-      similarity: parseFloat(row.similarity),
-      metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata,
-    }));
+    return result.rows.map((row) => {
+      const metadata = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata;
+      return {
+        id: row.id,
+        content: row.content,
+        similarity: parseFloat(row.similarity),
+        metadata,
+        createdAt: new Date(row.created_at),
+        updatedAt: new Date(row.updated_at),
+        // Extract optional fields from metadata if they exist
+        ...(metadata.lastAccessedAt ? { lastAccessedAt: new Date(metadata.lastAccessedAt) } : {}),
+        ...(typeof metadata.accessCount === 'number' ? { accessCount: metadata.accessCount } : {}),
+        ...(typeof metadata.importanceScore === 'number' ? { importanceScore: metadata.importanceScore } : {}),
+        ...(typeof metadata.version === 'number' ? { version: metadata.version } : {}),
+      };
+    });
   }
 
   async deleteVector(id: VectorId): Promise<boolean> {
@@ -579,8 +603,12 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
       paramIndex = 1;
 
       for (let i = 0; i < items.length; i++) {
+        const embedding = normalizedEmbeddings[i];
+        if (!embedding) {
+          throw new Error(`Missing embedding for item at index ${i}`);
+        }
         vectorsValues.push(`($${paramIndex}, $${paramIndex + 1}::vector)`);
-        vectorsParams.push(ids[i], this.toPgvector(normalizedEmbeddings[i]!));
+        vectorsParams.push(ids[i], this.toPgvector(embedding));
         paramIndex += 2;
       }
 
@@ -623,7 +651,7 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
       console.error(`REINDEX CONCURRENTLY failed for ${indexName}:`, error);
       console.error(
         `Warning: An invalid index with _ccnew suffix may remain. ` +
-          `Check with: SELECT indexrelid::regclass, indisvalid FROM pg_index WHERE indexrelid::regclass::text LIKE '${indexName}%';`
+        `Check with: SELECT indexrelid::regclass, indisvalid FROM pg_index WHERE indexrelid::regclass::text LIKE '${indexName}%';`
       );
 
       // 無効なインデックスの存在をチェック
@@ -792,6 +820,13 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
         content: row.content,
         similarity: parseFloat(row.similarity),
         metadata,
+        createdAt: new Date(row.created_at),
+        updatedAt: new Date(row.created_at), // Fallback to created_at if updated_at is not selected
+        // Extract optional fields from metadata if they exist
+        ...(metadata.lastAccessedAt ? { lastAccessedAt: new Date(metadata.lastAccessedAt) } : {}),
+        ...(typeof metadata.accessCount === 'number' ? { accessCount: metadata.accessCount } : {}),
+        ...(typeof metadata.importanceScore === 'number' ? { importanceScore: metadata.importanceScore } : {}),
+        ...(typeof metadata.version === 'number' ? { version: metadata.version } : {}),
       };
     });
 
