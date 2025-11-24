@@ -155,9 +155,13 @@ export class MonitoringService {
     this.performHealthCheck();
 
     // 定期チェックを開始
-    this.checkTimer = setInterval(() => {
-      this.performHealthCheck();
-      this.pruneOldAlerts();
+    this.checkTimer = setInterval(async () => {
+      try {
+        this.performHealthCheck();
+        this.pruneOldAlerts();
+      } catch (error) {
+        console.error('Monitoring loop error:', error);
+      }
     }, this.config.checkInterval);
   }
 
@@ -212,7 +216,7 @@ export class MonitoringService {
    */
   getRecentAlerts(limit?: number): Alert[] {
     const alerts = [...this.alerts].reverse(); // 新しい順
-    return limit ? alerts.slice(0, limit) : alerts;
+    return limit === undefined ? alerts : alerts.slice(0, Math.max(0, limit));
   }
 
   /**
