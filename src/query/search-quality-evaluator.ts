@@ -276,8 +276,10 @@ export class SearchQualityEvaluator {
 
     // Step 5: Kappa = (P_bar - P_e) / (1 - P_e)
     if (1 - P_e === 0) {
-      // 完全にランダムな場合（ゼロ除算回避）
-      return 0;
+      // P_e = 1.0 の場合、完全な一致または完全なランダム
+      // P_bar = 1.0 なら完全一致（kappa = 1.0）
+      // P_bar < 1.0 なら完全ランダム（kappa = 0）
+      return P_bar >= 0.9999 ? 1.0 : 0;
     }
 
     const kappa = (P_bar - P_e) / (1 - P_e);
