@@ -6,7 +6,8 @@
  * Requirements: 8.1, 8.2, 8.3
  */
 
-import { MetricsCollector, SystemResourceMetrics, MetricsSummary } from './metrics-collector';
+import { MetricsCollector } from './metrics-collector';
+import type { SystemResourceMetrics, MetricsSummary } from './metrics-collector';
 
 /**
  * アラート閾値設定
@@ -54,7 +55,7 @@ export interface Alert {
   value: number;
   threshold: number;
   timestamp: number;
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, unknown> | undefined;
 }
 
 /**
@@ -118,7 +119,7 @@ export class MonitoringService {
   private readonly config: Required<MonitoringServiceConfig>;
   private readonly alerts: Alert[] = [];
   private readonly alertHandlers: AlertHandler[] = [];
-  private checkTimer?: NodeJS.Timeout;
+  private checkTimer?: NodeJS.Timeout | undefined;
   private alertIdCounter = 0;
 
   constructor(metricsCollector: MetricsCollector, config?: MonitoringServiceConfig) {
@@ -132,10 +133,14 @@ export class MonitoringService {
       maxAlerts: config?.maxAlerts ?? MonitoringService.DEFAULT_MAX_ALERTS,
     };
 
-    this.thresholds = {
-      ...MonitoringService.DEFAULT_THRESHOLDS,
-      ...config?.thresholds,
-    };
+    const thresholds = {} as AlertThresholds;
+    for (const key of Object.keys(MonitoringService.DEFAULT_THRESHOLDS) as Array<keyof AlertThresholds>) {
+      thresholds[key] = {
+        ...MonitoringService.DEFAULT_THRESHOLDS[key],
+        ...config?.thresholds?.[key],
+      };
+    }
+    this.thresholds = thresholds;
   }
 
   /**
