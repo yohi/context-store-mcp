@@ -341,4 +341,27 @@ export class ConnectionPoolManager {
   public isNeo4jInitialized(): boolean {
     return this.neo4jDriver !== null;
   }
+
+  /**
+   * PostgreSQL接続プール設定を更新して再初期化
+   */
+  public async updatePostgresPoolConfig(newConfig: PostgresPoolConfig): Promise<void> {
+    // 既存の設定を更新
+    this.pgPoolConfig = {
+      ...this.pgPoolConfig,
+      ...newConfig,
+    };
+
+    // プールが既に初期化されている場合は再作成
+    if (this.pgPool) {
+      try {
+        await this.pgPool.end();
+      } catch (error) {
+        console.warn('Error closing old PostgreSQL pool during update:', error);
+      }
+      
+      this.pgPool = null;
+      this.initializePostgresPool();
+    }
+  }
 }
