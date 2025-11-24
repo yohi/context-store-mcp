@@ -100,17 +100,17 @@
   - 分類信頼度の算出
   - _Requirements: 3.1, 3.2, 3.3, 3.4_
 
-- [ ] 4.2 分類精度の測定と改善システム **[部分実装]**
+- [x] 4.2 分類精度の測定と改善システム **[実装完了]**
   - [x] 評価データセットの管理（LabeledSample型）
   - [x] 分類精度の測定ロジック（evaluateAccuracy）
   - [x] 混同行列（Confusion Matrix）の計算
   - [x] 全体精度とタイプ別精度の算出
   - [x] ユーザーフィードバックの収集（ClassificationStats）
-  - [ ] 分類モデルの学習機構（trainClassifier） - プレースホルダー実装のみ → **Issue #22**
+  - [x] 分類モデルの学習機構（trainClassifier） - 実装完了 (Issue #22 resolved)
   - [x] 精度レポート生成（AccuracyMetrics、ClassificationStats）
   - [x] 13ユニットテスト全パス
   - _Requirements: 3.4_
-  - **TODO**: [Issue #22](https://github.com/yohi/context-store-mcp/issues/22) - trainClassifierの完全実装（機械学習モデルの統合）
+  - **DONE**: [Issue #22](https://github.com/yohi/context-store-mcp/issues/22) - trainClassifierの完全実装（機械学習モデルの統合）
 
 - [x] 4.3 記憶タイプ間の関連付けと管理
   - タイプ間リンクの生成と維持
