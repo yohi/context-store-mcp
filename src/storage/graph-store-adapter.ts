@@ -814,7 +814,7 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
         );
 
         const cnt = result.records[0]?.get('cnt');
-        return cnt && cnt.toNumber() > 0;
+        return cnt ? cnt.toNumber() > 0 : false;
       } finally {
         await session.close();
       }
