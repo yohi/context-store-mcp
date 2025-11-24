@@ -44,9 +44,9 @@ export class MemoryManager implements MemoryManagerService {
 
   constructor(config?: MemoryManagerConfig) {
     if (config) {
-      this.vectorStore = config.vectorStore;
-      this.graphStore = config.graphStore;
-      this.transactionCoordinator = config.transactionCoordinator;
+      if (config.vectorStore) this.vectorStore = config.vectorStore;
+      if (config.graphStore) this.graphStore = config.graphStore;
+      if (config.transactionCoordinator) this.transactionCoordinator = config.transactionCoordinator;
     }
   }
 
@@ -103,7 +103,7 @@ export class MemoryManager implements MemoryManagerService {
         id: memoryId,
         content: memory.content,
         memoryType: memory.memoryType,
-        metadata: memory.metadata as unknown as Record<string, unknown>,
+        metadata: memory.metadata,
       };
 
       const result = await this.transactionCoordinator.storeMemoryWithSaga(entity);
@@ -297,15 +297,15 @@ export class MemoryManager implements MemoryManagerService {
         // We assume metadata contains necessary fields or use defaults
         memoryType: (r.metadata.memoryType as MemoryType) || 'semantic',
         metadata: r.metadata as unknown as MemoryMetadata,
-        // Placeholder timestamps as they might not be in basic search result
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        lastAccessedAt: new Date(),
-        accessCount: 0,
-        importanceScore: 0,
+        // Use real timestamps and metadata from search result
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        lastAccessedAt: r.lastAccessedAt || new Date(),
+        accessCount: r.accessCount || 0,
+        importanceScore: r.importanceScore || 0,
         isDeleted: false,
         isProtected: false,
-        version: 1,
+        version: r.version || 1,
       }));
     }
 

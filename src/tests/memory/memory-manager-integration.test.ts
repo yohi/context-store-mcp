@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { MemoryManager } from '../../memory/memory-manager.js';
 import { VectorStoreAdapter } from '../../storage/vector-store-adapter.js';
 import { GraphStoreAdapter } from '../../storage/graph-store-adapter.js';
@@ -11,9 +11,22 @@ vi.mock('../../storage/transaction-coordinator.js');
 
 describe('MemoryManager Integration', () => {
   let memoryManager: MemoryManager;
-  let mockVectorStore: any;
-  let mockGraphStore: any;
-  let mockCoordinator: any;
+  let mockVectorStore: {
+    searchSimilar: Mock;
+    searchSimilarAdvanced: Mock;
+    storeWithEmbedding: Mock;
+    deleteVector: Mock;
+  };
+  let mockGraphStore: {
+    createNode: Mock;
+    createRelationship: Mock;
+    traverseGraph: Mock;
+    getNodeRelationships: Mock;
+  };
+  let mockCoordinator: {
+    storeMemoryWithSaga: Mock;
+    deleteMemoryWithSaga: Mock;
+  };
 
   beforeEach(() => {
     // Reset mocks
@@ -39,13 +52,11 @@ describe('MemoryManager Integration', () => {
     };
 
     // Initialize MemoryManager with dependencies
-    // Using 'as any' to bypass type checking for TDD 'Red' phase
-    // where the constructor signature hasn't been updated yet
     memoryManager = new MemoryManager({
-      vectorStore: mockVectorStore,
-      graphStore: mockGraphStore,
-      transactionCoordinator: mockCoordinator
-    } as any);
+      vectorStore: mockVectorStore as unknown as VectorStoreAdapter,
+      graphStore: mockGraphStore as unknown as GraphStoreAdapter,
+      transactionCoordinator: mockCoordinator as unknown as TransactionCoordinator
+    });
   });
 
   it('should use TransactionCoordinator for storing memory', async () => {
@@ -77,17 +88,28 @@ describe('MemoryManager Integration', () => {
   });
 
   it('should use TransactionCoordinator for deleting memory', async () => {
+    // Setup for storeMemory
+    mockCoordinator.storeMemoryWithSaga.mockResolvedValue({
+      status: 'ok',
+      memoryId: 'generated-id'
+    });
+
+    // Pre-populate memory using public API
+    const storeResult = await memoryManager.storeMemory({ content: 'to delete' });
+    expect(storeResult.success).toBe(true);
+    if (!storeResult.success) return;
+
+    const memoryId = storeResult.value;
+
+    // Setup for deleteMemory
     mockCoordinator.deleteMemoryWithSaga.mockResolvedValue({
       status: 'ok',
-      memoryId: 'del-id'
+      memoryId: memoryId
     });
-    
-    // Pre-populate memory so it exists for the check
-    (memoryManager as any).memories.set('del-id', { id: 'del-id', isProtected: false });
 
-    const result = await memoryManager.deleteMemory('del-id');
+    const result = await memoryManager.deleteMemory(memoryId);
 
-    expect(mockCoordinator.deleteMemoryWithSaga).toHaveBeenCalledWith('del-id');
+    expect(mockCoordinator.deleteMemoryWithSaga).toHaveBeenCalledWith(memoryId);
     expect(result.success).toBe(true);
   });
 });

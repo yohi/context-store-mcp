@@ -14,7 +14,7 @@
 
 import type { Pool } from 'pg';
 import type { Driver, Session } from 'neo4j-driver';
-import type { MemoryId, MemoryType } from '../memory/types.js';
+import type { MemoryId, MemoryType, MemoryMetadata } from '../memory/types.js';
 
 /**
  * Memory Entity (PostgreSQL + Neo4j 間で共有)
@@ -23,7 +23,7 @@ export interface MemoryEntity {
   id: MemoryId;
   content: string;
   memoryType: MemoryType;
-  metadata: Record<string, unknown>;
+  metadata: MemoryMetadata;
 }
 
 /**
@@ -83,32 +83,32 @@ export interface TransactionCoordinatorConfig {
  */
 export type TransactionResult =
   | {
-      /** Success status */
-      status: 'ok';
-      /** Memory ID for successful operation */
-      memoryId: MemoryId;
-    }
+    /** Success status */
+    status: 'ok';
+    /** Memory ID for successful operation */
+    memoryId: MemoryId;
+  }
   | {
-      /** Partial success status */
-      status: 'partial';
-      /** Memory ID for partially successful operation */
-      memoryId: MemoryId;
-      /** Warning information for partial success */
-      warning: {
-        type: 'SYNC_FAILURE';
-        message: string;
-      };
-    }
-  | {
-      /** Failure status */
-      status: 'failed';
-      /** Error information for failed operation */
-      error: {
-        type: 'POSTGRESQL_ERROR' | 'NEO4J_ERROR' | 'SYNC_FAILURE';
-        message: string;
-        requiresCompensation?: boolean;
-      };
+    /** Partial success status */
+    status: 'partial';
+    /** Memory ID for partially successful operation */
+    memoryId: MemoryId;
+    /** Warning information for partial success */
+    warning: {
+      type: 'SYNC_FAILURE';
+      message: string;
     };
+  }
+  | {
+    /** Failure status */
+    status: 'failed';
+    /** Error information for failed operation */
+    error: {
+      type: 'POSTGRESQL_ERROR' | 'NEO4J_ERROR' | 'SYNC_FAILURE';
+      message: string;
+      requiresCompensation?: boolean;
+    };
+  };
 
 /**
  * Transaction Coordinator
@@ -182,9 +182,8 @@ export class TransactionCoordinator {
               status: 'failed',
               error: {
                 type: 'POSTGRESQL_ERROR',
-                message: `Failed to mark sync failure after Neo4j error: ${
-                  markError instanceof Error ? markError.message : String(markError)
-                }`,
+                message: `Failed to mark sync failure after Neo4j error: ${markError instanceof Error ? markError.message : String(markError)
+                  }`,
                 requiresCompensation: true,
               },
             };
@@ -197,9 +196,8 @@ export class TransactionCoordinator {
           memoryId: memory.id,
           warning: {
             type: 'SYNC_FAILURE',
-            message: `Neo4j node creation failed: ${neoResult.error}${
-              wasInserted ? '. Marked for background retry.' : '. Existing record remains out of sync.'
-            }`,
+            message: `Neo4j node creation failed: ${neoResult.error}${wasInserted ? '. Marked for background retry.' : '. Existing record remains out of sync.'
+              }`,
           },
         };
       }
