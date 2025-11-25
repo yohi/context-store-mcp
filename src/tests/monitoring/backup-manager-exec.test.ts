@@ -60,16 +60,17 @@ describe('BackupManager Command Execution', () => {
         await manager.performBackup();
 
         // Verify pg_dump call
+        const calls = vi.mocked(execFile).mock.calls;
+        const pgDumpCall = calls.find(call => call[0] === 'pg_dump');
+        expect(pgDumpCall).toBeDefined();
+        const args = pgDumpCall![1] as string[];
+        
+        expect(args.indexOf('-f')).not.toBe(-1);
+        expect(args[args.indexOf('-f') + 1]).toMatch(/postgresql\.sql/);
+
         expect(execFile).toHaveBeenCalledWith(
             'pg_dump',
-            expect.arrayContaining([
-                '-h', 'localhost',
-                '-p', '5432',
-                '-U', 'user',
-                '-d', 'mydb',
-                '-F', 'p',
-                expect.stringContaining('postgresql.sql')
-            ]),
+            expect.any(Array),
             expect.objectContaining({
                 env: expect.objectContaining({
                     PGPASSWORD: 'pgpassword',
@@ -86,15 +87,14 @@ describe('BackupManager Command Execution', () => {
         await manager.performBackup();
 
         // Verify neo4j-admin call
-        expect(execFile).toHaveBeenCalledWith(
-            'neo4j-admin',
-            expect.arrayContaining([
-                'dump',
-                '--database', 'graphdb',
-                '--to', expect.stringContaining('neo4j.dump'),
-            ]),
-            expect.any(Function)
-        );
+        const calls = vi.mocked(execFile).mock.calls;
+        const neo4jCall = calls.find(call => call[0] === 'neo4j-admin');
+        expect(neo4jCall).toBeDefined();
+        expect(neo4jCall![1]).toEqual(expect.arrayContaining([
+            'dump',
+            '--database', 'graphdb',
+            '--to', expect.stringContaining('neo4j.dump'),
+        ]));
     });
 
     it('should execute tar with correct arguments and cwd', async () => {

@@ -234,7 +234,11 @@ export class BackupManager {
     let deletedCount = 0;
 
     // 保持期間を超えたバックアップを削除
-    for (const backup of this.backupHistory) {
+    // 保持期間を超えたバックアップを削除
+    for (let i = this.backupHistory.length - 1; i >= 0; i--) {
+      const backup = this.backupHistory[i];
+      if (!backup) continue;
+
       if (
         backup.startTime.getTime() < cutoffTime &&
         backup.filePath &&
@@ -243,6 +247,7 @@ export class BackupManager {
         try {
           fs.unlinkSync(backup.filePath);
           deletedCount++;
+          this.backupHistory.splice(i, 1);
         } catch (error) {
           console.error(`Failed to delete backup file: ${backup.filePath}`, error);
         }
@@ -344,11 +349,21 @@ export class BackupManager {
 
   /**
    * Cron形式をインターバル（ミリ秒）に変換
-   * 注: 簡易実装。本番環境では node-cron などを使用
+   * 注: 簡易実装。現在はデフォルト設定('0 2 * * *')のみをサポートし、
+   * カスタムスケジュールの場合は警告を出してデフォルトの24時間間隔を使用します。
+   * 本番環境でカスタムスケジュールが必要な場合は node-cron などを導入してください。
    */
   private parseCronToInterval(_cron: string): number {
-    // デフォルト: 24時間（毎日）
-    return 24 * 60 * 60 * 1000;
+    const defaultSchedule = '0 2 * * *';
+    const defaultInterval = 24 * 60 * 60 * 1000; // 24時間
+
+    if (_cron !== defaultSchedule) {
+      console.warn(
+        `Custom cron schedules are not supported in this version. Using default interval (24h) instead of: ${_cron}`
+      );
+    }
+
+    return defaultInterval;
   }
 }
 
