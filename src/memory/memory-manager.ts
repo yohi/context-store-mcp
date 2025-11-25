@@ -18,6 +18,7 @@ import type {
   SearchParams,
   MemoryType,
   MemoryHistoryEntry,
+  MemoryClassifierService,
 } from './types.js';
 
 import type { VectorStoreAdapter } from '../storage/vector-store-adapter.js';
@@ -28,6 +29,7 @@ export interface MemoryManagerConfig {
   vectorStore?: VectorStoreAdapter;
   graphStore?: GraphStoreAdapter;
   transactionCoordinator?: TransactionCoordinator;
+  classifier?: MemoryClassifierService;
 }
 
 export class MemoryManager implements MemoryManagerService {
@@ -41,12 +43,14 @@ export class MemoryManager implements MemoryManagerService {
   private vectorStore?: VectorStoreAdapter;
   private graphStore?: GraphStoreAdapter;
   private transactionCoordinator?: TransactionCoordinator;
+  private classifier?: MemoryClassifierService;
 
   constructor(config?: MemoryManagerConfig) {
     if (config) {
       if (config.vectorStore) this.vectorStore = config.vectorStore;
       if (config.graphStore) this.graphStore = config.graphStore;
       if (config.transactionCoordinator) this.transactionCoordinator = config.transactionCoordinator;
+      if (config.classifier) this.classifier = config.classifier;
     }
   }
 
@@ -73,17 +77,32 @@ export class MemoryManager implements MemoryManagerService {
     // Auto-generate timestamps
     const timestamps = this.createTimestamps();
 
-    // Normalize memoryType: prefer top-level params.memoryType, then metadata.memoryType, finally default to 'semantic'
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    // Normalize memoryType: prefer top-level params.memoryType, then metadata.memoryType
     const { memoryType: metadataType, ...metadataWithoutType } =
       processedMetadata as MemoryMetadata & { memoryType?: MemoryType };
+
+    // Determine memory type: explicit > classifier > default
+    let memoryType = params.memoryType || metadataType;
+    
+    if (!memoryType && this.classifier) {
+      try {
+        const classification = await this.classifier.classifyContent(params.content);
+        memoryType = classification.primaryType;
+      } catch (error) {
+        console.error('Automatic classification failed:', error);
+        // Fallback to semantic if classification fails
+        memoryType = 'semantic';
+      }
+    }
+
+    const finalMemoryType = memoryType || 'semantic';
 
     // Create memory entity
     // memoryType is now exclusively managed at top-level (single source of truth)
     const memory: Memory = {
       id: memoryId,
       content: params.content,
-      memoryType: params.memoryType || metadataType || 'semantic', // Prefer params.memoryType, then metadata, then default
+      memoryType: finalMemoryType,
       metadata: metadataWithoutType,
       ...timestamps,
       accessCount: 0,
