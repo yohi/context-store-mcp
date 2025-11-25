@@ -155,19 +155,27 @@ describe('BackupManager', () => {
     it('失敗したバックアップは復元できない', async () => {
       const manager = new BackupManager({ backupDir: testBackupDir });
 
-      // 失敗したバックアップを作成
-      try {
-        await manager.performBackup();
-      } catch (error) {
-        // エラーは期待される
-      }
+      // 失敗したバックアップを直接履歴に追加
+      // performBackupでは失敗を再現しにくいため、履歴を直接操作する
+      const failedBackup = {
+        id: 'backup-failed-test',
+        status: BackupStatus.FAILED,
+        startTime: new Date(),
+        endTime: new Date(),
+        error: 'Test failure',
+        filePath: '/tmp/dummy-failed-backup', // restoreBackupのチェックを通過するために必要
+      };
+
+      // privateプロパティにアクセスするためにanyキャストを使用
+      (manager as any).backupHistory.push(failedBackup);
 
       const latest = manager.getLatestBackup();
-      if (latest && latest.status === BackupStatus.FAILED) {
-        await expect(manager.restoreBackup(latest.id)).rejects.toThrow(
-          'Cannot restore failed backup'
-        );
-      }
+      expect(latest).toBeDefined();
+      expect(latest!.status).toBe(BackupStatus.FAILED);
+
+      await expect(manager.restoreBackup(latest!.id)).rejects.toThrow(
+        'Cannot restore failed backup'
+      );
     });
   });
 

@@ -8,10 +8,10 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 /**
  * バックアップステータス
@@ -74,7 +74,7 @@ export class BackupManager {
 
   private readonly config: Required<Omit<BackupConfig, 'databases'>> & Pick<BackupConfig, 'databases'>;
   private readonly backupHistory: BackupResult[] = [];
-  private scheduleTimer?: NodeJS.Timeout;
+  private scheduleTimer: NodeJS.Timeout | undefined;
   private backupIdCounter = 0;
 
   constructor(config?: BackupConfig) {
@@ -84,7 +84,7 @@ export class BackupManager {
       retentionDays: config?.retentionDays ?? BackupManager.DEFAULT_RETENTION_DAYS,
       maxBackups: config?.maxBackups ?? BackupManager.DEFAULT_MAX_BACKUPS,
       compressionEnabled: config?.compressionEnabled ?? true,
-      databases: config?.databases,
+      ...(config?.databases ? { databases: config.databases } : {}),
     };
 
     // バックアップディレクトリを作成
@@ -138,7 +138,7 @@ export class BackupManager {
       id: backupId,
       status: BackupStatus.IN_PROGRESS,
       startTime,
-      metadata,
+      ...(metadata ? { metadata } : {}),
     };
 
     this.backupHistory.push(result);
@@ -281,13 +281,21 @@ export class BackupManager {
     }
 
     const fileName = `${backupId}-postgresql.sql`;
-    const filePath = path.join(this.config.backupDir, fileName);
+    const filePath = path.resolve(this.config.backupDir, fileName);
 
-    // pg_dump コマンドを実行
-    const command = `PGPASSWORD="${config.password}" pg_dump -h ${config.host} -p ${config.port} -U ${config.username} -d ${config.database} -F p -f "${filePath}"`;
+    const args = [
+      '-h', config.host,
+      '-p', String(config.port),
+      '-U', config.username,
+      '-d', config.database,
+      '-F', 'p',
+      '-f', filePath
+    ];
+
+    const env = { ...process.env, PGPASSWORD: config.password };
 
     try {
-      await execAsync(command);
+      await execFileAsync('pg_dump', args, { env });
       return filePath;
     } catch (error) {
       throw new Error(`PostgreSQL backup failed: ${error}`);
@@ -304,14 +312,12 @@ export class BackupManager {
     }
 
     const fileName = `${backupId}-neo4j.dump`;
-    const filePath = path.join(this.config.backupDir, fileName);
+    const filePath = path.resolve(this.config.backupDir, fileName);
 
-    // neo4j-admin dump コマンドを実行
-    // 注: Neo4jのバックアップは通常、Neo4jサーバー上で実行する必要があります
-    const command = `neo4j-admin dump --database=${config.database} --to="${filePath}"`;
+    const args = ['dump', '--database', config.database, '--to', filePath];
 
     try {
-      await execAsync(command);
+      await execFileAsync('neo4j-admin', args);
       return filePath;
     } catch (error) {
       throw new Error(`Neo4j backup failed: ${error}`);
@@ -323,13 +329,13 @@ export class BackupManager {
    */
   private async compressBackups(backupId: string, files: string[]): Promise<string> {
     const archiveName = `${backupId}.tar.gz`;
-    const archivePath = path.join(this.config.backupDir, archiveName);
+    const archivePath = path.resolve(this.config.backupDir, archiveName);
 
-    const fileList = files.map((f) => path.basename(f)).join(' ');
-    const command = `tar -czf "${archivePath}" -C "${this.config.backupDir}" ${fileList}`;
+    const fileBasenames = files.map((f) => path.basename(f));
+    const args = ['-czf', archiveName, ...fileBasenames];
 
     try {
-      await execAsync(command);
+      await execFileAsync('tar', args, { cwd: this.config.backupDir });
       return archivePath;
     } catch (error) {
       throw new Error(`Compression failed: ${error}`);
@@ -340,7 +346,7 @@ export class BackupManager {
    * Cron形式をインターバル（ミリ秒）に変換
    * 注: 簡易実装。本番環境では node-cron などを使用
    */
-  private parseCronToInterval(cron: string): number {
+  private parseCronToInterval(_cron: string): number {
     // デフォルト: 24時間（毎日）
     return 24 * 60 * 60 * 1000;
   }
