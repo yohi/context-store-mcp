@@ -158,6 +158,10 @@ export class BackupManager {
         backupFiles.push(neoFile);
       }
 
+      if (backupFiles.length === 0) {
+        throw new Error('No backup targets configured: config.databases is missing or contains no enabled targets');
+      }
+
       // バックアップファイルを圧縮（オプション）
       let finalPath: string;
       if (this.config.compressionEnabled && backupFiles.length > 0) {
@@ -234,23 +238,21 @@ export class BackupManager {
     let deletedCount = 0;
 
     // 保持期間を超えたバックアップを削除
-    // 保持期間を超えたバックアップを削除
     for (let i = this.backupHistory.length - 1; i >= 0; i--) {
       const backup = this.backupHistory[i];
       if (!backup) continue;
 
-      if (
-        backup.startTime.getTime() < cutoffTime &&
-        backup.filePath &&
-        fs.existsSync(backup.filePath)
-      ) {
-        try {
-          fs.unlinkSync(backup.filePath);
-          deletedCount++;
-          this.backupHistory.splice(i, 1);
-        } catch (error) {
-          console.error(`Failed to delete backup file: ${backup.filePath}`, error);
+      if (backup.startTime.getTime() < cutoffTime) {
+        if (backup.filePath && fs.existsSync(backup.filePath)) {
+          try {
+            fs.unlinkSync(backup.filePath);
+          } catch (error) {
+            console.error(`Failed to delete backup file: ${backup.filePath}`, error);
+          }
         }
+
+        this.backupHistory.splice(i, 1);
+        deletedCount++;
       }
     }
 

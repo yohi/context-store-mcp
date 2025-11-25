@@ -73,16 +73,32 @@ describe('BackupManager', () => {
   });
 
   describe('バックアップ実行', () => {
-    it('データベース設定なしでバックアップを実行すると成功（空のバックアップ）', async () => {
+    it('データベース設定なしでバックアップを実行するとエラー（空のバックアップ）', async () => {
       const manager = new BackupManager({ backupDir: testBackupDir });
 
-      // データベース設定がない場合でも成功する（空のバックアップ）
-      const result = await manager.performBackup();
-      expect(result.status).toBe(BackupStatus.SUCCESS);
+      // データベース設定がない場合はエラーになる
+      await expect(manager.performBackup()).rejects.toThrow('No backup targets configured');
+      
+      const latest = manager.getLatestBackup();
+      expect(latest).toBeDefined();
+      expect(latest!.status).toBe(BackupStatus.FAILED);
     });
 
     it('メタデータ付きでバックアップを実行できる', async () => {
-      const manager = new BackupManager({ backupDir: testBackupDir });
+      if (!fs.existsSync(testBackupDir)) fs.mkdirSync(testBackupDir, { recursive: true });
+      const dummyFile = `${testBackupDir}/dummy.sql`;
+      fs.writeFileSync(dummyFile, 'dummy content');
+
+      const manager = new BackupManager({
+        backupDir: testBackupDir,
+        compressionEnabled: false,
+        databases: {
+          postgresql: { host: 'h', port: 1, database: 'd', username: 'u', password: 'p' },
+        },
+      });
+
+      // PostgreSQLバックアップをモック
+      vi.spyOn(manager as any, 'backupPostgreSQL').mockResolvedValue(dummyFile);
 
       const metadata = {
         triggeredBy: 'test',
@@ -129,6 +145,27 @@ describe('BackupManager', () => {
       const deletedCount = await manager.cleanupOldBackups();
       expect(typeof deletedCount).toBe('number');
       expect(deletedCount).toBeGreaterThanOrEqual(0);
+    });
+
+    it('ファイルが存在しない古いバックアップも履歴から削除される', async () => {
+      const manager = new BackupManager({
+        backupDir: testBackupDir,
+        retentionDays: 0, // 即座に削除
+      });
+
+      // 履歴に偽の古いバックアップを追加
+      const oldBackup = {
+        id: 'old-backup',
+        status: BackupStatus.SUCCESS,
+        startTime: new Date(Date.now() - 10000), // 10秒前
+        endTime: new Date(),
+        filePath: '/tmp/non-existent-file.sql',
+      };
+      (manager as any).backupHistory.push(oldBackup);
+
+      const deletedCount = await manager.cleanupOldBackups();
+      expect(deletedCount).toBe(1);
+      expect(manager.getBackupHistory()).toHaveLength(0);
     });
 
     it('最大バックアップ数を超えた場合、古いものから削除される', async () => {
@@ -202,7 +239,23 @@ describe('BackupManager', () => {
 
   describe('バックアップステータス', () => {
     it('バックアップ実行中はIN_PROGRESSステータス', async () => {
-      const manager = new BackupManager({ backupDir: testBackupDir });
+      if (!fs.existsSync(testBackupDir)) fs.mkdirSync(testBackupDir, { recursive: true });
+      const dummyFile = `${testBackupDir}/dummy.sql`;
+      fs.writeFileSync(dummyFile, 'dummy content');
+
+      const manager = new BackupManager({
+        backupDir: testBackupDir,
+        compressionEnabled: false,
+        databases: {
+          postgresql: { host: 'h', port: 1, database: 'd', username: 'u', password: 'p' },
+        },
+      });
+
+      // 遅延付きでモック
+      vi.spyOn(manager as any, 'backupPostgreSQL').mockImplementation(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return dummyFile;
+      });
 
       // バックアップを開始
       const promise = manager.performBackup();
@@ -220,7 +273,19 @@ describe('BackupManager', () => {
     });
 
     it('バックアップ成功時はSUCCESSステータス', async () => {
-      const manager = new BackupManager({ backupDir: testBackupDir });
+      if (!fs.existsSync(testBackupDir)) fs.mkdirSync(testBackupDir, { recursive: true });
+      const dummyFile = `${testBackupDir}/dummy.sql`;
+      fs.writeFileSync(dummyFile, 'dummy content');
+
+      const manager = new BackupManager({
+        backupDir: testBackupDir,
+        compressionEnabled: false,
+        databases: {
+          postgresql: { host: 'h', port: 1, database: 'd', username: 'u', password: 'p' },
+        },
+      });
+
+      vi.spyOn(manager as any, 'backupPostgreSQL').mockResolvedValue(dummyFile);
 
       await manager.performBackup();
 
