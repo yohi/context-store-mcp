@@ -25,7 +25,7 @@
 以下のエンドツーエンドフローが正しく動作することを検証しました：
 
 #### 2.1 記憶保存フロー
-```
+```text
 MCP Receive → Memory Manager → Classifier → Embedding Generation → 
 PostgreSQL Storage → Neo4j Storage → Redis Cache
 ```
@@ -34,7 +34,7 @@ PostgreSQL Storage → Neo4j Storage → Redis Cache
 - 最終的にすべてのストレージに保存されることを確認
 
 #### 2.2 記憶検索フロー
-```
+```text
 MCP Receive Query → Query Processor → Cache Check → 
 Vector Search → Graph Traversal → Merge & Rank → Cache Results
 ```
@@ -43,7 +43,7 @@ Vector Search → Graph Traversal → Merge & Rank → Cache Results
 - 検索結果が適切にランク付けされることを確認
 
 #### 2.3 GDPR準拠削除フロー
-```
+```text
 Phase 1: Soft Delete → Phase 2: Background Purge → 
 Phase 3: Backup Coordination → Deletion Receipt Generation
 ```
@@ -191,7 +191,7 @@ npm run test -- src/tests/integration/system-integration.test.ts --run
 
 **結果**: ✅ 18/18 テスト合格
 
-```
+```text
 ✓ System Integration Tests - Task 13.1 (18 tests)
   ✓ 1. サービス間連携の確認 (4 tests)
   ✓ 2. データフローの完全性検証 (3 tests)

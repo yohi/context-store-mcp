@@ -9,7 +9,7 @@
  * - 設定の最終調整
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 describe('System Integration Tests - Task 13.1', () => {
   describe('1. サービス間連携の確認', () => {

@@ -58,10 +58,12 @@ async function checkMCPServer(): Promise<void> {
       });
     }
   } catch (error) {
+    // エラー詳細はデバッグログに記録
+    console.error(`[Health Check Error] ${component}:`, error);
     addResult({
       component,
       status: 'unhealthy',
-      message: `MCPサーバーのチェックに失敗しました: ${error}`,
+      message: 'MCPサーバーのチェックに失敗しました',
     });
   }
 }
@@ -102,10 +104,12 @@ async function checkMemoryManager(): Promise<void> {
       });
     }
   } catch (error) {
+    // エラー詳細はデバッグログに記録
+    console.error(`[Health Check Error] ${component}:`, error);
     addResult({
       component,
       status: 'unhealthy',
-      message: `Memory Managerのチェックに失敗しました: ${error}`,
+      message: 'Memory Managerのチェックに失敗しました',
     });
   }
 }
@@ -146,10 +150,12 @@ async function checkQueryProcessor(): Promise<void> {
       });
     }
   } catch (error) {
+    // エラー詳細はデバッグログに記録
+    console.error(`[Health Check Error] ${component}:`, error);
     addResult({
       component,
       status: 'unhealthy',
-      message: `Query Processorのチェックに失敗しました: ${error}`,
+      message: 'Query Processorのチェックに失敗しました',
     });
   }
 }
@@ -192,10 +198,12 @@ async function checkPostgreSQL(): Promise<void> {
       });
     }
   } catch (error) {
+    // エラー詳細はデバッグログに記録
+    console.error(`[Health Check Error] ${component}:`, error);
     addResult({
       component,
       status: 'unhealthy',
-      message: `PostgreSQLのチェックに失敗しました: ${error}`,
+      message: 'PostgreSQLのチェックに失敗しました',
     });
   }
 }
@@ -238,10 +246,12 @@ async function checkNeo4j(): Promise<void> {
       });
     }
   } catch (error) {
+    // エラー詳細はデバッグログに記録
+    console.error(`[Health Check Error] ${component}:`, error);
     addResult({
       component,
       status: 'unhealthy',
-      message: `Neo4jのチェックに失敗しました: ${error}`,
+      message: 'Neo4jのチェックに失敗しました',
     });
   }
 }
@@ -283,10 +293,12 @@ async function checkRedis(): Promise<void> {
       });
     }
   } catch (error) {
+    // エラー詳細はデバッグログに記録
+    console.error(`[Health Check Error] ${component}:`, error);
     addResult({
       component,
       status: 'unhealthy',
-      message: `Redisのチェックに失敗しました: ${error}`,
+      message: 'Redisのチェックに失敗しました',
     });
   }
 }
@@ -329,10 +341,12 @@ async function checkSecurityComponents(): Promise<void> {
       });
     }
   } catch (error) {
+    // エラー詳細はデバッグログに記録
+    console.error(`[Health Check Error] ${component}:`, error);
     addResult({
       component,
       status: 'unhealthy',
-      message: `セキュリティコンポーネントのチェックに失敗しました: ${error}`,
+      message: 'セキュリティコンポーネントのチェックに失敗しました',
     });
   }
 }
@@ -374,10 +388,12 @@ async function checkMonitoringSystem(): Promise<void> {
       });
     }
   } catch (error) {
+    // エラー詳細はデバッグログに記録
+    console.error(`[Health Check Error] ${component}:`, error);
     addResult({
       component,
       status: 'unhealthy',
-      message: `監視システムのチェックに失敗しました: ${error}`,
+      message: '監視システムのチェックに失敗しました',
     });
   }
 }
@@ -422,10 +438,12 @@ async function checkSystemResources(): Promise<void> {
       });
     }
   } catch (error) {
+    // エラー詳細はデバッグログに記録
+    console.error(`[Health Check Error] ${component}:`, error);
     addResult({
       component,
       status: 'unhealthy',
-      message: `システムリソースのチェックに失敗しました: ${error}`,
+      message: 'システムリソースのチェックに失敗しました',
     });
   }
 }

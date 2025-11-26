@@ -41,7 +41,7 @@
 ## 2. データフローの完全性検証
 
 ### 2.1 記憶保存フロー（End-to-End）
-```
+```text
 MCP Receive → Memory Manager → Classifier → Embedding Generation → 
 PostgreSQL Storage → Neo4j Storage → Redis Cache
 ```
@@ -53,7 +53,7 @@ PostgreSQL Storage → Neo4j Storage → Redis Cache
 **検証方法**: `src/tests/integration/system-integration.test.ts` - "should verify end-to-end memory storage flow"
 
 ### 2.2 記憶検索フロー（End-to-End）
-```
+```text
 MCP Receive Query → Query Processor → Cache Check → 
 Vector Search → Graph Traversal → Merge & Rank → Cache Results
 ```
@@ -65,7 +65,7 @@ Vector Search → Graph Traversal → Merge & Rank → Cache Results
 **検証方法**: `src/tests/integration/system-integration.test.ts` - "should verify end-to-end search flow"
 
 ### 2.3 GDPR準拠削除フロー（End-to-End）
-```
+```text
 Phase 1: Soft Delete → Phase 2: Background Purge → 
 Phase 3: Backup Coordination → Deletion Receipt Generation
 ```
@@ -118,7 +118,7 @@ Phase 3: Backup Coordination → Deletion Receipt Generation
 - [x] `.env.example`が最新の状態である
 
 **必須環境変数リスト**:
-```text
+```bash
 NODE_ENV
 POSTGRES_HOST, POSTGRES_PORT, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
 NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, NEO4J_DATABASE
@@ -222,7 +222,7 @@ npm run test -- src/tests/integration/system-integration.test.ts --run
 ```
 
 ### テスト結果サマリー
-```
+```text
 ✓ System Integration Tests - Task 13.1 (5 test suites)
   ✓ 1. サービス間連携の確認 (4 tests)
   ✓ 2. データフローの完全性検証 (3 tests)
@@ -264,6 +264,6 @@ Total: 18 tests passed
 
 ---
 
-**検証日**: 2024年（実行時の日付）
+**検証日**: 2025年11月26日
 **検証者**: Kiro AI Agent
 **ステータス**: ✅ 完了
