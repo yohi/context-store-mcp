@@ -29,6 +29,18 @@ class PerformanceBenchmark {
   private results: BenchmarkResult[] = [];
 
   async runBenchmark(config: BenchmarkConfig): Promise<BenchmarkResult> {
+    // Input validation to prevent infinite loops and invalid statistics
+    if (config.concurrency <= 0) {
+      throw new Error(
+        `Invalid concurrency: ${config.concurrency}. Concurrency must be greater than 0.`
+      );
+    }
+    if (config.totalRequests <= 0) {
+      throw new Error(
+        `Invalid totalRequests: ${config.totalRequests}. Total requests must be greater than 0.`
+      );
+    }
+
     console.log(`\n🔄 Running benchmark: ${config.name}`);
     console.log(`   Concurrency: ${config.concurrency}`);
     console.log(`   Total Requests: ${config.totalRequests}`);

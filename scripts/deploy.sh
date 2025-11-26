@@ -38,8 +38,14 @@ check_prerequisites() {
         exit 1
     fi
     
-    # Check Docker Compose
-    if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
+    # Check Docker Compose and set wrapper variable
+    if command -v docker-compose &> /dev/null; then
+        DOCKER_COMPOSE_BIN="docker-compose"
+        log_info "Using docker-compose (v1)"
+    elif docker compose version &> /dev/null; then
+        DOCKER_COMPOSE_BIN="docker compose"
+        log_info "Using docker compose (v2 plugin)"
+    else
         log_error "Docker Compose is not installed. Please install Docker Compose first."
         exit 1
     fi
@@ -157,25 +163,22 @@ deploy_services() {
     
     cd "$PROJECT_ROOT"
     
-    # Load environment
-    export $(cat "$ENV_FILE" | grep -v '^#' | xargs)
-    
     # Stop existing services
     log_info "Stopping existing services..."
-    docker-compose -f docker-compose.prod.yml down
+    $DOCKER_COMPOSE_BIN -f docker-compose.prod.yml down
     
     # Start services
     log_info "Starting services..."
-    docker-compose -f docker-compose.prod.yml up -d
+    $DOCKER_COMPOSE_BIN -f docker-compose.prod.yml up -d
     
     # Wait for services to be healthy
     log_info "Waiting for services to be healthy..."
     sleep 10
     
     # Check service health
-    if docker-compose -f docker-compose.prod.yml ps | grep -q "unhealthy"; then
+    if $DOCKER_COMPOSE_BIN -f docker-compose.prod.yml ps | grep -q "unhealthy"; then
         log_error "Some services are unhealthy. Please check logs."
-        docker-compose -f docker-compose.prod.yml ps
+        $DOCKER_COMPOSE_BIN -f docker-compose.prod.yml ps
         exit 1
     fi
     
@@ -201,9 +204,9 @@ run_health_check() {
 show_status() {
     log_info "Deployment Status:"
     echo ""
-    docker-compose -f "$PROJECT_ROOT/docker-compose.prod.yml" ps
+    $DOCKER_COMPOSE_BIN -f "$PROJECT_ROOT/docker-compose.prod.yml" ps
     echo ""
-    log_info "Logs can be viewed with: docker-compose -f docker-compose.prod.yml logs -f"
+    log_info "Logs can be viewed with: $DOCKER_COMPOSE_BIN -f docker-compose.prod.yml logs -f"
 }
 
 # Main deployment flow
