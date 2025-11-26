@@ -18,7 +18,16 @@
     "lint:fix": "eslint . --ext .ts --fix",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "docker:build": "docker build -t context-store-mcp:latest .",
+    "docker:run": "docker-compose -f docker-compose.prod.yml up -d",
+    "docker:stop": "docker-compose -f docker-compose.prod.yml down",
+    "docker:logs": "docker-compose -f docker-compose.prod.yml logs -f",
+    "deploy": "./scripts/deploy.sh",
+    "benchmark": "tsx scripts/benchmark.ts",
+    "health-check": "tsx scripts/health-check.ts",
+    "validate-config": "tsx scripts/validate-configuration.ts",
+    "security-audit": "npm audit --production --audit-level=high"
   },
   "keywords": [
     "mcp",
