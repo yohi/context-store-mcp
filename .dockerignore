@@ -1,0 +1,55 @@
+# Node modules
+node_modules/
+npm-debug.log
+
+# Build output
+dist/
+
+# Tests
+src/tests/
+**/*.test.ts
+**/*.spec.ts
+coverage/
+
+# Development files
+.env
+.env.local
+.env.*.local
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Documentation
+*.md
+!README.md
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+tmp/
+temp/
+.DS_Store
+
+# Kiro specs
+.kiro/
+
+# Docker
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# Backups
+backups/
