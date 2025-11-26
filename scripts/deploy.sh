@@ -139,7 +139,7 @@ build_docker_image() {
     cd "$PROJECT_ROOT"
     
     # Build image
-    docker build -t context-store-mcp:latest -t context-store-mcp:$(date +%Y%m%d-%H%M%S) .
+    docker build -t "context-store-mcp:latest" -t "context-store-mcp:$(date +%Y%m%d-%H%M%S)" .
     
     log_info "Docker image built successfully."
 }
