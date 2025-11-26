@@ -118,7 +118,7 @@ Phase 3: Backup Coordination → Deletion Receipt Generation
 - [x] `.env.example`が最新の状態である
 
 **必須環境変数リスト**:
-```
+```text
 NODE_ENV
 POSTGRES_HOST, POSTGRES_PORT, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
 NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, NEO4J_DATABASE
