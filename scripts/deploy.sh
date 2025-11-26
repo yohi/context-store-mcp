@@ -118,7 +118,7 @@ build_application() {
     
     # Install dependencies
     log_info "Installing dependencies..."
-    npm ci --only=production
+    npm ci --omit=dev
     
     # Build TypeScript
     log_info "Compiling TypeScript..."
@@ -194,7 +194,7 @@ run_health_check() {
     sleep 5
     
     # Run health check script
-    if node scripts/health-check.ts; then
+    if npx tsx scripts/health-check.ts; then
         log_info "Health check passed."
     else
         log_warn "Health check failed. Please verify manually."
