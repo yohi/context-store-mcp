@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MemoryManager } from '../../memory/memory-manager.js';
 import { TransactionCoordinator } from '../../storage/transaction-coordinator.js';
 import { VectorStoreAdapter } from '../../storage/vector-store-adapter.js';
@@ -119,6 +119,16 @@ describe('Issues Verification', () => {
   });
 
   describe('Issue #4: Garbage Collection', () => {
+    let originalEnv: string | undefined;
+
+    beforeEach(() => {
+      originalEnv = process.env.DB_SIZE_LIMIT_BYTES;
+    });
+
+    afterEach(() => {
+      process.env.DB_SIZE_LIMIT_BYTES = originalEnv;
+    });
+
     it('should trigger auto-deletion when storage usage is high', async () => {
       // Mock storage usage > 80%
       process.env.DB_SIZE_LIMIT_BYTES = '1000';
