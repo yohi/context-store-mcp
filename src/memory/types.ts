@@ -87,9 +87,11 @@ export interface MemoryManagerService {
   deleteMemory(id: MemoryId): Promise<Result<boolean, MemoryError>>;
   mergeMemories(ids: MemoryId[]): Promise<Result<MemoryId, MemoryError>>;
   getMemoryHistory(id: MemoryId): Promise<MemoryHistoryEntry[]>;
+  revertToVersion(memoryId: MemoryId, version: number): Promise<Result<boolean, MemoryError>>;
 
   // Similarity search (Requirements: 1.3 - 類似記憶の自動検出)
   findSimilarMemories(content: string, limit?: number): Promise<Memory[]>;
+  suggestMerges(memoryId: MemoryId): Promise<Memory[]>;
 
   // Memory management operations
   performGarbageCollection(): Promise<void>;

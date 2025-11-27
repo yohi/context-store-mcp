@@ -264,6 +264,49 @@ export class TransactionCoordinator {
   }
 
   /**
+   * Hard Delete Memory (Physical Deletion)
+   * Used for Garbage Collection
+   */
+  async hardDeleteMemory(memoryId: MemoryId): Promise<TransactionResult> {
+    // Step 1: Neo4j からノード削除
+    const neoResult = await this.deleteNeo4jNode(memoryId);
+
+    // Step 2: PostgreSQL から物理削除
+    try {
+      await this.config.postgresPool.query(
+        `DELETE FROM memories WHERE id = $1`,
+        [memoryId]
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        status: 'failed',
+        error: {
+          type: 'POSTGRESQL_ERROR',
+          message: `PostgreSQL hard deletion failed: ${errorMessage}`,
+          requiresCompensation: false, // Hard delete failure usually doesn't need compensation if it didn't happen
+        },
+      };
+    }
+
+    if (!neoResult.success) {
+      return {
+        status: 'partial',
+        memoryId,
+        warning: {
+          type: 'SYNC_FAILURE',
+          message: `Neo4j node deletion failed during hard delete: ${neoResult.error}`,
+        },
+      };
+    }
+
+    return {
+      status: 'ok',
+      memoryId,
+    };
+  }
+
+  /**
    * Insert memory into PostgreSQL
    * @returns Number of rows inserted (0 if conflict, 1 if new insert)
    * @throws Error if insertion fails (for retry mechanism)
@@ -367,6 +410,96 @@ export class TransactionCoordinator {
     } catch (error) {
       // 同期失敗マークに失敗した場合、エラーを呼び出し側へ伝播
       throw error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  /**
+   * Save memory version history
+   */
+  async saveMemoryVersion(memory: MemoryEntity, version: number): Promise<void> {
+    try {
+      await this.config.postgresPool.query(
+        `INSERT INTO memory_versions (memory_id, version_number, content, metadata, created_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (memory_id, version_number) DO NOTHING`,
+        [memory.id, version, memory.content, JSON.stringify(memory.metadata)]
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.config.logger.error(`Failed to save memory version: ${errorMessage}`, {
+        memoryId: memory.id,
+        version,
+      });
+      // Non-blocking error: version history failure shouldn't stop the main operation
+      // but we log it.
+    }
+  }
+
+  /**
+   * Get memory versions
+   */
+  async getMemoryVersions(memoryId: MemoryId): Promise<any[]> {
+    try {
+      const result = await this.config.postgresPool.query(
+        `SELECT * FROM memory_versions WHERE memory_id = $1 ORDER BY version_number DESC`,
+        [memoryId]
+      );
+      return result.rows.map(row => ({
+        id: row.id,
+        memoryId: row.memory_id,
+        version: row.version_number,
+        content: row.content,
+        metadata: row.metadata,
+        createdAt: row.created_at
+      }));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to get memory versions: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Revert memory to specific version
+   * Note: This only fetches the data. The actual update should be handled by storeMemory/updateMemory
+   * to ensure consistency across all stores (Neo4j, Vector).
+   */
+  async getMemoryVersion(memoryId: MemoryId, version: number): Promise<MemoryEntity | null> {
+    try {
+      const result = await this.config.postgresPool.query(
+        `SELECT * FROM memory_versions WHERE memory_id = $1 AND version_number = $2`,
+        [memoryId, version]
+      );
+
+      if (result.rows.length === 0) {
+        return null;
+      }
+
+      const row = result.rows[0];
+      return {
+        id: row.memory_id,
+        content: row.content,
+        memoryType: row.metadata.memoryType || 'semantic', // Fallback if missing
+        metadata: row.metadata
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to get memory version: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Find soft-deleted memories older than a specific date
+   */
+  async findSoftDeletedMemories(olderThan: Date): Promise<MemoryId[]> {
+    try {
+      const result = await this.config.postgresPool.query(
+        `SELECT id FROM memories WHERE is_deleted = true AND deleted_at < $1`,
+        [olderThan]
+      );
+      return result.rows.map(row => row.id);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to find soft-deleted memories: ${errorMessage}`);
     }
   }
 
