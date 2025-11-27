@@ -460,6 +460,97 @@ export class MemoryManager implements MemoryManagerService {
   }
 
   /**
+   * Find similar memories based on ID (Issue #2)
+   * Combines semantic similarity, tag overlap, and temporal proximity
+   */
+  async findSimilarMemoriesById(id: MemoryId, threshold: number = 0.8): Promise<Memory[]> {
+    const target = this.memories.get(id);
+    if (!target) return [];
+
+    // Candidates map to store best score per memory
+    const candidates = new Map<MemoryId, { memory: Memory; score: number }>();
+
+    // 1. Semantic Search (via VectorStore)
+    if (this.vectorStore) {
+      try {
+        const results = await this.vectorStore.searchSimilar(target.content, 20);
+        for (const res of results) {
+          if (res.id === id) continue; // Skip self
+          
+          const memory = this.memories.get(res.id);
+          if (memory && !memory.isDeleted) {
+            candidates.set(res.id, { memory, score: res.similarity });
+          }
+        }
+      } catch (e) {
+        console.warn('Vector search failed during findSimilarMemoriesById:', e);
+      }
+    }
+
+    // 2. Tag & Time Analysis (Iterate through in-memory cache)
+    // In a full PG implementation, this would be a DB query. 
+    // Here we iterate `this.memories` which acts as the cache/source.
+    for (const memory of this.memories.values()) {
+      if (memory.id === id || memory.isDeleted) continue;
+
+      // If already found via semantic search, skip re-evaluation (we will boost later)
+      if (candidates.has(memory.id)) continue;
+
+      // Check Tag Overlap
+      const hasTagOverlap = this.calculateTagOverlap(target.metadata.tags, memory.metadata.tags);
+      
+      // Check Time Proximity
+      const isCloseInTime = this.checkTimeProximity(target.createdAt, memory.createdAt);
+
+      // If matches tag or time, add as candidate with base score 0 (will be boosted)
+      if (hasTagOverlap || isCloseInTime) {
+        candidates.set(memory.id, { memory, score: 0.0 });
+      }
+    }
+
+    // 3. Final Scoring & Filtering
+    const results: Memory[] = [];
+    for (const [mid, item] of candidates) {
+      let finalScore = item.score;
+
+      // Boost for Tag Overlap (+0.15)
+      if (this.calculateTagOverlap(target.metadata.tags, item.memory.metadata.tags)) {
+        finalScore += 0.15;
+      }
+
+      // Boost for Time Proximity (+0.15)
+      if (this.checkTimeProximity(target.createdAt, item.memory.createdAt)) {
+        finalScore += 0.15;
+      }
+
+      // Check Threshold
+      if (finalScore >= threshold) {
+        results.push(item.memory);
+      }
+    }
+
+    // Sort by score (tie-breaker: updatedAt)
+    return results.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+  }
+
+  /**
+   * Check if two tag arrays have any overlap
+   */
+  private calculateTagOverlap(tags1?: string[], tags2?: string[]): boolean {
+    if (!tags1 || !tags2 || tags1.length === 0 || tags2.length === 0) return false;
+    return tags1.some(t => tags2.includes(t));
+  }
+
+  /**
+   * Check if two dates are within 1 hour of each other
+   */
+  private checkTimeProximity(d1: Date, d2: Date): boolean {
+    const diff = Math.abs(d1.getTime() - d2.getTime());
+    const oneHour = 60 * 60 * 1000;
+    return diff < oneHour;
+  }
+
+  /**
    * Suggest memories that could be merged with the given memory
    * Requirements: Task 3.2 Issue #2
    */
@@ -469,26 +560,10 @@ export class MemoryManager implements MemoryManagerService {
       return [];
     }
 
-    // Find similar memories with high threshold
-    // Note: In a real implementation, we might want to expose threshold in findSimilarMemories
-    // For now, we rely on the default or what vectorStore provides, but ideally we'd filter here.
-    const similar = await this.findSimilarMemories(memory.content, 10);
-
-    // Filter candidates:
-    // 1. Exclude self
-    // 2. Exclude deleted
-    // 3. Require high similarity (if we had scores, here we assume vector store returns sorted)
-    // 4. (Optional) Check for tag overlap or time proximity
-
-    return similar.filter(m => {
-      if (m.id === memoryId) return false;
-
-      // Check current state in memory manager if available (to handle stale vector index)
-      const current = this.memories.get(m.id);
-      if (current && current.isDeleted) return false;
-
-      return !m.isDeleted;
-    });
+    // Use the enhanced similarity search with a high threshold
+    // We want strong candidates for merging (Semantic or Strong Contextual Match)
+    // Threshold 0.8 implies good semantic match OR (decent match + tag/time boost)
+    return this.findSimilarMemoriesById(memoryId, 0.8);
   }
 
   /**
@@ -651,17 +726,31 @@ export class MemoryManager implements MemoryManagerService {
     // 1. DB Garbage Collection via TransactionCoordinator
     if (this.transactionCoordinator) {
       try {
+        // Phase 1: Physical deletion of old soft-deleted memories
         const toRemove = await this.transactionCoordinator.findSoftDeletedMemories(threshold);
-        console.log(`[GC] Found ${toRemove.length} memories to delete physically.`);
-
-        for (const id of toRemove) {
-          const result = await this.transactionCoordinator.hardDeleteMemory(id);
-          if (result.status === 'failed') {
-            console.error(`[GC] Failed to delete memory ${id}:`, result.error);
-          } else if (result.status === 'partial') {
-            console.warn(`[GC] Partial deletion for memory ${id}:`, result.warning);
+        if (toRemove.length > 0) {
+          console.log(`[GC] Found ${toRemove.length} memories to delete physically.`);
+          for (const id of toRemove) {
+            const result = await this.transactionCoordinator.hardDeleteMemory(id);
+            if (result.status === 'failed') {
+              console.error(`[GC] Failed to delete memory ${id}:`, result.error);
+            } else if (result.status === 'partial') {
+              console.warn(`[GC] Partial deletion for memory ${id}:`, result.warning);
+            }
           }
         }
+
+        // Phase 2: Storage Pressure Management (Issue #4)
+        const usageRatio = await this.getStorageUsageRatio();
+        if (usageRatio >= 0.8) {
+          console.warn(`[GC] Storage usage high (${(usageRatio * 100).toFixed(1)}%). Initiating auto-cleanup.`);
+          // Delete unimportant memories (score < 0.3) not accessed in 30 days
+          const deletedCount = await this.transactionCoordinator.deleteLowImportanceMemories(0.3, threshold);
+          if (deletedCount > 0) {
+            console.log(`[GC] Auto-deleted ${deletedCount} low-importance memories to free space.`);
+          }
+        }
+
       } catch (error) {
         console.error('[GC] Failed to perform DB garbage collection:', error);
       }
@@ -697,6 +786,25 @@ export class MemoryManager implements MemoryManagerService {
     }
     for (const lid of toRemoveLinks) {
       this.links.delete(lid);
+    }
+  }
+
+  /**
+   * Get current storage usage ratio
+   * Helper for Issue #4
+   */
+  private async getStorageUsageRatio(): Promise<number> {
+    if (!this.transactionCoordinator) return 0;
+    
+    try {
+      const usedBytes = await this.transactionCoordinator.getDatabaseSize();
+      const limitBytes = Number(process.env.DB_SIZE_LIMIT_BYTES) || 10737418240; // Default 10GB
+      
+      if (limitBytes <= 0) return 0;
+      return usedBytes / limitBytes;
+    } catch (error) {
+      console.warn('Failed to check storage usage:', error);
+      return 0;
     }
   }
 

@@ -641,6 +641,72 @@ export class TransactionCoordinator {
   }
 
   /**
+   * Get current database size in bytes
+   */
+  async getDatabaseSize(): Promise<number> {
+    try {
+      const result = await this.config.postgresPool.query(
+        `SELECT pg_database_size(current_database()) as size`
+      );
+      return Number(result.rows[0].size);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.config.logger.error(`Failed to get database size: ${errorMessage}`);
+      return 0;
+    }
+  }
+
+  /**
+   * Delete memories with low importance that haven't been accessed recently
+   * Triggers soft deletion for identified memories.
+   * Returns number of memories successfully deleted.
+   */
+  async deleteLowImportanceMemories(
+    importanceThreshold: number,
+    lastAccessedOlderThan: Date
+  ): Promise<number> {
+    try {
+      // Find candidate IDs
+      const result = await this.config.postgresPool.query(
+        `SELECT id FROM memories 
+         WHERE importance_score < $1 
+         AND last_accessed_at < $2
+         AND is_protected = false
+         AND is_deleted = false`,
+        [importanceThreshold, lastAccessedOlderThan]
+      );
+
+      const ids = result.rows.map((row) => row.id);
+      if (ids.length === 0) {
+        return 0;
+      }
+
+      this.config.logger.info(
+        `Found ${ids.length} low-importance memories to delete (GC).`
+      );
+
+      let successCount = 0;
+      for (const id of ids) {
+        // Use Saga to ensure consistency (Neo4j removal, etc.)
+        const deleteResult = await this.deleteMemoryWithSaga(id);
+        if (deleteResult.status === 'ok') {
+          successCount++;
+        } else {
+          this.config.logger.warn(`Failed to auto-delete memory ${id}`, {
+            error: deleteResult.status === 'failed' ? deleteResult.error : deleteResult.warning
+          });
+        }
+      }
+
+      return successCount;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.config.logger.error(`Failed to execute low importance GC: ${errorMessage}`);
+      return 0;
+    }
+  }
+
+  /**
    * Retry with Exponential Backoff
    *
    * 指数バックオフによる再試行戦略:
