@@ -414,21 +414,43 @@ export class MemoryManager implements MemoryManagerService {
     if (this.vectorStore) {
       try {
         const results = await this.vectorStore.searchSimilar(content, limit);
-        return results.map((r) => ({
-          id: r.id,
-          content: r.content,
-          memoryType: (r.metadata.memoryType as MemoryType) || 'semantic',
-          metadata: r.metadata as unknown as MemoryMetadata,
-          createdAt: r.createdAt,
-          updatedAt: r.updatedAt,
-          lastAccessedAt: r.lastAccessedAt || new Date(),
-          accessCount: r.accessCount || 0,
-          importanceScore: r.importanceScore || 0,
-          isDeleted: false,
-          isProtected: false,
-          version: r.version || 1,
-          deletedAt: null,
-        }));
+        const memories: Memory[] = [];
+
+        for (const r of results) {
+          try {
+            // Process metadata through the same validation/normalization pipeline as storeMemory
+            const processedMetadata = this.processMetadata(r.metadata as MemoryMetadata);
+
+            // Extract and remove memoryType from metadata to maintain single source of truth
+            const { memoryType: metadataType, ...metadataWithoutType } =
+              processedMetadata as MemoryMetadata & { memoryType?: MemoryType };
+
+            // Determine memory type: prefer metadata.memoryType, fallback to 'semantic'
+            const memoryType = metadataType || (r.metadata?.memoryType as MemoryType) || 'semantic';
+
+            memories.push({
+              id: r.id,
+              content: r.content,
+              memoryType,
+              metadata: metadataWithoutType,
+              createdAt: r.createdAt,
+              updatedAt: r.updatedAt,
+              lastAccessedAt: r.lastAccessedAt || new Date(),
+              accessCount: r.accessCount || 0,
+              importanceScore: r.importanceScore || 0,
+              isDeleted: false,
+              isProtected: false,
+              version: r.version || 1,
+              deletedAt: null,
+            });
+          } catch (error) {
+            // Skip invalid results and log the error
+            console.warn(`Skipping invalid search result for memory ${r.id}:`, error);
+            continue;
+          }
+        }
+
+        return memories;
       } catch (error) {
         console.error('Vector search failed:', error);
         return [];
@@ -618,10 +640,6 @@ export class MemoryManager implements MemoryManagerService {
     };
   }
 
-  /**
-   * Perform garbage collection on soft-deleted memories
-   * Requirements: Task 3.3 - Storage auto-cleanup
-   */
   /**
    * Perform garbage collection on soft-deleted memories
    * Requirements: Task 3.3 - Storage auto-cleanup

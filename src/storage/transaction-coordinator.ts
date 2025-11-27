@@ -415,14 +415,21 @@ export class TransactionCoordinator {
 
   /**
    * Save memory version history
+   * Note: memoryType is included in metadata to ensure it's available during version restoration
    */
   async saveMemoryVersion(memory: MemoryEntity, version: number): Promise<void> {
     try {
+      // Include memoryType in metadata for reliable restoration
+      const metadataWithType = {
+        ...memory.metadata,
+        memoryType: memory.memoryType,
+      };
+
       await this.config.postgresPool.query(
         `INSERT INTO memory_versions (memory_id, version_number, content, metadata, created_at)
          VALUES ($1, $2, $3, $4, NOW())
          ON CONFLICT (memory_id, version_number) DO NOTHING`,
-        [memory.id, version, memory.content, JSON.stringify(memory.metadata)]
+        [memory.id, version, memory.content, JSON.stringify(metadataWithType)]
       );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -475,11 +482,47 @@ export class TransactionCoordinator {
       }
 
       const row = result.rows[0];
+      let memoryType: MemoryType = row.metadata?.memoryType;
+
+      // Defensive fallback: if metadata.memoryType is missing, query the current memory record
+      if (!memoryType) {
+        try {
+          const currentMemory = await this.config.postgresPool.query(
+            `SELECT memory_type FROM memories WHERE id = $1`,
+            [row.memory_id]
+          );
+          if (currentMemory.rows.length > 0) {
+            memoryType = currentMemory.rows[0].memory_type as MemoryType;
+            this.config.logger.warn(
+              'memoryType missing from version metadata, retrieved from current memory record',
+              { memoryId: row.memory_id, version }
+            );
+          } else {
+            // Current memory not found, use default
+            memoryType = 'semantic';
+            this.config.logger.warn(
+              'memoryType missing from version metadata and current memory not found, defaulting to semantic',
+              { memoryId: row.memory_id, version }
+            );
+          }
+        } catch (queryError) {
+          // Fallback query failed, use default
+          memoryType = 'semantic';
+          this.config.logger.error(
+            'Failed to query current memory for memoryType, defaulting to semantic',
+            { memoryId: row.memory_id, version, error: queryError }
+          );
+        }
+      }
+
+      // Remove memoryType from metadata to maintain single source of truth
+      const { memoryType: _, ...metadataWithoutType } = row.metadata || {};
+
       return {
         id: row.memory_id,
         content: row.content,
-        memoryType: row.metadata.memoryType || 'semantic', // Fallback if missing
-        metadata: row.metadata
+        memoryType,
+        metadata: metadataWithoutType
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
