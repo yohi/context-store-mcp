@@ -83,7 +83,7 @@ export class MemoryManager implements MemoryManagerService {
 
     // Determine memory type: explicit > classifier > default
     let memoryType = params.memoryType || metadataType;
-    
+
     if (!memoryType && this.classifier) {
       try {
         const classification = await this.classifier.classifyContent(params.content);
@@ -220,6 +220,40 @@ export class MemoryManager implements MemoryManagerService {
 
     this.memories.set(id, updatedMemory);
 
+    // Use Transaction Coordinator if available
+    if (this.transactionCoordinator) {
+      // Save current version to history before update
+      const entityToArchive = {
+        id: existing.id,
+        content: existing.content,
+        memoryType: existing.memoryType,
+        metadata: existing.metadata,
+      };
+      await this.transactionCoordinator.saveMemoryVersion(entityToArchive, existing.version);
+
+      // Update the memory
+      const entity = {
+        id: updatedMemory.id,
+        content: updatedMemory.content,
+        memoryType: updatedMemory.memoryType,
+        metadata: updatedMemory.metadata,
+      };
+
+      const result = await this.transactionCoordinator.updateMemoryWithSaga(entity);
+
+      if (result.status === 'failed') {
+        // Rollback in-memory storage
+        this.memories.set(id, existing);
+        return {
+          success: false,
+          error: {
+            type: 'STORAGE_ERROR',
+            message: result.error.message,
+          },
+        };
+      }
+    }
+
     return {
       success: true,
       value: true,
@@ -296,7 +330,78 @@ export class MemoryManager implements MemoryManagerService {
    * Requirements: Task 3.2
    */
   async getMemoryHistory(id: MemoryId): Promise<MemoryHistoryEntry[]> {
+    if (this.transactionCoordinator) {
+      try {
+        const versions = await this.transactionCoordinator.getMemoryVersions(id);
+        return versions.map((v: any) => ({
+          id: v.id, // History entry ID (not memory ID)
+          memoryId: v.memoryId,
+          version: v.version,
+          content: v.content,
+          metadata: v.metadata,
+          timestamp: v.createdAt,
+        }));
+      } catch (error) {
+        console.error('Failed to fetch history from DB, falling back to in-memory:', error);
+      }
+    }
     return this.history.get(id) || [];
+  }
+
+  /**
+   * Revert memory to a specific version
+   * Requirements: Task 3.2 Issue #1
+   */
+  async revertToVersion(memoryId: MemoryId, version: number): Promise<Result<boolean, MemoryError>> {
+    // 1. Get the target version data
+    let targetContent: string | undefined;
+    let targetMetadata: MemoryMetadata | undefined;
+
+    if (this.transactionCoordinator) {
+      try {
+        const historicalMemory = await this.transactionCoordinator.getMemoryVersion(memoryId, version);
+        if (historicalMemory) {
+          targetContent = historicalMemory.content;
+          targetMetadata = historicalMemory.metadata;
+        }
+      } catch (error) {
+        return {
+          success: false,
+          error: {
+            type: 'STORAGE_ERROR',
+            message: `Failed to retrieve version ${version}: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        };
+      }
+    } else {
+      // Fallback to in-memory history
+      const history = this.history.get(memoryId) || [];
+      const entry = history.find((h) => h.version === version);
+      if (entry) {
+        targetContent = entry.content;
+        targetMetadata = entry.metadata;
+      }
+    }
+
+    if (targetContent === undefined) {
+      return {
+        success: false,
+        error: {
+          type: 'MEMORY_NOT_FOUND',
+          message: `Version ${version} not found for memory ${memoryId}`,
+        },
+      };
+    }
+
+    // 2. Update the memory with the old content (creating a new version)
+    const updates: Partial<Memory> = {
+      content: targetContent,
+    };
+    if (targetMetadata) {
+      updates.metadata = targetMetadata;
+    }
+
+    return this.updateMemory(memoryId, updates);
   }
 
   /**
@@ -307,31 +412,83 @@ export class MemoryManager implements MemoryManagerService {
    */
   async findSimilarMemories(content: string, limit: number = 5): Promise<Memory[]> {
     if (this.vectorStore) {
-      const results = await this.vectorStore.searchSimilar(content, limit);
-      return results.map((r) => ({
-        id: r.id,
-        content: r.content,
-        // Reconstruct Memory object from search result
-        // Note: VectorSearchResult might miss some fields like memoryType if not in metadata
-        // We assume metadata contains necessary fields or use defaults
-        memoryType: (r.metadata.memoryType as MemoryType) || 'semantic',
-        metadata: r.metadata as unknown as MemoryMetadata,
-        // Use real timestamps and metadata from search result
-        createdAt: r.createdAt,
-        updatedAt: r.updatedAt,
-        lastAccessedAt: r.lastAccessedAt || new Date(),
-        accessCount: r.accessCount || 0,
-        importanceScore: r.importanceScore || 0,
-        isDeleted: false,
-        isProtected: false,
-        version: r.version || 1,
-      }));
+      try {
+        const results = await this.vectorStore.searchSimilar(content, limit);
+        const memories: Memory[] = [];
+
+        for (const r of results) {
+          try {
+            // Process metadata through the same validation/normalization pipeline as storeMemory
+            const processedMetadata = this.processMetadata(r.metadata as MemoryMetadata);
+
+            // Extract and remove memoryType from metadata to maintain single source of truth
+            const { memoryType: metadataType, ...metadataWithoutType } =
+              processedMetadata as MemoryMetadata & { memoryType?: MemoryType };
+
+            // Determine memory type: prefer metadata.memoryType, fallback to 'semantic'
+            const memoryType = metadataType || (r.metadata?.memoryType as MemoryType) || 'semantic';
+
+            memories.push({
+              id: r.id,
+              content: r.content,
+              memoryType,
+              metadata: metadataWithoutType,
+              createdAt: r.createdAt,
+              updatedAt: r.updatedAt,
+              lastAccessedAt: r.lastAccessedAt || new Date(),
+              accessCount: r.accessCount || 0,
+              importanceScore: r.importanceScore || 0,
+              isDeleted: false,
+              isProtected: false,
+              version: r.version || 1,
+              deletedAt: null,
+            });
+          } catch (error) {
+            // Skip invalid results and log the error
+            console.warn(`Skipping invalid search result for memory ${r.id}:`, error);
+            continue;
+          }
+        }
+
+        return memories;
+      } catch (error) {
+        console.error('Vector search failed:', error);
+        return [];
+      }
+    }
+    return [];
+  }
+
+  /**
+   * Suggest memories that could be merged with the given memory
+   * Requirements: Task 3.2 Issue #2
+   */
+  async suggestMerges(memoryId: MemoryId): Promise<Memory[]> {
+    const memory = this.memories.get(memoryId);
+    if (!memory) {
+      return [];
     }
 
-    // Placeholder: In the future, this will use VectorStoreAdapter to search by embedding.
-    // For now, we can return an empty array or implement a basic text search if strictly needed.
-    // Given the requirements link to Vector Search, we'll return empty until integration.
-    return [];
+    // Find similar memories with high threshold
+    // Note: In a real implementation, we might want to expose threshold in findSimilarMemories
+    // For now, we rely on the default or what vectorStore provides, but ideally we'd filter here.
+    const similar = await this.findSimilarMemories(memory.content, 10);
+
+    // Filter candidates:
+    // 1. Exclude self
+    // 2. Exclude deleted
+    // 3. Require high similarity (if we had scores, here we assume vector store returns sorted)
+    // 4. (Optional) Check for tag overlap or time proximity
+
+    return similar.filter(m => {
+      if (m.id === memoryId) return false;
+
+      // Check current state in memory manager if available (to handle stale vector index)
+      const current = this.memories.get(m.id);
+      if (current && current.isDeleted) return false;
+
+      return !m.isDeleted;
+    });
   }
 
   /**
@@ -489,10 +646,30 @@ export class MemoryManager implements MemoryManagerService {
    */
   async performGarbageCollection(): Promise<void> {
     const now = new Date();
-    const threshold = new Date(now.getTime() - 24 * 60 * 60 * 1000); // 24 hours ago
+    const threshold = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); // 30 days ago
 
+    // 1. DB Garbage Collection via TransactionCoordinator
+    if (this.transactionCoordinator) {
+      try {
+        const toRemove = await this.transactionCoordinator.findSoftDeletedMemories(threshold);
+        console.log(`[GC] Found ${toRemove.length} memories to delete physically.`);
+
+        for (const id of toRemove) {
+          const result = await this.transactionCoordinator.hardDeleteMemory(id);
+          if (result.status === 'failed') {
+            console.error(`[GC] Failed to delete memory ${id}:`, result.error);
+          } else if (result.status === 'partial') {
+            console.warn(`[GC] Partial deletion for memory ${id}:`, result.warning);
+          }
+        }
+      } catch (error) {
+        console.error('[GC] Failed to perform DB garbage collection:', error);
+      }
+    }
+
+    // 2. In-memory Garbage Collection (Legacy/Cache cleanup)
     // Find soft-deleted memories that are old enough and not protected
-    const toRemove: MemoryId[] = [];
+    const toRemoveInMemory: MemoryId[] = [];
     for (const [id, memory] of this.memories.entries()) {
       if (
         memory.isDeleted &&
@@ -501,19 +678,20 @@ export class MemoryManager implements MemoryManagerService {
         memory.deletedAt !== undefined &&
         memory.deletedAt < threshold
       ) {
-        toRemove.push(id);
+        toRemoveInMemory.push(id);
       }
     }
 
-    // Physically remove these memories
-    for (const id of toRemove) {
+    // Physically remove these memories from memory cache
+    for (const id of toRemoveInMemory) {
       this.memories.delete(id);
     }
 
     // Remove orphan links referencing deleted memories
     const toRemoveLinks: string[] = [];
     for (const [lid, link] of this.links.entries()) {
-      if (toRemove.includes(link.fromMemoryId) || toRemove.includes(link.toMemoryId)) {
+      // Check if endpoints are missing (deleted)
+      if (!this.memories.has(link.fromMemoryId) || !this.memories.has(link.toMemoryId)) {
         toRemoveLinks.push(lid);
       }
     }

@@ -210,6 +210,85 @@ export class TransactionCoordinator {
   }
 
   /**
+   * Update Memory with Saga Pattern
+   *
+   * フロー:
+   * 1. PostgreSQL の記憶を更新（マスターDB）
+   * 2. Neo4j のノードを更新（セカンダリDB）
+   * 3. 失敗時の補償トランザクション
+   *
+   * 部分失敗時の動作:
+   * - PG成功 + Neo4j失敗 → sync_status = 'pending_graph' でマーク、バックグラウンド再試行
+   * - PG失敗 → 全体ロールバック（Neo4j操作なし）
+   */
+  async updateMemoryWithSaga(memory: MemoryEntity): Promise<TransactionResult> {
+    // Step 1: PostgreSQL を更新（リトライ付き）
+    let wasUpdated = false;
+    try {
+      await this.retryWithBackoff(async () => {
+        wasUpdated = (await this.updateIntoPostgreSQLOrThrow(memory)) > 0;
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        status: 'failed',
+        error: {
+          type: 'POSTGRESQL_ERROR',
+          message: `PostgreSQL update failed after retries: ${errorMessage}`,
+        },
+      };
+    }
+
+    // レコードが存在しない場合
+    if (!wasUpdated) {
+      return {
+        status: 'failed',
+        error: {
+          type: 'POSTGRESQL_ERROR',
+          message: `Memory with ID ${memory.id} not found for update`,
+        },
+      };
+    }
+
+    // Step 2: Neo4j のノードを更新（procedural memory の場合）
+    if (memory.memoryType === 'procedural') {
+      const neoResult = await this.createNeo4jNode(memory); // MERGE を使用するため、create/update 両方に対応
+
+      if (!neoResult.success) {
+        // Neo4j失敗時の補償トランザクション
+        try {
+          await this.markSyncFailure(memory.id, 'neo4j_update_failed');
+        } catch (markError) {
+          // 同期失敗マークにも失敗した場合は致命的エラーとして返す
+          return {
+            status: 'failed',
+            error: {
+              type: 'POSTGRESQL_ERROR',
+              message: `Failed to mark sync failure after Neo4j error: ${markError instanceof Error ? markError.message : String(markError)
+                }`,
+              requiresCompensation: true,
+            },
+          };
+        }
+
+        return {
+          status: 'partial', // PostgreSQL成功、Neo4j失敗 = 部分成功
+          memoryId: memory.id,
+          warning: {
+            type: 'SYNC_FAILURE',
+            message: `Neo4j node update failed: ${neoResult.error}. Marked for background retry.`,
+          },
+        };
+      }
+    }
+
+    return {
+      status: 'ok',
+      memoryId: memory.id,
+    };
+  }
+
+  /**
    * Delete Memory with Saga Pattern
    *
    * フロー:
@@ -264,6 +343,49 @@ export class TransactionCoordinator {
   }
 
   /**
+   * Hard Delete Memory (Physical Deletion)
+   * Used for Garbage Collection
+   */
+  async hardDeleteMemory(memoryId: MemoryId): Promise<TransactionResult> {
+    // Step 1: PostgreSQL から物理削除（マスターDBを先に削除）
+    try {
+      await this.config.postgresPool.query(
+        `DELETE FROM memories WHERE id = $1`,
+        [memoryId]
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        status: 'failed',
+        error: {
+          type: 'POSTGRESQL_ERROR',
+          message: `PostgreSQL hard deletion failed: ${errorMessage}`,
+          requiresCompensation: false,
+        },
+      };
+    }
+
+    // Step 2: Neo4j からノード削除（PostgreSQL削除成功後のみ実行）
+    const neoResult = await this.deleteNeo4jNode(memoryId);
+
+    if (!neoResult.success) {
+      return {
+        status: 'partial',
+        memoryId,
+        warning: {
+          type: 'SYNC_FAILURE',
+          message: `Neo4j node deletion failed during hard delete: ${neoResult.error}`,
+        },
+      };
+    }
+
+    return {
+      status: 'ok',
+      memoryId,
+    };
+  }
+
+  /**
    * Insert memory into PostgreSQL
    * @returns Number of rows inserted (0 if conflict, 1 if new insert)
    * @throws Error if insertion fails (for retry mechanism)
@@ -273,6 +395,21 @@ export class TransactionCoordinator {
       `INSERT INTO memories (id, content, memory_type, metadata, created_at, updated_at, sync_status)
        VALUES ($1, $2, $3, $4, NOW(), NOW(), 'synced')
        ON CONFLICT (id) DO NOTHING`, // べき等性: 既存の場合は何もしない
+      [memory.id, memory.content, memory.memoryType, JSON.stringify(memory.metadata)]
+    );
+    return result.rowCount ?? 0;
+  }
+
+  /**
+   * Update memory in PostgreSQL
+   * @returns Number of rows updated (0 if not found, 1 if updated)
+   * @throws Error if update fails (for retry mechanism)
+   */
+  private async updateIntoPostgreSQLOrThrow(memory: MemoryEntity): Promise<number> {
+    const result = await this.config.postgresPool.query(
+      `UPDATE memories 
+       SET content = $2, memory_type = $3, metadata = $4, updated_at = NOW(), sync_status = 'synced'
+       WHERE id = $1`,
       [memory.id, memory.content, memory.memoryType, JSON.stringify(memory.metadata)]
     );
     return result.rowCount ?? 0;
@@ -367,6 +504,139 @@ export class TransactionCoordinator {
     } catch (error) {
       // 同期失敗マークに失敗した場合、エラーを呼び出し側へ伝播
       throw error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  /**
+   * Save memory version history
+   * Note: memoryType is included in metadata to ensure it's available during version restoration
+   */
+  async saveMemoryVersion(memory: MemoryEntity, version: number): Promise<void> {
+    try {
+      // Include memoryType in metadata for reliable restoration
+      const metadataWithType = {
+        ...memory.metadata,
+        memoryType: memory.memoryType,
+      };
+
+      await this.config.postgresPool.query(
+        `INSERT INTO memory_versions (memory_id, version_number, content, metadata, created_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (memory_id, version_number) DO NOTHING`,
+        [memory.id, version, memory.content, JSON.stringify(metadataWithType)]
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.config.logger.error(`Failed to save memory version: ${errorMessage}`, {
+        memoryId: memory.id,
+        version,
+      });
+      // Non-blocking error: version history failure shouldn't stop the main operation
+      // but we log it.
+    }
+  }
+
+  /**
+   * Get memory versions
+   */
+  async getMemoryVersions(memoryId: MemoryId): Promise<any[]> {
+    try {
+      const result = await this.config.postgresPool.query(
+        `SELECT * FROM memory_versions WHERE memory_id = $1 ORDER BY version_number DESC`,
+        [memoryId]
+      );
+      return result.rows.map(row => ({
+        id: row.id,
+        memoryId: row.memory_id,
+        version: row.version_number,
+        content: row.content,
+        metadata: row.metadata,
+        createdAt: row.created_at
+      }));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to get memory versions: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Revert memory to specific version
+   * Note: This only fetches the data. The actual update should be handled by storeMemory/updateMemory
+   * to ensure consistency across all stores (Neo4j, Vector).
+   */
+  async getMemoryVersion(memoryId: MemoryId, version: number): Promise<MemoryEntity | null> {
+    try {
+      const result = await this.config.postgresPool.query(
+        `SELECT * FROM memory_versions WHERE memory_id = $1 AND version_number = $2`,
+        [memoryId, version]
+      );
+
+      if (result.rows.length === 0) {
+        return null;
+      }
+
+      const row = result.rows[0];
+      let memoryType: MemoryType = row.metadata?.memoryType;
+
+      // Defensive fallback: if metadata.memoryType is missing, query the current memory record
+      if (!memoryType) {
+        try {
+          const currentMemory = await this.config.postgresPool.query(
+            `SELECT memory_type FROM memories WHERE id = $1`,
+            [row.memory_id]
+          );
+          if (currentMemory.rows.length > 0) {
+            memoryType = currentMemory.rows[0].memory_type as MemoryType;
+            this.config.logger.warn(
+              'memoryType missing from version metadata, retrieved from current memory record',
+              { memoryId: row.memory_id, version }
+            );
+          } else {
+            // Current memory not found, use default
+            memoryType = 'semantic';
+            this.config.logger.warn(
+              'memoryType missing from version metadata and current memory not found, defaulting to semantic',
+              { memoryId: row.memory_id, version }
+            );
+          }
+        } catch (queryError) {
+          // Fallback query failed, use default
+          memoryType = 'semantic';
+          this.config.logger.error(
+            'Failed to query current memory for memoryType, defaulting to semantic',
+            { memoryId: row.memory_id, version, error: queryError }
+          );
+        }
+      }
+
+      // Remove memoryType from metadata to maintain single source of truth
+      const { memoryType: _, ...metadataWithoutType } = row.metadata || {};
+
+      return {
+        id: row.memory_id,
+        content: row.content,
+        memoryType,
+        metadata: metadataWithoutType
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to get memory version: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Find soft-deleted memories older than a specific date
+   */
+  async findSoftDeletedMemories(olderThan: Date): Promise<MemoryId[]> {
+    try {
+      const result = await this.config.postgresPool.query(
+        `SELECT id FROM memories WHERE is_deleted = true AND deleted_at < $1`,
+        [olderThan]
+      );
+      return result.rows.map(row => row.id);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to find soft-deleted memories: ${errorMessage}`);
     }
   }
 
