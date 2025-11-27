@@ -281,7 +281,6 @@ export class SecurityEventDetector {
           anomalyPattern: 'excessive_data_access',
           threatLevel,
           userId,
-          sessionId: data.sessionId,
           description: `Excessive data access detected: ${data.count} accesses in time window`,
           metadata: {
             count: data.count,
@@ -292,6 +291,7 @@ export class SecurityEventDetector {
             'Review access patterns',
             'Contact security team',
           ],
+          ...(data.sessionId !== undefined ? { sessionId: data.sessionId } : {}),
         });
       }
     }
@@ -611,7 +611,7 @@ export class SecurityEventDetector {
   stopCleanupTask(): void {
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
-      this.cleanupTimer = undefined;
+      delete this.cleanupTimer;
     }
   }
 

@@ -583,10 +583,11 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
       let paramIndex = 1;
 
       for (let i = 0; i < items.length; i++) {
+        const item = items[i]!; // Add non-null assertion here
         memoriesValues.push(
           `($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, NOW(), NOW())`
         );
-        memoriesParams.push(ids[i], items[i].content, JSON.stringify(items[i].metadata));
+        memoriesParams.push(ids[i], item.content, JSON.stringify(item.metadata));
         paramIndex += 3;
       }
 

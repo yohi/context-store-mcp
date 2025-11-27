@@ -367,8 +367,8 @@ export class AuditLogger {
       resourceId: entry.resourceId,
       action: entry.action,
       result: entry.result,
-      errorCode: entry.errorCode,
-      metadata: entry.metadata,
+      ...(entry.errorCode !== undefined ? { errorCode: entry.errorCode } : {}),
+      ...(entry.metadata !== undefined ? { metadata: entry.metadata } : {}),
     };
   }
 
@@ -386,10 +386,12 @@ export class AuditLogger {
     const uniqueUsers = new Set<string>();
     accessLog.forEach((log) => uniqueUsers.add(log.userId));
 
+    const firstLogEntry = accessLog.length > 0 ? accessLog[0] : undefined;
+
     return {
       memoryId,
       totalAccesses: accessLog.length,
-      lastAccessedAt: accessLog.length > 0 ? accessLog[0].timestamp : null,
+      lastAccessedAt: firstLogEntry ? firstLogEntry.timestamp : null,
       accessLog,
       uniqueUsers,
     };
@@ -423,10 +425,10 @@ export class AuditLogger {
    */
   async exportLogs(params: ExportLogsParams): Promise<string> {
     const logs = await this.queryLogs({
-      startTime: params.startTime,
-      endTime: params.endTime,
-      userId: params.userId,
-      eventType: params.eventType,
+      ...(params.startTime !== undefined ? { startTime: params.startTime } : {}),
+      ...(params.endTime !== undefined ? { endTime: params.endTime } : {}),
+      ...(params.userId !== undefined ? { userId: params.userId } : {}),
+      ...(params.eventType !== undefined ? { eventType: params.eventType } : {}),
     });
 
     if (params.format === 'json') {

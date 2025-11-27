@@ -55,8 +55,12 @@ export class LRUCache<T = any> {
     }
 
     this.maxSize = config.maxSize;
-    this.maxAge = config.maxAge;
-    this.onEvict = config.onEvict;
+    if (config.maxAge !== undefined) {
+      this.maxAge = config.maxAge;
+    }
+    if (config.onEvict !== undefined) {
+      this.onEvict = config.onEvict;
+    }
   }
 
   /**

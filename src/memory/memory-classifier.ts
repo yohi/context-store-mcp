@@ -98,58 +98,11 @@ export class MemoryClassifier implements MemoryClassifierService {
 
   constructor() {
     // 初期キーワードのロード
-    this.episodicKeywords = new Set([
-      '昨日',
-      '先週',
-      '今朝',
-      '金曜日',
-      '会話',
-      '話した',
-      '議論',
-      '決めた',
-      'ミーティング',
-      '会議',
-      'スタンドアップ',
-      '話し合',
-      '確認した',
-      '要望',
-      'ゴール',
-      'スプリント',
-      'について',
-    ]);
+    this.episodicKeywords = new Set(EPISODIC_KEYWORDS);
 
-    this.semanticKeywords = new Set([
-      '仕様',
-      '定義',
-      'ルール',
-      '概念',
-      'とは',
-      'である',
-      'API',
-      'パターン',
-      'アーキテクチャ',
-      'TypeScript',
-      'interface',
-      'べき',
-    ]);
+    this.semanticKeywords = new Set(SEMANTIC_KEYWORDS);
 
-    this.proceduralKeywords = new Set([
-      '方法',
-      '手順',
-      '解決',
-      '修正',
-      '実装',
-      'インストール',
-      '編集',
-      '起動',
-      '確認',
-      'デバッグ',
-      '必要',
-      'する',
-      'ます',
-      '改善',
-      'パフォーマンス',
-    ]);
+    this.proceduralKeywords = new Set(PROCEDURAL_KEYWORDS);
   }
 
   /**
@@ -346,7 +299,7 @@ export class MemoryClassifier implements MemoryClassifierService {
     };
 
     // 混同行列の初期化 (3x3)
-    const confusionMatrix = [
+    const confusionMatrix: number[][] = [
       [0, 0, 0],
       [0, 0, 0],
       [0, 0, 0],
@@ -364,7 +317,9 @@ export class MemoryClassifier implements MemoryClassifierService {
       const actual = sample.trueType;
 
       // 混同行列を更新
-      confusionMatrix[typeIndex[actual]][typeIndex[predicted]]++;
+      const actualIndex = typeIndex[actual]!;
+      const predictedIndex = typeIndex[predicted]!;
+      confusionMatrix[actualIndex]![predictedIndex] = (confusionMatrix[actualIndex]![predictedIndex] || 0) + 1;
 
       // 正解カウント
       perTypeTotal[actual]++;
@@ -448,10 +403,6 @@ export class MemoryClassifier implements MemoryClassifierService {
     detectedKeywords.push(...proceduralMatches);
 
     // ルールベーススコアの計算（キーワードマッチ度）
-    const totalKeywords = Math.max(
-      episodicMatches.length + semanticMatches.length + proceduralMatches.length,
-      1
-    );
     const ruleBasedScore = Math.min(detectedKeywords.length / 5, 1.0); // 5個以上で最大スコア
 
     return {

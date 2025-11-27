@@ -157,7 +157,7 @@ export class MetricsCollector {
   stop(): void {
     if (this.collectionTimer) {
       clearInterval(this.collectionTimer);
-      this.collectionTimer = undefined;
+      delete this.collectionTimer;
     }
   }
 
@@ -197,8 +197,8 @@ export class MetricsCollector {
       name,
       value,
       unit,
-      tags,
       timestamp: Date.now(),
+      ...(tags !== undefined ? { tags: tags } : {}), // 条件付きでtagsを追加
     };
 
     this.customMetrics.push(metric);
@@ -270,7 +270,7 @@ export class MetricsCollector {
     this.systemMetricsHistory.length = 0;
     this.customMetrics.length = 0;
     this.performanceMetrics.resetAll();
-    this.lastCpuUsage = undefined;
+    delete this.lastCpuUsage;
   }
 
   /**

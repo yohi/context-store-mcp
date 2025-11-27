@@ -15,7 +15,6 @@ import type {
   SearchLogEntry,
   UserFeedbackLog,
 } from './types';
-import type { Memory } from '../memory/types';
 
 /**
  * 検索品質評価クラス
@@ -112,7 +111,7 @@ export class SearchQualityEvaluator {
     let relevantCount = 0;
 
     for (let k = 1; k <= retrieved.length; k++) {
-      if (relevantSet.has(retrieved[k - 1])) {
+      if (relevantSet.has(retrieved[k - 1]!)) {
         relevantCount++;
         const precision = relevantCount / k;
         sumPrecision += precision;
@@ -217,13 +216,13 @@ export class SearchQualityEvaluator {
       for (const memoryId of memoryIds) {
         const levels = judgments
           .map((j) => j.judgments.find((jg) => jg.memoryId === memoryId)?.relevanceLevel)
-          .filter((level): level is number => level !== undefined);
+          .filter((level): level is (0 | 1 | 2 | 3) => level !== undefined);
 
         if (levels.length >= 2) {
           const categoryCounts = new Array(NUM_CATEGORIES).fill(0);
           for (const level of levels) {
             if (level >= 0 && level < NUM_CATEGORIES) {
-              categoryCounts[level]++;
+              categoryCounts[level]!++;
             }
           }
           items.set(memoryId, categoryCounts);
@@ -246,7 +245,7 @@ export class SearchQualityEvaluator {
       totalAnnotatorAssignments += n_i;
 
       for (let j = 0; j < NUM_CATEGORIES; j++) {
-        categoryTotals[j] += categoryCounts[j];
+        categoryTotals[j] += categoryCounts[j]!;
       }
     }
 
@@ -262,7 +261,7 @@ export class SearchQualityEvaluator {
 
       let sumPairwiseAgreement = 0;
       for (let j = 0; j < NUM_CATEGORIES; j++) {
-        sumPairwiseAgreement += categoryCounts[j] * (categoryCounts[j] - 1);
+        sumPairwiseAgreement += categoryCounts[j]! * (categoryCounts[j]! - 1);
       }
 
       const P_i = sumPairwiseAgreement / (n_i * (n_i - 1));
@@ -329,8 +328,8 @@ export class SearchQualityEvaluator {
         id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
         memoryId: result.id,
         query,
-        relevanceScore: result.relevanceScore,
         searchedAt: new Date(),
+        ...(result.relevanceScore !== undefined ? { relevanceScore: result.relevanceScore } : {}),
       };
       this.searchLogs.push(logEntry);
     }
@@ -716,9 +715,9 @@ export class SearchQualityEvaluator {
     }
 
     x -= 1;
-    let sum = coef[0];
+    let sum = coef[0]!;
     for (let i = 1; i < coef.length; i++) {
-      sum += coef[i] / (x + i);
+      sum += coef[i]! / (x + i);
     }
 
     const t = x + 7.5; // g + 0.5

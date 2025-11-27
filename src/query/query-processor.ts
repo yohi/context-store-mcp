@@ -109,14 +109,25 @@ export class QueryProcessor {
     // 記憶タイプの推論
     const memoryTypes = query.filters?.memoryTypes || this.inferMemoryTypes(rawQuery);
 
-    return {
+    const result: ParsedQuery = {
       rawQuery,
       intent,
       keywords,
-      timeFilter,
-      tags,
-      memoryTypes,
     };
+
+    if (timeFilter) {
+      result.timeFilter = timeFilter;
+    }
+
+    if (tags) {
+      result.tags = tags;
+    }
+
+    if (memoryTypes) {
+      result.memoryTypes = memoryTypes;
+    }
+
+    return result;
   }
 
   /**
@@ -250,8 +261,8 @@ export class QueryProcessor {
     const yearMonthPattern = /(\d{4})年(\d{1,2})月/;
     const match = query.match(yearMonthPattern);
     if (match) {
-      const year = parseInt(match[1], 10);
-      const month = parseInt(match[2], 10);
+      const year = parseInt(match[1]!, 10);
+      const month = parseInt(match[2]!, 10);
 
       const start = new Date(year, month - 1, 1);
       const end = new Date(year, month, 0, 23, 59, 59, 999);
@@ -489,11 +500,9 @@ export class QueryProcessor {
 
     // フィルタを構築
     const filters = this.buildMetadataFilter({
-      tags: parsed.tags,
-      memoryTypes: parsed.memoryTypes,
-      timeRange: parsed.timeFilter
-        ? this.interpretTimeFilter(parsed.timeFilter)
-        : undefined,
+      ...(parsed.tags ? { tags: parsed.tags } : {}),
+      ...(parsed.memoryTypes ? { memoryTypes: parsed.memoryTypes } : {}),
+      ...(parsed.timeFilter ? { timeRange: this.interpretTimeFilter(parsed.timeFilter) } : {}),
     });
 
     // 予想実行時間を計算
@@ -612,8 +621,8 @@ export class QueryProcessor {
         steps.push({
           type: 'metadata_filter',
           filters: this.buildMetadataFilter({
-            tags: parsed.tags,
-            memoryTypes: parsed.memoryTypes,
+            ...(parsed.tags ? { tags: parsed.tags } : {}),
+            ...(parsed.memoryTypes ? { memoryTypes: parsed.memoryTypes } : {}),
           }),
           estimatedTime: 200,
         });
@@ -645,7 +654,10 @@ export class QueryProcessor {
         if (index === 0 && step.type !== 'cache_lookup') {
           return {
             ...step,
-            filters: { ...step.filters, memoryTypes: plan.filters.memoryTypes },
+            filters: {
+              ...step.filters,
+              ...(plan.filters.memoryTypes ? { memoryTypes: plan.filters.memoryTypes } : {}),
+            },
           };
         }
         return step;
@@ -661,8 +673,8 @@ export class QueryProcessor {
             ...step,
             filters: {
               ...step.filters,
-              createdAfter: plan.filters.createdAfter,
-              createdBefore: plan.filters.createdBefore,
+              ...(plan.filters.createdAfter ? { createdAfter: plan.filters.createdAfter } : {}),
+              ...(plan.filters.createdBefore ? { createdBefore: plan.filters.createdBefore } : {}),
             },
           };
         }

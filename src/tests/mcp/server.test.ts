@@ -9,10 +9,10 @@ class MockTransport implements Transport {
   onmessage?: (message: JSONRPCMessage) => void;
   onclose?: () => void;
   onerror?: (error: Error) => void;
-  
+
   public sentMessages: JSONRPCMessage[] = [];
 
-  async start(): Promise<void> {}
+  async start(): Promise<void> { }
 
   async send(message: JSONRPCMessage): Promise<void> {
     this.sentMessages.push(message);
@@ -37,7 +37,24 @@ describe('MCP Server Core Features', () => {
   let transport: MockTransport;
 
   beforeEach(async () => {
-    server = createContextStoreServer();
+    const mockMemoryManager = {
+      storeMemory: vi.fn().mockResolvedValue({ success: true, value: 'test-id' }),
+      updateMemory: vi.fn().mockResolvedValue({ success: true, value: true }),
+      deleteMemory: vi.fn().mockResolvedValue({ success: true, value: true }),
+      getMemoryHistory: vi.fn().mockResolvedValue([]),
+      revertToVersion: vi.fn().mockResolvedValue({ success: true, value: true }),
+      suggestMerges: vi.fn().mockResolvedValue([]),
+      mergeMemories: vi.fn().mockResolvedValue({ success: true, value: 'merged-id' }),
+    } as any;
+
+    const mockQueryProcessor = {
+      hybridSearch: vi.fn().mockResolvedValue([{
+        memory: { id: '1', content: 'Search result', memoryType: 'semantic' },
+        scores: { combined: 0.9, semantic: 0.9, structural: 0.0 }
+      }]),
+    } as any;
+
+    server = createContextStoreServer(mockMemoryManager, mockQueryProcessor);
     transport = new MockTransport();
     await server.connect(transport);
   });
@@ -95,13 +112,17 @@ describe('MCP Server Core Features', () => {
     expect(response).toBeDefined();
     const result = (response as any).result;
     expect(result.tools).toBeDefined();
-    expect(result.tools).toHaveLength(4);
-    
+    expect(result.tools).toHaveLength(8);
+
     const toolNames = result.tools.map((t: any) => t.name);
     expect(toolNames).toContain('store_memory');
     expect(toolNames).toContain('search_memory');
     expect(toolNames).toContain('delete_memory');
     expect(toolNames).toContain('update_memory');
+    expect(toolNames).toContain('get_memory_history');
+    expect(toolNames).toContain('revert_memory');
+    expect(toolNames).toContain('suggest_merges');
+    expect(toolNames).toContain('merge_memories');
   });
 
   it('should list available resources', async () => {
@@ -132,7 +153,7 @@ describe('MCP Server Core Features', () => {
     const result = (response as any).result;
     expect(result.resources).toBeDefined();
     expect(result.resources).toHaveLength(2);
-    
+
     const resourceNames = result.resources.map((r: any) => r.name);
     expect(resourceNames).toContain('memory_stats');
     expect(resourceNames).toContain('memory_types');
@@ -141,15 +162,15 @@ describe('MCP Server Core Features', () => {
   it('should handle store_memory tool call', async () => {
     // Initialize
     transport.receive({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } }
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } }
     });
     await new Promise(resolve => setTimeout(resolve, 10));
     transport.receive({
-        jsonrpc: '2.0',
-        method: 'notifications/initialized'
+      jsonrpc: '2.0',
+      method: 'notifications/initialized'
     });
 
     // Call tool
@@ -176,15 +197,15 @@ describe('MCP Server Core Features', () => {
   it('should handle store_memory tool call with metadata', async () => {
     // Initialize
     transport.receive({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } }
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } }
     });
     await new Promise(resolve => setTimeout(resolve, 10));
     transport.receive({
-        jsonrpc: '2.0',
-        method: 'notifications/initialized'
+      jsonrpc: '2.0',
+      method: 'notifications/initialized'
     });
 
     // Call tool
@@ -215,15 +236,15 @@ describe('MCP Server Core Features', () => {
   it('should handle search_memory tool call with filters', async () => {
     // Initialize
     transport.receive({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } }
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } }
     });
     await new Promise(resolve => setTimeout(resolve, 10));
     transport.receive({
-        jsonrpc: '2.0',
-        method: 'notifications/initialized'
+      jsonrpc: '2.0',
+      method: 'notifications/initialized'
     });
 
     // Call tool
@@ -248,21 +269,22 @@ describe('MCP Server Core Features', () => {
     const response = transport.sentMessages.find(m => (m as any).id === 2);
     expect(response).toBeDefined();
     expect((response as any).error).toBeUndefined();
-    expect((response as any).result.content[0].text).toContain('Search results');
+    expect((response as any).result.content[0].text).toContain('ID: 1');
+    expect((response as any).result.content[0].text).toContain('Content: Search result');
   });
 
   it('should return error for missing arguments in store_memory', async () => {
     // Initialize
     transport.receive({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } }
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } }
     });
     await new Promise(resolve => setTimeout(resolve, 10));
     transport.receive({
-        jsonrpc: '2.0',
-        method: 'notifications/initialized'
+      jsonrpc: '2.0',
+      method: 'notifications/initialized'
     });
 
     // Call tool with missing content
@@ -288,15 +310,15 @@ describe('MCP Server Core Features', () => {
   it('should return error for unknown tool', async () => {
     // Initialize
     transport.receive({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } }
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } }
     });
     await new Promise(resolve => setTimeout(resolve, 10));
     transport.receive({
-        jsonrpc: '2.0',
-        method: 'notifications/initialized'
+      jsonrpc: '2.0',
+      method: 'notifications/initialized'
     });
 
     // Call unknown tool
