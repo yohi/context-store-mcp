@@ -370,4 +370,31 @@ describe('LRUCache', () => {
       }
     });
   });
+
+  describe('Zero TTL', () => {
+    it('should treat maxAge: 0 as immediate expiration', async () => {
+      const cache = new LRUCache<string>({ maxSize: 3, maxAge: 0 });
+
+      cache.set('key1', 'value1');
+
+      // Should be expired immediately
+      await new Promise((resolve) => setTimeout(resolve, 1));
+
+      expect(cache.has('key1')).toBe(false);
+      expect(cache.get('key1')).toBeUndefined();
+    });
+
+    it('should purge all entries when maxAge is 0', async () => {
+      const cache = new LRUCache<string>({ maxSize: 3, maxAge: 0 });
+
+      cache.set('key1', 'value1');
+      cache.set('key2', 'value2');
+
+      await new Promise((resolve) => setTimeout(resolve, 1));
+
+      const purgedCount = cache.purgeExpired();
+      expect(purgedCount).toBe(2);
+      expect(cache.size()).toBe(0);
+    });
+  });
 });
