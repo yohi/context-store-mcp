@@ -383,7 +383,7 @@ export class MemoryManager implements MemoryManagerService {
       }
     }
 
-    if (!targetContent) {
+    if (targetContent === undefined) {
       return {
         success: false,
         error: {
