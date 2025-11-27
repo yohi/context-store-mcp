@@ -282,7 +282,149 @@ describe('TransactionCoordinator - Task 9.1: Saga Pattern', () => {
     });
   });
 
+  describe('updateMemoryWithSaga', () => {
+    it('should successfully update memory in both PostgreSQL and Neo4j', async () => {
+      // Arrange
+      const memory: MemoryEntity = {
+        id: 'test-memory-id-010',
+        content: 'Updated memory content',
+        memoryType: 'procedural',
+        metadata: { source: 'test-update' },
+      };
+
+      // Mock successful PostgreSQL update
+      vi.mocked(mockPgPool.query).mockResolvedValueOnce({
+        rows: [{ id: memory.id }],
+        command: 'UPDATE',
+        rowCount: 1,
+        oid: 0,
+        fields: [],
+      });
+
+      // Mock successful Neo4j node update
+      const mockSession = {
+        run: vi.fn().mockResolvedValue({ records: [] }),
+        close: vi.fn(),
+      };
+      vi.mocked(mockNeo4jDriver.session).mockReturnValue(mockSession as never);
+
+      // Act
+      const result = await coordinator.updateMemoryWithSaga(memory);
+
+      // Assert
+      expect(result.status).toBe('ok');
+      expect(result.memoryId).toBe(memory.id);
+      expect(mockPgPool.query).toHaveBeenCalledTimes(1);
+      expect(mockSession.run).toHaveBeenCalledTimes(1);
+    });
+
+    it('should handle PostgreSQL update failure', async () => {
+      // Arrange
+      const memory: MemoryEntity = {
+        id: 'test-memory-id-011',
+        content: 'Updated memory',
+        memoryType: 'episodic',
+        metadata: {},
+      };
+
+      // Mock PostgreSQL failure (リトライ3回全て失敗)
+      vi.mocked(mockPgPool.query).mockRejectedValue(new Error('PG update failed'));
+
+      // Act
+      const result = await coordinator.updateMemoryWithSaga(memory);
+
+      // Assert
+      expect(result.status).toBe('failed');
+      if (result.status === 'failed') {
+        expect(result.error.type).toBe('POSTGRESQL_ERROR');
+        expect(result.error.message).toContain('PG update failed');
+      }
+      // Neo4jは呼ばれないはず
+      expect(mockNeo4jDriver.session).not.toHaveBeenCalled();
+    });
+
+    it('should handle Neo4j update failure with sync_status marking', async () => {
+      // Arrange
+      const memory: MemoryEntity = {
+        id: 'test-memory-id-012',
+        content: 'Updated memory',
+        memoryType: 'procedural',
+        metadata: {},
+      };
+
+      // Mock successful PostgreSQL update
+      vi.mocked(mockPgPool.query)
+        .mockResolvedValueOnce({
+          rows: [{ id: memory.id }],
+          command: 'UPDATE',
+          rowCount: 1,
+          oid: 0,
+          fields: [],
+        })
+        // Mock sync_status update
+        .mockResolvedValueOnce({
+          rows: [],
+          command: 'UPDATE',
+          rowCount: 1,
+          oid: 0,
+          fields: [],
+        });
+
+      // Mock Neo4j failure
+      const mockSession = {
+        run: vi.fn().mockRejectedValue(new Error('Neo4j node update failed')),
+        close: vi.fn(),
+      };
+      vi.mocked(mockNeo4jDriver.session).mockReturnValue(mockSession as never);
+
+      // Act
+      const result = await coordinator.updateMemoryWithSaga(memory);
+
+      // Assert
+      expect(result.status).toBe('partial');
+      expect(result.memoryId).toBe(memory.id);
+      if (result.status === 'partial') {
+        expect(result.warning.type).toBe('SYNC_FAILURE');
+        expect(result.warning.message).toContain('Neo4j');
+      }
+      // sync_status = 'pending_graph' への更新が呼ばれたか確認
+      expect(mockPgPool.query).toHaveBeenCalledTimes(2);
+    });
+
+    it('should fail when memory does not exist', async () => {
+      // Arrange
+      const memory: MemoryEntity = {
+        id: 'non-existent-id',
+        content: 'Updated memory',
+        memoryType: 'episodic',
+        metadata: {},
+      };
+
+      // Mock PostgreSQL update with rowCount 0 (no rows updated)
+      vi.mocked(mockPgPool.query).mockResolvedValueOnce({
+        rows: [],
+        command: 'UPDATE',
+        rowCount: 0,
+        oid: 0,
+        fields: [],
+      });
+
+      // Act
+      const result = await coordinator.updateMemoryWithSaga(memory);
+
+      // Assert
+      expect(result.status).toBe('failed');
+      if (result.status === 'failed') {
+        expect(result.error.type).toBe('POSTGRESQL_ERROR');
+        expect(result.error.message).toContain('not found for update');
+      }
+      // Neo4jは呼ばれないはず
+      expect(mockNeo4jDriver.session).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Exponential Backoff Retry Policy', () => {
+
     it(
       'should retry transient errors with exponential backoff (最大3回)',
       async () => {
@@ -299,22 +441,22 @@ describe('TransactionCoordinator - Task 9.1: Saga Pattern', () => {
           .mockRejectedValueOnce(new Error('Transient connection timeout'))
           .mockRejectedValueOnce(new Error('Transient connection timeout'))
           .mockResolvedValueOnce({
-          rows: [{ id: memory.id }],
-          command: 'INSERT',
-          rowCount: 1,
-          oid: 0,
-          fields: [],
-        });
+            rows: [{ id: memory.id }],
+            command: 'INSERT',
+            rowCount: 1,
+            oid: 0,
+            fields: [],
+          });
 
-      // Mock Neo4j success
-      const mockSession = {
-        run: vi.fn().mockResolvedValue({ records: [] }),
-        close: vi.fn(),
-      };
-      vi.mocked(mockNeo4jDriver.session).mockReturnValue(mockSession as never);
+        // Mock Neo4j success
+        const mockSession = {
+          run: vi.fn().mockResolvedValue({ records: [] }),
+          close: vi.fn(),
+        };
+        vi.mocked(mockNeo4jDriver.session).mockReturnValue(mockSession as never);
 
-      // Act
-      const result = await coordinator.storeMemoryWithSaga(memory);
+        // Act
+        const result = await coordinator.storeMemoryWithSaga(memory);
 
         // Assert
         expect(result.status).toBe('ok');
@@ -327,19 +469,19 @@ describe('TransactionCoordinator - Task 9.1: Saga Pattern', () => {
     it(
       'should fail after max retries exceeded',
       async () => {
-      // Arrange
-      const memory: MemoryEntity = {
-        id: 'test-memory-id-009',
-        content: 'Test max retries',
-        memoryType: 'episodic',
-        metadata: {},
-      };
+        // Arrange
+        const memory: MemoryEntity = {
+          id: 'test-memory-id-009',
+          content: 'Test max retries',
+          memoryType: 'episodic',
+          metadata: {},
+        };
 
-      // Mock PostgreSQL: 常に失敗
-      vi.mocked(mockPgPool.query).mockRejectedValue(new Error('Permanent failure'));
+        // Mock PostgreSQL: 常に失敗
+        vi.mocked(mockPgPool.query).mockRejectedValue(new Error('Permanent failure'));
 
-      // Act
-      const result = await coordinator.storeMemoryWithSaga(memory);
+        // Act
+        const result = await coordinator.storeMemoryWithSaga(memory);
 
         // Assert
         expect(result.status).toBe('failed');

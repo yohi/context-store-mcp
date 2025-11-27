@@ -239,7 +239,7 @@ export class MemoryManager implements MemoryManagerService {
         metadata: updatedMemory.metadata,
       };
 
-      const result = await this.transactionCoordinator.storeMemoryWithSaga(entity);
+      const result = await this.transactionCoordinator.updateMemoryWithSaga(entity);
 
       if (result.status === 'failed') {
         // Rollback in-memory storage
