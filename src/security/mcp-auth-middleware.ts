@@ -160,8 +160,8 @@ export class McpAuthMiddleware {
 
     // UUIDv4 形式に変換
     // version (4) と variant (RFC4122) ビットを設定
-    bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
-    bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant RFC4122
+    bytes[6] = (bytes[6]! & 0x0f) | 0x40; // version 4
+    bytes[8] = (bytes[8]! & 0x3f) | 0x80; // variant RFC4122
 
     // UUID文字列に変換
     const uuid = [
@@ -187,7 +187,7 @@ export class McpAuthMiddleware {
     const authHeader = headers['authorization'] || headers['Authorization'];
     if (typeof authHeader === 'string') {
       const match = authHeader.match(/^Bearer\s+(\S+)$/i);
-      if (match) {
+      if (match && match[1] !== undefined) {
         return match[1];
       }
     }
@@ -251,7 +251,7 @@ export class McpAuthMiddleware {
       ipAddress,
       timestamp: new Date(),
       success,
-      reason,
+      ...(reason !== undefined ? { reason: reason } : {}),
     });
 
     // 古い記録を削除（メモリ節約）
@@ -324,17 +324,18 @@ export class McpAuthMiddleware {
       const sessionId = this.generateSecureSessionId();
 
       // 認証コンテキストを構築
+      const contextUserId = apiKey.metadata?.['userId'] as string | undefined;
       return {
         authenticated: true,
         apiKey,
-        userId: apiKey.metadata?.userId as string | undefined,
         sessionId,
         scopes: apiKey.scopes,
         metadata: {
           ipAddress,
-          userAgent,
           requestedAt,
+          ...(userAgent !== undefined ? { userAgent: userAgent } : {}),
         },
+        ...(contextUserId !== undefined ? { userId: contextUserId } : {}),
       };
     } catch (error) {
       // 認証失敗のコンテキストを返す

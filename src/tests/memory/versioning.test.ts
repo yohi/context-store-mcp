@@ -12,6 +12,7 @@ describe('Memory Versioning', () => {
             getMemoryVersions: vi.fn(),
             getMemoryVersion: vi.fn(),
             storeMemoryWithSaga: vi.fn().mockResolvedValue({ status: 'ok' }),
+            updateMemoryWithSaga: vi.fn().mockResolvedValue({ status: 'ok' }),
         } as unknown as TransactionCoordinator;
 
         memoryManager = new MemoryManager({
@@ -37,7 +38,7 @@ describe('Memory Versioning', () => {
             expect.objectContaining({ content: 'v1' }),
             1
         );
-        expect(transactionCoordinator.storeMemoryWithSaga).toHaveBeenCalledWith(
+        expect(transactionCoordinator.updateMemoryWithSaga).toHaveBeenCalledWith(
             expect.objectContaining({ content: 'v2' })
         );
     });
@@ -61,7 +62,7 @@ describe('Memory Versioning', () => {
         expect(transactionCoordinator.getMemoryVersion).toHaveBeenCalledWith(id, 1);
         // Should call updateMemory with old content
         expect(transactionCoordinator.saveMemoryVersion).toHaveBeenCalled(); // Saves v2 before revert
-        expect(transactionCoordinator.storeMemoryWithSaga).toHaveBeenCalledWith(
+        expect(transactionCoordinator.updateMemoryWithSaga).toHaveBeenCalledWith(
             expect.objectContaining({ content: 'v1' })
         );
     });

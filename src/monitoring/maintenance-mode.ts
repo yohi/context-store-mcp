@@ -68,10 +68,10 @@ export class MaintenanceModeManager {
       status: MaintenanceStatus.ACTIVE,
       message: options?.message ?? this.config.customMessage,
       startTime: new Date(),
-      endTime: options?.endTime,
-      reason: options?.reason,
-      affectedServices: options?.affectedServices,
-      contactInfo: options?.contactInfo,
+      ...(options?.endTime !== undefined ? { endTime: options.endTime } : {}),
+      ...(options?.reason !== undefined ? { reason: options.reason } : {}),
+      ...(options?.affectedServices !== undefined ? { affectedServices: options.affectedServices } : {}),
+      ...(options?.contactInfo !== undefined ? { contactInfo: options.contactInfo } : {}),
     };
 
     // 終了時刻が指定されている場合、自動的に無効化
@@ -91,7 +91,7 @@ export class MaintenanceModeManager {
   disable(): void {
     if (this.scheduledMaintenanceTimer) {
       clearTimeout(this.scheduledMaintenanceTimer);
-      this.scheduledMaintenanceTimer = undefined;
+      delete this.scheduledMaintenanceTimer;
     }
 
     this.maintenanceInfo = {
@@ -117,11 +117,11 @@ export class MaintenanceModeManager {
     if (startDelay <= 0) {
       // 開始時刻が過去の場合、即座に有効化
       this.enable({
-        message: options.message,
-        reason: options.reason,
-        endTime: options.endTime,
-        affectedServices: options.affectedServices,
-        contactInfo: options.contactInfo,
+        ...(options.message !== undefined ? { message: options.message } : {}),
+        ...(options.reason !== undefined ? { reason: options.reason } : {}),
+        ...(options.endTime !== undefined ? { endTime: options.endTime } : {}),
+        ...(options.affectedServices !== undefined ? { affectedServices: options.affectedServices } : {}),
+        ...(options.contactInfo !== undefined ? { contactInfo: options.contactInfo } : {}),
       });
       return;
     }
@@ -132,19 +132,19 @@ export class MaintenanceModeManager {
       message: options.message ?? `Maintenance scheduled from ${options.startTime.toISOString()} to ${options.endTime.toISOString()}`,
       startTime: options.startTime,
       endTime: options.endTime,
-      reason: options.reason,
-      affectedServices: options.affectedServices,
-      contactInfo: options.contactInfo,
+      ...(options?.reason !== undefined ? { reason: options.reason } : {}),
+      ...(options?.affectedServices !== undefined ? { affectedServices: options.affectedServices } : {}),
+      ...(options?.contactInfo !== undefined ? { contactInfo: options.contactInfo } : {}),
     };
 
     // 開始時刻にメンテナンスモードを有効化
     this.scheduledMaintenanceTimer = setTimeout(() => {
       this.enable({
-        message: options.message,
-        reason: options.reason,
-        endTime: options.endTime,
-        affectedServices: options.affectedServices,
-        contactInfo: options.contactInfo,
+        ...(options.message !== undefined ? { message: options.message } : {}),
+        ...(options.reason !== undefined ? { reason: options.reason } : {}),
+        ...(options.endTime !== undefined ? { endTime: options.endTime } : {}),
+        ...(options.affectedServices !== undefined ? { affectedServices: options.affectedServices } : {}),
+        ...(options.contactInfo !== undefined ? { contactInfo: options.contactInfo } : {}),
       });
     }, startDelay);
   }
@@ -155,7 +155,7 @@ export class MaintenanceModeManager {
   cancelScheduled(): void {
     if (this.scheduledMaintenanceTimer) {
       clearTimeout(this.scheduledMaintenanceTimer);
-      this.scheduledMaintenanceTimer = undefined;
+      delete this.scheduledMaintenanceTimer;
     }
 
     if (this.maintenanceInfo.status === MaintenanceStatus.SCHEDULED) {
@@ -240,7 +240,7 @@ export class MaintenanceModeManager {
   cleanup(): void {
     if (this.scheduledMaintenanceTimer) {
       clearTimeout(this.scheduledMaintenanceTimer);
-      this.scheduledMaintenanceTimer = undefined;
+      delete this.scheduledMaintenanceTimer;
     }
   }
 }

@@ -12,6 +12,7 @@ import {
   ListToolsRequestSchema,
   ListResourcesRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+import type { HybridSearchOptions, SearchFilters } from '../query/types.js';
 
 /**
  * MCPサーバーインスタンスを作成して設定する

@@ -120,7 +120,7 @@ export class PostgresApiKeyStoreAdapter implements IApiKeyStoreAdapter {
         key.keyPrefix,
         key.hashedKey,
         key.name,
-        key.metadata?.userId ?? null,
+        key.metadata?.['userId'] ?? null,
         key.createdAt,
         key.lastUsedAt ?? null,
         key.expiresAt ?? null,
@@ -219,7 +219,7 @@ export class PostgresApiKeyStoreAdapter implements IApiKeyStoreAdapter {
         key.keyPrefix,
         key.hashedKey,
         key.name,
-        key.metadata?.userId ?? null,
+        key.metadata?.['userId'] ?? null,
         key.lastUsedAt ?? null,
         key.expiresAt ?? null,
         key.status,
@@ -315,11 +315,11 @@ export class PostgresApiKeyStoreAdapter implements IApiKeyStoreAdapter {
       hashedKey: row.hashed_key,
       name: row.name,
       createdAt: new Date(row.created_at),
-      lastUsedAt: row.last_used_at ? new Date(row.last_used_at) : undefined,
-      expiresAt: row.expires_at ? new Date(row.expires_at) : undefined,
       status: row.status,
       scopes: Array.isArray(row.scopes) ? row.scopes : JSON.parse(row.scopes),
-      metadata,
+      ...(row.last_used_at !== undefined && row.last_used_at !== null ? { lastUsedAt: new Date(row.last_used_at) } : {}),
+      ...(row.expires_at !== undefined && row.expires_at !== null ? { expiresAt: new Date(row.expires_at) } : {}),
+      ...(metadata !== undefined ? { metadata: metadata } : {}), // metadata自体は常にオブジェクトだが、明示的に追加
     };
   }
 }
@@ -358,7 +358,7 @@ export class InMemoryApiKeyStoreAdapter implements IApiKeyStoreAdapter {
     const result: ApiKey[] = [];
 
     for (const key of this.keys.values()) {
-      if (!userId || key.metadata?.userId === userId) {
+      if (!userId || key.metadata?.['userId'] === userId) {
         result.push(key);
       }
     }

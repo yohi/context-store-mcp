@@ -158,7 +158,7 @@ export interface ApiKeyValidationResult {
  */
 function encodeBase62(buffer: Buffer): string {
   let num = BigInt('0x' + buffer.toString('hex'));
-  let encoded = '';
+  let encoded: string = '';
 
   while (num > 0n) {
     const remainder = Number(num % 62n);
@@ -166,7 +166,10 @@ function encodeBase62(buffer: Buffer): string {
     num = num / 62n;
   }
 
-  return encoded || BASE62_CHARS[0];
+  if (encoded.length === 0) {
+    return BASE62_CHARS[0] as string;
+  }
+  return encoded;
 }
 
 /**
@@ -184,11 +187,11 @@ function sanitizeApiKey(key: ApiKey): ApiKeyView {
     keyPrefix: key.keyPrefix,
     name: key.name,
     createdAt: key.createdAt,
-    lastUsedAt: key.lastUsedAt,
-    expiresAt: key.expiresAt,
     status: key.status,
     scopes: key.scopes,
-    metadata: key.metadata,
+    ...(key.lastUsedAt !== undefined ? { lastUsedAt: key.lastUsedAt } : {}),
+    ...(key.expiresAt !== undefined ? { expiresAt: key.expiresAt } : {}),
+    ...(key.metadata !== undefined ? { metadata: key.metadata } : {}),
   };
 }
 
@@ -249,9 +252,9 @@ export class ApiKeyManager {
       hashedKey,
       name,
       createdAt: now,
-      expiresAt,
       status: 'active',
       scopes,
+      ...(expiresAt !== undefined ? { expiresAt } : {}),
     };
 
     // データベースに保存（PostgreSQLで永続化）

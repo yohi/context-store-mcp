@@ -41,14 +41,12 @@ export class MemoryManager implements MemoryManagerService {
   private history: Map<MemoryId, MemoryHistoryEntry[]> = new Map();
 
   private vectorStore?: VectorStoreAdapter;
-  private graphStore?: GraphStoreAdapter;
   private transactionCoordinator?: TransactionCoordinator;
   private classifier?: MemoryClassifierService;
 
   constructor(config?: MemoryManagerConfig) {
     if (config) {
       if (config.vectorStore) this.vectorStore = config.vectorStore;
-      if (config.graphStore) this.graphStore = config.graphStore;
       if (config.transactionCoordinator) this.transactionCoordinator = config.transactionCoordinator;
       if (config.classifier) this.classifier = config.classifier;
     }
@@ -510,7 +508,7 @@ export class MemoryManager implements MemoryManagerService {
 
     // 3. Final Scoring & Filtering
     const results: Memory[] = [];
-    for (const [mid, item] of candidates) {
+    for (const [, item] of candidates) {
       let finalScore = item.score;
 
       // Boost for Tag Overlap (+0.15)
@@ -798,7 +796,7 @@ export class MemoryManager implements MemoryManagerService {
     
     try {
       const usedBytes = await this.transactionCoordinator.getDatabaseSize();
-      const limitBytes = Number(process.env.DB_SIZE_LIMIT_BYTES) || 10737418240; // Default 10GB
+      const limitBytes = Number(process.env['DB_SIZE_LIMIT_BYTES']) || 10737418240; // Default 10GB
       
       if (limitBytes <= 0) return 0;
       return usedBytes / limitBytes;

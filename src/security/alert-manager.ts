@@ -250,13 +250,13 @@ export class AlertManager {
 
     if (
       event.threatLevel === 'critical' &&
-      event.metadata?.ipAddress &&
-      typeof event.metadata.ipAddress === 'string'
+      event.metadata?.['ipAddress'] &&
+      typeof event.metadata['ipAddress'] === 'string'
     ) {
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
-      this.blockedIps.set(event.metadata.ipAddress, expiresAt);
+      this.blockedIps.set(event.metadata['ipAddress'], expiresAt);
       ipBlocked = true;
-      blockedIp = event.metadata.ipAddress;
+      blockedIp = event.metadata['ipAddress'];
       blockDuration = 86400; // seconds
       actions.push(`IP address ${blockedIp} blocked for 24 hours`);
     }
@@ -267,10 +267,10 @@ export class AlertManager {
 
     return {
       sessionSuspended,
-      suspensionDuration,
+      ...(suspensionDuration !== undefined ? { suspensionDuration } : {}),
       ipBlocked,
-      blockedIp,
-      blockDuration,
+      ...(blockedIp !== undefined ? { blockedIp } : {}),
+      ...(blockDuration !== undefined ? { blockDuration } : {}),
       dashboardLink,
       executedActions: actions,
     };
@@ -394,7 +394,7 @@ export class AlertManager {
    * @param event - Security event for context
    * @returns Sanitized description without PII
    */
-  private sanitizeDescription(description: string, event: SecurityEvent): string {
+  private sanitizeDescription(event: SecurityEvent): string {
     // Return only non-PII summary: severity code and anomaly pattern
     return `Security event detected: ${event.anomalyPattern} (threat level: ${event.threatLevel})`;
   }
@@ -412,7 +412,7 @@ export class AlertManager {
       threatLevel: event.threatLevel,
       anomalyPattern: event.anomalyPattern,
       userIdHash: this.hashUserId(event.userId),
-      description: this.sanitizeDescription(event.description, event),
+      description: this.sanitizeDescription(event),
     });
   }
 

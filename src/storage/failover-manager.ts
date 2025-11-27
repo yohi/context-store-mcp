@@ -195,9 +195,9 @@ export class FailoverManager {
 
           const record = result.records[0];
           return {
-            id: record.get('id'),
-            type: record.get('type'),
-            created_at: record.get('created_at'),
+            id: record?.get('id'),
+            type: record?.get('type'),
+            created_at: record?.get('created_at'),
             warning: 'Vector search unavailable (PostgreSQL offline)',
           };
         } catch (error) {

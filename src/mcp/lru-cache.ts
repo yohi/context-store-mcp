@@ -55,8 +55,12 @@ export class LRUCache<T = any> {
     }
 
     this.maxSize = config.maxSize;
-    this.maxAge = config.maxAge;
-    this.onEvict = config.onEvict;
+    if (config.maxAge !== undefined) {
+      this.maxAge = config.maxAge;
+    }
+    if (config.onEvict !== undefined) {
+      this.onEvict = config.onEvict;
+    }
   }
 
   /**
@@ -73,7 +77,7 @@ export class LRUCache<T = any> {
     }
 
     // 有効期限チェック
-    if (this.maxAge && Date.now() - node.timestamp > this.maxAge) {
+    if (this.maxAge !== undefined && Date.now() - node.timestamp > this.maxAge) {
       this.delete(key);
       return undefined;
     }
@@ -162,7 +166,7 @@ export class LRUCache<T = any> {
     }
 
     // 有効期限チェック
-    if (this.maxAge && Date.now() - entry.timestamp > this.maxAge) {
+    if (this.maxAge !== undefined && Date.now() - entry.timestamp > this.maxAge) {
       this.delete(key);
       return false;
     }
@@ -241,7 +245,7 @@ export class LRUCache<T = any> {
    * @returns 削除されたエントリー数
    */
   purgeExpired(): number {
-    if (!this.maxAge) {
+    if (this.maxAge === undefined) {
       return 0;
     }
 
