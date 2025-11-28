@@ -41,7 +41,26 @@ npm run build
 npm run dev
 ```
 
-### 本番環境
+### ローカル本番環境
+
+ローカルマシンで本番サーバーを運用する場合：
+
+```bash
+# 1. 自動セットアップ
+./scripts/setup-production.sh
+
+# 2. サーバー起動
+./scripts/start-production.sh
+
+# 3. MCPクライアント（Claude Desktop等）を設定
+# LOCAL_PRODUCTION.md を参照
+```
+
+詳細は [LOCAL_PRODUCTION.md](./LOCAL_PRODUCTION.md) を参照してください。
+
+### リモート本番環境
+
+リモートサーバーにデプロイする場合：
 
 ```bash
 # 1. 環境設定
@@ -57,6 +76,8 @@ cp .env.production.example .env.production
 ## 📚 ドキュメント
 
 ### デプロイメント
+- **[ローカル本番環境](./LOCAL_PRODUCTION.md)** - ローカルマシンで本番サーバーを運用
+- **[MCPクライアント統合](./MCP_CLIENT_INTEGRATION.md)** - Claude Desktop等との統合方法
 - **[クイックスタート](./QUICK_START.md)** - 5分でデプロイ
 - **[デプロイメントガイド](./DEPLOYMENT.md)** - 詳細な手順
 - **[デプロイメントチェックリスト](./DEPLOYMENT_CHECKLIST.md)** - 確認項目

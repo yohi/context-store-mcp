@@ -1,0 +1,33 @@
+[Unit]
+Description=Context Store MCP Server
+Documentation=https://github.com/yohi/context-store-mcp
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/%u/program/context-store-mcp
+EnvironmentFile=/home/%u/program/context-store-mcp/.env.production.local
+
+# Start command
+ExecStart=/usr/bin/docker-compose -f docker-compose.prod.yml up -d
+
+# Stop command
+ExecStop=/usr/bin/docker-compose -f docker-compose.prod.yml down
+
+# Restart policy
+Restart=on-failure
+RestartSec=10s
+
+# Security settings
+User=%u
+Group=%u
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=context-store-mcp
+
+[Install]
+WantedBy=multi-user.target

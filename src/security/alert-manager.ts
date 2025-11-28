@@ -212,7 +212,7 @@ export class AlertManager {
     // Record alert
     this.alertHistory.set(alertId, {
       id: alertId,
-      timestamp: new Date(),
+      timestamp: event.timestamp,
       securityEventId: event.id,
       threatLevel: event.threatLevel,
       userId: event.userId || null,
