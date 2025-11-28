@@ -95,10 +95,10 @@ npm run security-audit
 
 ## 📚 Documentation
 
-- **Full Deployment Guide**: [DEPLOYMENT.md](./DEPLOYMENT.md)
-- **Deployment Checklist**: [DEPLOYMENT_CHECKLIST.md](./DEPLOYMENT_CHECKLIST.md)
-- **Production Readiness**: [PRODUCTION_READINESS.md](./PRODUCTION_READINESS.md)
-- **Deployment Summary**: [DEPLOYMENT_SUMMARY.md](./DEPLOYMENT_SUMMARY.md)
+- **Full Deployment Guide**: [DEPLOYMENT.md](./docs/deployment/guide.md)
+- **Deployment Checklist**: [DEPLOYMENT_CHECKLIST.md](./docs/deployment/checklist.md)
+- **Production Readiness**: [PRODUCTION_READINESS.md](./docs/deployment/production-readiness.md)
+- **Deployment Summary**: [DEPLOYMENT_SUMMARY.md](./docs/archive/DEPLOYMENT_SUMMARY.md)
 
 ## 🆘 Troubleshooting
 

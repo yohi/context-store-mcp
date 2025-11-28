@@ -232,7 +232,7 @@ docker-compose -f docker-compose.prod.yml ps
 
 ### Method 4: Kubernetes (Advanced)
 
-For Kubernetes deployment, see [kubernetes/README.md](./kubernetes/README.md).
+For Kubernetes deployment, see [kubernetes/README.md](../../kubernetes/README.md).
 
 ## Post-Deployment
 
@@ -489,7 +489,7 @@ docker-compose -f docker-compose.prod.yml restart app
 ### Getting Help
 
 1. Check logs: `docker-compose -f docker-compose.prod.yml logs`
-2. Review [PRODUCTION_READINESS.md](./PRODUCTION_READINESS.md)
+2. Review [PRODUCTION_READINESS.md](./production-readiness.md)
 3. Check [GitHub Issues](https://github.com/your-org/context-store-mcp/issues)
 4. Contact support: support@example.com
 
@@ -585,7 +585,7 @@ docker exec -i context-store-neo4j-prod neo4j-admin restore \
 
 For deployment support:
 
-- **Documentation**: [docs/](./docs/)
+- **Documentation**: [docs/](../)
 - **Issues**: [GitHub Issues](https://github.com/your-org/context-store-mcp/issues)
 - **Email**: support@example.com
 - **Slack**: #context-store-support
