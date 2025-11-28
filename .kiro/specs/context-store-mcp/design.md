@@ -171,6 +171,29 @@ sequenceDiagram
     MCP-->>Agent: memories[]
 ```
 
+### 記憶マージフロー
+
+```mermaid
+sequenceDiagram
+    participant Agent as AI Agent
+    participant MCP as MCP Server
+    participant MM as Memory Manager
+    participant PG as PostgreSQL
+    participant NEO as Neo4j
+
+    Agent->>MCP: merge_memories(memoryIds: [id1, id2])
+    MCP->>MM: mergeMemories([id1, id2])
+    MM->>MM: selectCanonicalMemory([id1, id2])
+    MM->>PG: BEGIN TRANSACTION
+    MM->>PG: combineContent(id1, id2)
+    MM->>PG: updateMemoryVector(id1)
+    MM->>NEO: mergeNodes(id1, id2)
+    MM->>PG: UPDATE is_deleted=true WHERE id=id2
+    MM->>PG: COMMIT
+    MM-->>MCP: mergedMemoryId
+    MCP-->>Agent: success(mergedMemoryId)
+```
+
 ## コンポーネントとインターフェース
 
 ### MCPサーバー層
@@ -291,6 +314,191 @@ type MemoryError =
   | { type: 'MEMORY_NOT_FOUND'; message: string }
   | { type: 'QUOTA_EXCEEDED'; message: string };
 ```
+
+#### 記憶マージと履歴管理メソッド詳細
+
+Memory Managerの統合・履歴管理メソッド（Task 3.2）の実装仕様を以下に詳述する。
+
+##### suggestMerges
+
+**概要:** 指定された記憶IDに対して、マージ候補となる類似記憶を提案する。
+
+**アルゴリズム/検索アプローチ:**
+- ベクトル類似性検索を使用（pgvectorのコサイン類似度）
+- 指定された記憶のembeddingベクトルを基準に類似記憶を検索
+- 類似度スコアが閾値以上の記憶のみを候補として抽出
+
+**検索スコープとフィルタリングロジック:**
+- 検索対象: 削除されていない記憶（`is_deleted = false`）のみ
+- 自己除外: 指定された`memoryId`自身は結果から除外
+- メモリタイプフィルタ: 同一の`memory_type`を持つ記憶のみを対象
+- 時間的近接性: 作成日時が±30日以内の記憶を優先（重み付けに反映）
+
+**パラメータと デフォルト値:**
+- `memoryId` (必須): マージ候補を探す基準となる記憶のID
+- 内部パラメータ:
+  - `threshold`: 類似度閾値 = `0.75` （デフォルト）
+  - `limit`: 最大返却数 = `10` （デフォルト）
+  - `timeProximityWeight`: 時間的近接性の重み = `0.2` （デフォルト）
+
+**返却データの順序:**
+- 降順: 類似度スコア（高い順）
+- 同一スコアの場合: 作成日時が新しい順
+- 最終的なスコア計算式:
+  ```
+  final_score = cosine_similarity * (1 - timeProximityWeight) + 
+                time_proximity_score * timeProximityWeight
+  ```
+  ここで、`time_proximity_score = exp(-|days_diff| / 30)` （30日で減衰）
+
+**エラーハンドリング:**
+- `MEMORY_NOT_FOUND`: 指定された`memoryId`が存在しない場合にスロー
+- `STORAGE_ERROR`: データベース接続エラーやクエリ実行エラー時にスロー
+- 候補が見つからない場合: エラーではなく空配列`[]`を返却
+
+##### findSimilarMemories
+
+**概要:** 指定されたコンテンツ文字列に対して、意味的に類似する記憶を検索する。
+
+**アルゴリズム/検索アプローチ:**
+- コンテンツからembeddingベクトルを生成（OpenAI text-embedding-3-small）
+- pgvectorのコサイン類似度検索を実行
+- 類似度スコアでランク付け
+
+**検索スコープとフィルタリングロジック:**
+- 検索対象: 削除されていない記憶（`is_deleted = false`）のみ
+- メモリタイプ制限: なし（全タイプを検索対象）
+- 最小コンテンツ長: 入力`content`が10文字未満の場合は警告ログを出力するが検索は実行
+
+**パラメータとデフォルト値:**
+- `content` (必須): 検索クエリとなるテキストコンテンツ
+- `limit` (オプション): 最大返却数 = `10` （デフォルト）
+- 内部パラメータ:
+  - `minSimilarity`: 最小類似度閾値 = `0.5` （デフォルト、これ以下は除外）
+
+**返却データの順序:**
+- 降順: コサイン類似度スコア（高い順）
+- 同一スコアの場合: 作成日時が新しい順（`created_at DESC`）
+
+**エラーハンドリング:**
+- `INVALID_CONTENT`: `content`が空文字列またはnull/undefinedの場合にスロー
+- `STORAGE_ERROR`: embedding生成失敗またはデータベースエラー時にスロー
+- 類似記憶が見つからない場合: エラーではなく空配列`[]`を返却
+
+##### findSimilarMemoriesById
+
+**概要:** 指定された記憶IDの記憶に対して、類似する他の記憶を検索する。
+
+**アルゴリズム/検索アプローチ:**
+- 指定された`memoryId`のembeddingベクトルを取得
+- そのベクトルを基準にpgvectorのコサイン類似度検索を実行
+- 閾値以上の類似度を持つ記憶を抽出
+
+**検索スコープとフィルタリングロジック:**
+- 検索対象: 削除されていない記憶（`is_deleted = false`）のみ
+- 自己除外: 指定された`memoryId`自身は結果から除外
+- メモリタイプ制限: なし（全タイプを検索対象）
+
+**パラメータとデフォルト値:**
+- `memoryId` (必須): 基準となる記憶のID
+- `threshold` (オプション): 類似度閾値 = `0.7` （デフォルト）
+- 内部パラメータ:
+  - `limit`: 最大返却数 = `10` （デフォルト）
+
+**返却データの順序:**
+- 降順: コサイン類似度スコア（高い順）
+- 同一スコアの場合: アクセス頻度が高い順（`access_count DESC`）
+- さらに同一の場合: 作成日時が新しい順（`created_at DESC`）
+
+**エラーハンドリング:**
+- `MEMORY_NOT_FOUND`: 指定された`memoryId`が存在しない、または削除済みの場合にスロー
+- `STORAGE_ERROR`: embeddingベクトル取得失敗またはデータベースエラー時にスロー
+- 類似記憶が見つからない場合: エラーではなく空配列`[]`を返却
+
+##### getMemoryHistory
+
+**概要:** 指定された記憶IDの変更履歴（バージョン履歴）を取得する。
+
+**アルゴリズム/検索アプローチ:**
+- `memory_history`テーブルから指定された`memoryId`に関連する全履歴エントリを取得
+- 各エントリには: バージョン番号、変更内容のスナップショット、変更日時、変更理由を含む
+- PostgreSQLの標準的なSELECTクエリを使用
+
+**検索スコープとフィルタリングロジック:**
+- 検索対象: `memory_history`テーブルの全レコード
+- フィルタ条件: `memory_id = :memoryId`
+- 削除済み記憶の履歴も取得可能（履歴は論理削除の影響を受けない）
+
+**パラメータとデフォルト値:**
+- `memoryId` (必須): 履歴を取得する記憶のID
+- 内部パラメータ:
+  - `maxHistoryEntries`: 最大返却数 = `100` （デフォルト、古い履歴は切り捨て）
+
+**返却データの順序:**
+- 降順: バージョン番号（新しい順、`version DESC`）
+- 最新の変更が配列の先頭に配置される
+- 各エントリの構造:
+  ```typescript
+  interface MemoryHistoryEntry {
+    version: number;           // バージョン番号（1から開始）
+    content: string;           // その時点のコンテンツ
+    metadata: MemoryMetadata;  // その時点のメタデータ
+    changedAt: Date;           // 変更日時
+    changeReason?: string;     // 変更理由（オプション）
+  }
+  ```
+
+**エラーハンドリング:**
+- `MEMORY_NOT_FOUND`: 指定された`memoryId`に対応する履歴が存在しない場合にスロー
+  - 注: 記憶自体が存在しなくても履歴が残っている場合は正常に返却
+- `STORAGE_ERROR`: データベース接続エラーやクエリ実行エラー時にスロー
+- 履歴が空の場合: エラーではなく空配列`[]`を返却
+
+##### revertToVersion
+
+**概要:** 指定された記憶を特定のバージョンに戻す（ロールバック）。
+
+**アルゴリズム/検索アプローチ:**
+- `memory_history`テーブルから指定された`version`のスナップショットを取得
+- 現在の記憶の内容を新しい履歴エントリとして保存（ロールバック前の状態を保持）
+- 取得したスナップショットの内容で`memories`テーブルを更新
+- embeddingベクトルを再生成して`memory_vectors`テーブルを更新
+- トランザクション内で実行し、全操作の原子性を保証
+
+**検索スコープとフィルタリングロジック:**
+- 対象記憶: `memories`テーブルの指定された`memoryId`
+- 履歴検索: `memory_history`テーブルで`memory_id = :memoryId AND version = :version`
+- 削除済み記憶の復元: `is_deleted = true`の記憶でも復元可能（`is_deleted`を`false`に設定）
+
+**パラメータとデフォルト値:**
+- `memoryId` (必須): 復元対象の記憶のID
+- `version` (必須): 復元先のバージョン番号（1以上の整数）
+- デフォルト値なし（両パラメータとも必須）
+
+**返却データの順序:**
+- 該当なし（単一の成功/失敗結果を返却）
+- 成功時: `Result<true, never>`
+- 失敗時: `Result<never, MemoryError>`
+
+**エラーハンドリング:**
+- `MEMORY_NOT_FOUND`: 以下のいずれかの場合にスロー
+  - 指定された`memoryId`が存在しない
+  - 指定された`version`が履歴に存在しない
+  - エラーメッセージで具体的な原因を明示
+- `INVALID_CONTENT`: `version`が0以下または非整数の場合にスロー
+- `STORAGE_ERROR`: 以下の場合にスロー
+  - データベーストランザクションの失敗
+  - embeddingベクトル再生成の失敗
+  - ロールバック処理中の予期しないエラー
+  - トランザクションはロールバックされ、記憶は変更前の状態を維持
+- 保護された記憶（`is_protected = true`）の復元試行:
+  - 新しいエラータイプ `MEMORY_PROTECTED` を追加検討
+  - 現状では`STORAGE_ERROR`として扱い、メッセージで保護状態を明示
+
+**トランザクション保証:**
+- 全操作をPostgreSQLトランザクション内で実行
+- いずれかの操作が失敗した場合、全変更をロールバック
+- 履歴エントリの作成、記憶の更新、ベクトルの更新が全て成功するか、全て失敗するかのいずれか
 
 #### Memory Type Classifier
 
@@ -784,6 +992,34 @@ CREATE TABLE user_feedback_log (
 -- インデックス（検索品質評価関連）
 CREATE INDEX idx_user_feedback_query ON user_feedback_log(query);
 CREATE INDEX idx_user_feedback_at ON user_feedback_log(feedback_at);
+
+-- 記憶バージョン履歴テーブル
+CREATE TABLE memory_versions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    memory_id UUID NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    version_number INT NOT NULL,
+    content TEXT NOT NULL,
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    created_by UUID,  -- ユーザーID
+    change_reason VARCHAR(255),
+    UNIQUE(memory_id, version_number)
+);
+
+-- マージ操作の監査ログ
+CREATE TABLE memory_merge_audit (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    source_memory_ids UUID[] NOT NULL,
+    target_memory_id UUID NOT NULL REFERENCES memories(id),
+    merged_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    merged_by UUID,
+    merge_strategy VARCHAR(50),  -- 'combine', 'override', 'keep_newer'
+    metadata JSONB DEFAULT '{}'
+);
+
+-- インデックス
+CREATE INDEX idx_memory_versions_memory_id ON memory_versions(memory_id);
+CREATE INDEX idx_memory_merge_audit_target ON memory_merge_audit(target_memory_id);
 ```
 
 **Neo4j グラフスキーマ:**
@@ -1085,6 +1321,11 @@ enum CircuitState {
 - Query Processor ⇔ Databases: ハイブリッド検索
 - Cache ⇔ Query Processor: キャッシュヒット率
 - Error Recovery: フェイルオーバーシナリオ
+- **統合・履歴管理:**
+  - `suggestMerges` / `findSimilarMemoriesById` の類似度計算精度と閾値検証
+  - マージ候補検出ロジックの検証
+  - `revertToVersion` の PostgreSQL ⇔ Neo4j 間トランザクション一貫性検証
+  - `getMemoryHistory` の履歴順序と完全性検証
 
 ### E2Eテスト
 - 記憶の保存から検索までの完全フロー
