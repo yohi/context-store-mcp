@@ -470,7 +470,7 @@ try {
 
 - **[MCP公式ドキュメント](https://modelcontextprotocol.io/)**: MCPプロトコルの詳細
 - **[MCP SDK](https://github.com/modelcontextprotocol/sdk)**: SDK のドキュメントとサンプル
-- **[LOCAL_DEVELOPMENT.md](../../README.md)**: ローカル開発ガイド
+- **[README](../../README.md)**: ローカル開発ガイド
 - **[設計書](../../.kiro/specs/context-store-mcp/design.md)**: システム設計の詳細
 
 ## サポート
