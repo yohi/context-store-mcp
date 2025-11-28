@@ -85,11 +85,18 @@ class PerformanceBenchmark {
 
     // 統計の計算
     latencies.sort((a, b) => a - b);
-    const avgLatency =
-      latencies.reduce((sum, l) => sum + l, 0) / latencies.length;
-    const p50 = latencies[Math.floor(latencies.length * 0.5)];
-    const p95 = latencies[Math.floor(latencies.length * 0.95)];
-    const p99 = latencies[Math.floor(latencies.length * 0.99)];
+
+    let avgLatency = 0;
+    let p50 = 0;
+    let p95 = 0;
+    let p99 = 0;
+
+    if (latencies.length > 0) {
+      avgLatency = latencies.reduce((sum, l) => sum + l, 0) / latencies.length;
+      p50 = latencies[Math.floor(latencies.length * 0.5)];
+      p95 = latencies[Math.floor(latencies.length * 0.95)];
+      p99 = latencies[Math.floor(latencies.length * 0.99)];
+    }
     const throughput = successCount / duration;
 
     const result: BenchmarkResult = {

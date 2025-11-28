@@ -17,7 +17,7 @@ import type { Driver, Session } from 'neo4j-driver';
 import type { MemoryId, MemoryType, MemoryMetadata } from '../memory/types.js';
 
 /**
- * メモリエエンティティ (PostgreSQL + Neo4j 間で共有)
+ * メモリエンティティ (PostgreSQL + Neo4j 間で共有)
  */
 export interface MemoryEntity {
   id: MemoryId;

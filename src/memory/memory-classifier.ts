@@ -254,7 +254,7 @@ export class MemoryClassifier implements MemoryClassifierService {
       }
     }
 
-    console.log(`Training completed. Updated keyword counts: Episodic=${this.episodicKeywords.size}, Semantic=${this.semanticKeywords.size}, Procedural=${this.proceduralKeywords.size}`);
+    console.log(`学習完了。更新されたキーワード数: エピソード=${this.episodicKeywords.size}, 意味=${this.semanticKeywords.size}, 手続き=${this.proceduralKeywords.size}`);
   }
 
   private getKeywordSet(type: MemoryType): Set<string> {
