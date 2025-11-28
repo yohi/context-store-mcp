@@ -11,6 +11,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ApiKeyManager } from '../../security/api-key-manager.js';
 import { McpAuthMiddleware, AuthenticationError } from '../../security/mcp-auth-middleware.js';
+import { InMemoryApiKeyStoreAdapter } from '../../storage/api-key-store-adapter.js';
 
 describe('McpAuthMiddleware', () => {
   let apiKeyManager: ApiKeyManager;
@@ -20,7 +21,8 @@ describe('McpAuthMiddleware', () => {
     // API_KEY_PEPPERを設定（HMAC-SHA256ハッシュ化に必要）
     process.env['API_KEY_PEPPER'] = 'test-pepper-secret-for-mcp-auth-middleware-testing';
 
-    apiKeyManager = new ApiKeyManager();
+    const store = new InMemoryApiKeyStoreAdapter();
+    apiKeyManager = new ApiKeyManager(store);
     middleware = new McpAuthMiddleware(apiKeyManager, {
       windowMs: 5 * 60 * 1000, // 5分
       maxAttempts: 3, // テスト用に3回に設定
@@ -30,7 +32,7 @@ describe('McpAuthMiddleware', () => {
 
   describe('authenticate', () => {
     it('should successfully authenticate with valid Bearer token', async () => {
-      const { plainKey } = apiKeyManager.generateApiKey('test-key');
+      const { plainKey } = await apiKeyManager.generateApiKey('test-key');
       const headers = {
         Authorization: `Bearer ${plainKey}`,
       };
@@ -46,7 +48,7 @@ describe('McpAuthMiddleware', () => {
     });
 
     it('should successfully authenticate with X-API-Key header', async () => {
-      const { plainKey } = apiKeyManager.generateApiKey('test-key');
+      const { plainKey } = await apiKeyManager.generateApiKey('test-key');
       const headers = {
         'X-API-Key': plainKey,
       };
@@ -57,7 +59,7 @@ describe('McpAuthMiddleware', () => {
     });
 
     it('should generate cryptographically secure session ID in UUID format', async () => {
-      const { plainKey } = apiKeyManager.generateApiKey('session-test-key');
+      const { plainKey } = await apiKeyManager.generateApiKey('session-test-key');
       const headers = {
         Authorization: `Bearer ${plainKey}`,
       };
@@ -74,7 +76,7 @@ describe('McpAuthMiddleware', () => {
     });
 
     it('should generate unique session IDs for each authentication', async () => {
-      const { plainKey } = apiKeyManager.generateApiKey('unique-session-test');
+      const { plainKey } = await apiKeyManager.generateApiKey('unique-session-test');
       const headers = {
         Authorization: `Bearer ${plainKey}`,
       };
@@ -126,7 +128,7 @@ describe('McpAuthMiddleware', () => {
     });
 
     it('should fail authentication with expired API key', async () => {
-      const { plainKey } = apiKeyManager.generateApiKey('expired-key', ['read'], 100);
+      const { plainKey } = await apiKeyManager.generateApiKey('expired-key', ['read'], 100);
 
       // 有効期限が切れるまで待機
       await new Promise((resolve) => setTimeout(resolve, 150));
@@ -146,8 +148,8 @@ describe('McpAuthMiddleware', () => {
     });
 
     it('should fail authentication with revoked API key', async () => {
-      const { key, plainKey } = apiKeyManager.generateApiKey('revoked-key');
-      apiKeyManager.revokeApiKey(key.id);
+      const { key, plainKey } = await apiKeyManager.generateApiKey('revoked-key');
+      await apiKeyManager.revokeApiKey(key.id);
 
       const headers = {
         Authorization: `Bearer ${plainKey}`,
@@ -164,8 +166,8 @@ describe('McpAuthMiddleware', () => {
     });
 
     it('should not leak internal validation reason in error message', async () => {
-      const { key, plainKey } = apiKeyManager.generateApiKey('leak-test-key');
-      apiKeyManager.revokeApiKey(key.id);
+      const { key, plainKey } = await apiKeyManager.generateApiKey('leak-test-key');
+      await apiKeyManager.revokeApiKey(key.id);
 
       const headers = {
         Authorization: `Bearer ${plainKey}`,
@@ -176,18 +178,19 @@ describe('McpAuthMiddleware', () => {
         .rejects.toBeInstanceOf(AuthenticationError);
 
       // Check error message doesn't contain internal details
-      await expect(middleware.authenticate(headers, '127.0.0.1'))
-        .rejects.toThrow((error: any) => {
-          expect(error.message).toBe('Invalid API key');
-          expect(error.message).not.toContain('revoked');
-          expect(error.message).not.toContain('expired');
-          expect(error.message).not.toContain('invalid_format');
-          return true;
-        });
+      try {
+        await middleware.authenticate(headers, '127.0.0.1');
+        expect.fail('Should have thrown an error');
+      } catch (error: any) {
+        expect(error.message).toBe('Invalid API key');
+        expect(error.message).not.toContain('revoked');
+        expect(error.message).not.toContain('expired');
+        expect(error.message).not.toContain('invalid_format');
+      }
     });
 
     it('should not leak internal validation reason for expired keys', async () => {
-      const { plainKey } = apiKeyManager.generateApiKey('expired-leak-test', ['read'], 50);
+      const { plainKey } = await apiKeyManager.generateApiKey('expired-leak-test', ['read'], 50);
 
       // 有効期限が切れるまで待機
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -201,12 +204,13 @@ describe('McpAuthMiddleware', () => {
         .rejects.toBeInstanceOf(AuthenticationError);
 
       // Check error message doesn't contain "expired"
-      await expect(middleware.authenticate(headers, '127.0.0.1'))
-        .rejects.toThrow((error: any) => {
-          expect(error.message).toBe('Invalid API key');
-          expect(error.message).not.toContain('expired');
-          return true;
-        });
+      try {
+        await middleware.authenticate(headers, '127.0.0.1');
+        expect.fail('Should have thrown an error');
+      } catch (error: any) {
+        expect(error.message).toBe('Invalid API key');
+        expect(error.message).not.toContain('expired');
+      }
     });
 
     it('should not leak internal validation reason for invalid format', async () => {
@@ -219,13 +223,14 @@ describe('McpAuthMiddleware', () => {
         .rejects.toBeInstanceOf(AuthenticationError);
 
       // Check error message doesn't contain "invalid_format"
-      await expect(middleware.authenticate(headers, '127.0.0.1'))
-        .rejects.toThrow((error: any) => {
-          expect(error.message).toBe('Invalid API key');
-          expect(error.message).not.toContain('invalid_format');
-          expect(error.message).not.toContain('format');
-          return true;
-        });
+      try {
+        await middleware.authenticate(headers, '127.0.0.1');
+        expect.fail('Should have thrown an error');
+      } catch (error: any) {
+        expect(error.message).toBe('Invalid API key');
+        expect(error.message).not.toContain('invalid_format');
+        expect(error.message).not.toContain('format');
+      }
     });
   });
 
@@ -281,7 +286,7 @@ describe('McpAuthMiddleware', () => {
     });
 
     it('should allow successful authentication after failed attempts', async () => {
-      const { plainKey: validKey } = apiKeyManager.generateApiKey('valid-key');
+      const { plainKey: validKey } = await apiKeyManager.generateApiKey('valid-key');
       const invalidHeaders = {
         Authorization: 'Bearer invalid-key',
       };
@@ -320,7 +325,7 @@ describe('McpAuthMiddleware', () => {
 
   describe('checkScopes', () => {
     it('should pass when all required scopes are present', async () => {
-      const { plainKey } = apiKeyManager.generateApiKey('scoped-key', ['read', 'write', 'delete']);
+      const { plainKey } = await apiKeyManager.generateApiKey('scoped-key', ['read', 'write', 'delete']);
       const headers = {
         Authorization: `Bearer ${plainKey}`,
       };
@@ -332,7 +337,7 @@ describe('McpAuthMiddleware', () => {
     });
 
     it('should fail when required scope is missing', async () => {
-      const { plainKey } = apiKeyManager.generateApiKey('limited-key', ['read']);
+      const { plainKey } = await apiKeyManager.generateApiKey('limited-key', ['read']);
       const headers = {
         Authorization: `Bearer ${plainKey}`,
       };
@@ -373,7 +378,7 @@ describe('McpAuthMiddleware', () => {
 
   describe('createAuditLog', () => {
     it('should create a complete audit log entry', async () => {
-      const { key, plainKey } = apiKeyManager.generateApiKey('audit-key');
+      const { key, plainKey } = await apiKeyManager.generateApiKey('audit-key');
       key.metadata = { userId: 'user-123' };
       const headers = {
         Authorization: `Bearer ${plainKey}`,
@@ -402,7 +407,7 @@ describe('McpAuthMiddleware', () => {
     });
 
     it('should create audit log for failed operation', async () => {
-      const { plainKey } = apiKeyManager.generateApiKey('fail-key');
+      const { plainKey } = await apiKeyManager.generateApiKey('fail-key');
       const headers = {
         Authorization: `Bearer ${plainKey}`,
       };
@@ -419,7 +424,7 @@ describe('McpAuthMiddleware', () => {
     });
 
     it('should prevent overwriting reserved audit fields', async () => {
-      const { plainKey } = apiKeyManager.generateApiKey('reserved-field-test');
+      const { plainKey } = await apiKeyManager.generateApiKey('reserved-field-test');
       const headers = {
         Authorization: `Bearer ${plainKey}`,
       };
@@ -460,7 +465,7 @@ describe('McpAuthMiddleware', () => {
     });
 
     it('should handle empty details gracefully', async () => {
-      const { plainKey } = apiKeyManager.generateApiKey('empty-details-test');
+      const { plainKey } = await apiKeyManager.generateApiKey('empty-details-test');
       const headers = {
         Authorization: `Bearer ${plainKey}`,
       };
@@ -481,7 +486,7 @@ describe('McpAuthMiddleware', () => {
 
   describe('getStatistics', () => {
     it('should return correct statistics', async () => {
-      const { plainKey } = apiKeyManager.generateApiKey('stats-key');
+      const { plainKey } = await apiKeyManager.generateApiKey('stats-key');
       const validHeaders = {
         Authorization: `Bearer ${plainKey}`,
       };

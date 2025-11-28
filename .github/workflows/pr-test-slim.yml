@@ -1,0 +1,26 @@
+name: PR Test (Slim)
+
+on:
+  pull_request:
+
+jobs:
+  test-slim:
+    name: Run Tests on Ubuntu Slim
+    runs-on: ubuntu-slim
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        env:
+          NODE_OPTIONS: '--max-old-space-size=2048'
+        run: npx vitest --run --test-timeout=30000 --exclude "src/tests/integration/**" --exclude "src/tests/storage/**" --exclude "src/tests/database/**" --exclude "src/tests/security/deletion-manager.test.ts"
