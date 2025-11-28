@@ -197,6 +197,8 @@ interface ContextStoreMCPServer {
     search_memory: Tool<SearchParams, Memory[]>;
     delete_memory: Tool<DeleteParams, boolean>;
     update_memory: Tool<UpdateParams, boolean>;
+    suggest_memory_merges: Tool<{ memoryId: string }, MergeSuggestion[]>;
+    merge_memories: Tool<{ memoryIds: string[] }, MergeResult>;
   };
 
   // リソース定義
@@ -253,6 +255,12 @@ interface MemoryManagerService {
   updateMemory(id: MemoryId, updates: Partial<Memory>): Promise<Result<boolean, MemoryError>>;
   deleteMemory(id: MemoryId): Promise<Result<boolean, MemoryError>>;
   mergeMemories(ids: MemoryId[]): Promise<Result<MemoryId, MemoryError>>;
+
+  // 統合・履歴管理 (Task 3.2)
+  suggestMerges(memoryId: MemoryId): Promise<Memory[]>;
+  findSimilarMemories(memoryId: MemoryId, threshold?: number): Promise<Memory[]>;
+  getMemoryVersions(memoryId: MemoryId): Promise<MemoryHistoryEntry[]>;
+  revertToVersion(memoryId: MemoryId, version: number): Promise<Result<boolean, MemoryError>>;
 
   // メモリ管理
   performGarbageCollection(): Promise<void>;
