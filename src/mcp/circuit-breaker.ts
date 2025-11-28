@@ -1,5 +1,5 @@
 /**
- * Circuit Breaker Pattern
+ * サーキットブレーカーパターン
  * サーキットブレーカーパターン
  *
  * 連続的な障害からシステムを保護し、復旧を支援します。
@@ -91,7 +91,7 @@ export class CircuitBreaker {
   }
 
   /**
-   * Validate circuit breaker configuration
+   * サーキットブレーカー設定を検証
    * @private
    */
   private validateConfig(config: CircuitBreakerConfig): void {

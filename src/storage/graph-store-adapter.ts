@@ -1,5 +1,5 @@
 /**
- * Graph Store Adapter
+ * グラフストアアダプター
  *
  * タスク6.1: グラフストレージアダプターの基本実装
  * - Neo4jグラフデータベース接続管理
@@ -297,7 +297,7 @@ export class CypherPatternBuilder {
 export type CypherPattern = string;
 
 /**
- * Graph Store Adapter Configuration
+ * グラフストアアダプター設定
  */
 export interface GraphStoreConfig {
   /** Neo4j接続URI */
@@ -315,7 +315,7 @@ export interface GraphStoreConfig {
 }
 
 /**
- * Graph Store Adapter Interface
+ * グラフストアアダプターインターフェース
  *
  * design.md の GraphStoreAdapter インターフェースに準拠
  */
@@ -480,7 +480,7 @@ export interface IGraphStoreAdapter {
 }
 
 /**
- * Graph Store Adapter Implementation
+ * グラフストアアダプター実装
  */
 export class GraphStoreAdapter implements IGraphStoreAdapter {
   private driver: Driver;
@@ -530,7 +530,7 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
         if (error instanceof Error && error.message.includes('Relationship uniqueness constraints')) {
           console.warn(
             'Neo4j version does not support relationship uniqueness constraints. ' +
-              'Upgrade to Neo4j 4.4+ for full edgeId uniqueness enforcement.'
+            'Upgrade to Neo4j 4.4+ for full edgeId uniqueness enforcement.'
           );
         } else {
           throw error;
@@ -578,7 +578,7 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
     if (!SAFE_TYPE_PATTERN.test(type)) {
       throw new Error(
         `Invalid relationship type: "${type}". ` +
-          'Relationship types must contain only uppercase letters, numbers, and underscores (e.g., REFERENCES, DERIVED_FROM)'
+        'Relationship types must contain only uppercase letters, numbers, and underscores (e.g., REFERENCES, DERIVED_FROM)'
       );
     }
 
@@ -604,7 +604,7 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
       if (!this.isValidLabel(l)) {
         throw new Error(
           `Invalid label: "${l}". Labels must start with a letter or underscore, ` +
-            `and contain only letters, numbers, and underscores.`
+          `and contain only letters, numbers, and underscores.`
         );
       }
     }
@@ -1023,7 +1023,7 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
           if (!edgeId) {
             console.warn(
               `Legacy edge without edgeId detected: ${fromId} -[${relType}]-> ${toId}. ` +
-                `Using elementId as fallback. Please migrate data.`
+              `Using elementId as fallback. Please migrate data.`
             );
             edgeId = rel.elementId;
           }

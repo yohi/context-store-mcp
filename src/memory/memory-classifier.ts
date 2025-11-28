@@ -1,7 +1,7 @@
 /**
- * Memory Type Classifier Implementation
- * Requirements: 3.1, 3.2, 3.3, 3.4 (記憶タイプ自動分類)
- * Based on design.md Memory Type Classifier specification
+ * 記憶タイプ分類器の実装
+ * 要件: 3.1, 3.2, 3.3, 3.4 (記憶タイプ自動分類)
+ * design.mdのMemory Type Classifier仕様に基づく
  *
  * アプローチ: ルールベース + 埋め込みベース のハイブリッド方式
  * - ルールベーススコア (0-1): 各タイプの特徴量マッチ度
@@ -107,7 +107,7 @@ export class MemoryClassifier implements MemoryClassifierService {
 
   /**
    * コンテンツを分析して記憶タイプを自動分類
-   * Requirements: 3.4 (自動判定)
+   * 要件: 3.4 (自動判定)
    */
   async classifyContent(content: string): Promise<MemoryClassification> {
     // 空コンテンツのハンドリング
@@ -181,7 +181,7 @@ export class MemoryClassifier implements MemoryClassifierService {
 
   /**
    * 特定のタイプに対する信頼度スコアを取得
-   * Requirements: 3.4
+   * 要件: 3.4
    */
   async getConfidenceScore(content: string, type: MemoryType): Promise<number> {
     const features = this.extractFeatures(content);
@@ -200,7 +200,7 @@ export class MemoryClassifier implements MemoryClassifierService {
 
   /**
    * 分類器の学習
-   * Requirements: 3.4
+   * 要件: 3.4
    *
    * 学習データから新しいキーワードを抽出し、分類精度を向上させる。
    * Intl.Segmenterを使用して形態素解析を行い、頻出語を学習する。
@@ -209,7 +209,7 @@ export class MemoryClassifier implements MemoryClassifierService {
     if (samples.length === 0) return;
 
     const segmenter = new Intl.Segmenter('ja-JP', { granularity: 'word' });
-    
+
     // タイプごとの単語頻度マップ
     const wordCounts: Record<MemoryType, Map<string, number>> = {
       episodic: new Map(),
@@ -247,13 +247,13 @@ export class MemoryClassifier implements MemoryClassifierService {
         // 学習データ数が少ない場合（< THRESHOLD）は、1回でも出現すれば登録するロジックも考慮
         // ここではテストケースに合わせて、サンプル数が少ない場合もカバーできるように調整
         const adaptiveThreshold = Math.min(THRESHOLD, Math.ceil(samples.length / 2));
-        
+
         if (count >= adaptiveThreshold) {
           targetSet.add(word);
         }
       }
     }
-    
+
     console.log(`Training completed. Updated keyword counts: Episodic=${this.episodicKeywords.size}, Semantic=${this.semanticKeywords.size}, Procedural=${this.proceduralKeywords.size}`);
   }
 
@@ -267,7 +267,7 @@ export class MemoryClassifier implements MemoryClassifierService {
 
   /**
    * 分類精度の評価
-   * Requirements: 3.4 (分類精度目標70%以上)
+   * 要件: 3.4 (分類精度目標70%以上)
    */
   async evaluateAccuracy(testSamples: LabeledSample[]): Promise<AccuracyMetrics> {
     if (testSamples.length === 0) {
@@ -349,7 +349,7 @@ export class MemoryClassifier implements MemoryClassifierService {
 
   /**
    * 分類統計情報の取得
-   * Requirements: 3.4 (ユーザー修正率15%以下の監視)
+   * 要件: 3.4 (ユーザー修正率15%以下の監視)
    */
   async getClassificationStats(): Promise<ClassificationStats> {
     const totalClassified = this.classificationHistory.length;
@@ -385,7 +385,7 @@ export class MemoryClassifier implements MemoryClassifierService {
 
   /**
    * 特徴量抽出（時間表現、キーワード、構文パターン）
-   * Requirements: 3.4 (分類アルゴリズム詳細)
+   * 要件: 3.4 (分類アルゴリズム詳細)
    */
   private extractFeatures(content: string) {
     const detectedKeywords: string[] = [];

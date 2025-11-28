@@ -1,5 +1,5 @@
 /**
- * Vector Store Adapter
+ * ベクトルストアアダプター
  *
  * タスク5.1: ベクトルストレージアダプターの実装
  * - PostgreSQL + pgvector を使用したベクトル埋め込みの保存と検索
@@ -151,7 +151,7 @@ export interface ScoringWeights {
 }
 
 /**
- * Vector Store Adapter Configuration
+ * ベクトルストアアダプター設定
  */
 export interface VectorStoreConfig {
   /** PostgreSQL接続プール */
@@ -169,7 +169,7 @@ export interface VectorStoreConfig {
 }
 
 /**
- * Vector Store Adapter Interface
+ * ベクトルストアアダプターインターフェース
  *
  * design.md の VectorStoreAdapter インターフェースに準拠
  */
@@ -228,7 +228,7 @@ export interface IVectorStoreAdapter {
 }
 
 /**
- * Vector Store Adapter Implementation
+ * ベクトルストアアダプター実装
  */
 export class VectorStoreAdapter implements IVectorStoreAdapter {
   // タスク5.2: スコアリング重みのデフォルト値（カスタマイズ可能）

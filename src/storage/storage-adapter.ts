@@ -1,29 +1,29 @@
 /**
- * StorageAdapter Interface
- * Defines the contract for storage implementations (PostgreSQL, Neo4j, etc.)
+ * StorageAdapter インターフェース
+ * ストレージ実装（PostgreSQL, Neo4jなど）の契約を定義する
  */
 
 import type { Memory, MemoryId, SearchParams } from '../memory/types.js';
 
 /**
- * Common storage adapter interface
+ * 共通ストレージアダプターインターフェース
  */
 export interface StorageAdapter {
-  /** Store a new memory */
+  /** 新しい記憶を保存する */
   storeMemory(memory: Memory): Promise<MemoryId>;
 
-  /** Retrieve a memory by ID */
+  /** IDで記憶を取得する */
   getMemory(id: MemoryId): Promise<Memory | null>;
 
-  /** Update an existing memory */
+  /** 既存の記憶を更新する */
   updateMemory(id: MemoryId, updates: Partial<Memory>): Promise<boolean>;
 
-  /** Delete a memory */
+  /** 記憶を削除する */
   deleteMemory(id: MemoryId): Promise<boolean>;
 
-  /** Search memories based on parameters */
+  /** パラメータに基づいて記憶を検索する */
   searchMemories(params: SearchParams): Promise<Memory[]>;
 
-  /** Get all memory IDs (for reconciliation) */
+  /** すべての記憶IDを取得する（整合性調整用） */
   getAllMemoryIds(): Promise<MemoryId[]>;
 }

@@ -1,5 +1,5 @@
 /**
- * MCP Server Entry Point
+ * MCPサーバーエントリーポイント
  * MCPサーバーのメインエントリーポイント
  */
 
@@ -188,11 +188,11 @@ export function createContextStoreServer(deps?: { memoryManager?: MemoryManager 
       switch (name) {
         case 'store_memory': {
           // 記憶保存ツール
-          const content = args.content as string;
+          const content = args['content'] as string;
           if (!content) throw new Error('Missing required parameter: content');
-          
-          const metadata = (args.metadata as any) || {};
-          
+
+          const metadata = (args['metadata'] as any) || {};
+
           // memoryTypeの処理
           let memoryType: MemoryType | undefined;
           if (metadata.memoryType) {
@@ -204,7 +204,7 @@ export function createContextStoreServer(deps?: { memoryManager?: MemoryManager 
           const result = await memoryManager.storeMemory({
             content,
             metadata,
-            memoryType,
+            ...(memoryType ? { memoryType } : {}),
           });
 
           if (!result.success) {
@@ -224,10 +224,10 @@ export function createContextStoreServer(deps?: { memoryManager?: MemoryManager 
           // 現在のMemoryManager.searchMemoriesはメタデータフィルタのみ対応
           // ベクトル検索は findSimilarMemories だが、統合的な検索インターフェースは未完成
           // ここでは簡易的に searchMemories を使用
-          
+
           // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          const query = args.query as string; 
-          const filters = (args.filters as any) || {};
+          // const query = args['query'] as string;
+          const filters = (args['filters'] as any) || {};
 
           const results = await memoryManager.searchMemories({
             tags: filters.tags,
@@ -242,7 +242,7 @@ export function createContextStoreServer(deps?: { memoryManager?: MemoryManager 
 
         case 'delete_memory': {
           // 記憶削除ツール
-          const id = args.id as string;
+          const id = args['id'] as string;
           if (!id) throw new Error('Missing required parameter: id');
 
           const result = await memoryManager.deleteMemory(id);
@@ -261,12 +261,12 @@ export function createContextStoreServer(deps?: { memoryManager?: MemoryManager 
 
         case 'update_memory': {
           // 記憶更新ツール
-          const id = args.id as string;
+          const id = args['id'] as string;
           if (!id) throw new Error('Missing required parameter: id');
 
           const updates: any = {};
-          if (args.content) updates.content = args.content;
-          if (args.metadata) updates.metadata = args.metadata;
+          if (args['content']) updates.content = args['content'];
+          if (args['metadata']) updates.metadata = args['metadata'];
 
           const result = await memoryManager.updateMemory(id, updates);
 
@@ -284,7 +284,7 @@ export function createContextStoreServer(deps?: { memoryManager?: MemoryManager 
 
         case 'suggest_memory_merges': {
           // マージ提案ツール
-          const memoryId = args.memoryId as string;
+          const memoryId = args['memoryId'] as string;
           if (!memoryId) throw new Error('Missing required parameter: memoryId');
 
           const suggestions = await memoryManager.suggestMerges(memoryId);
@@ -305,16 +305,16 @@ export function createContextStoreServer(deps?: { memoryManager?: MemoryManager 
           }));
 
           return {
-            content: [{ 
-              type: 'text', 
-              text: `Found ${suggestions.length} potential merge candidates:\n${JSON.stringify(formattedSuggestions, null, 2)}` 
+            content: [{
+              type: 'text',
+              text: `Found ${suggestions.length} potential merge candidates:\n${JSON.stringify(formattedSuggestions, null, 2)}`
             }],
           };
         }
 
         case 'merge_memories': {
           // マージ実行ツール
-          const memoryIds = args.memoryIds as string[];
+          const memoryIds = args['memoryIds'] as string[];
           if (!memoryIds || !Array.isArray(memoryIds) || memoryIds.length < 2) {
             throw new Error('Missing required parameter: memoryIds (must be an array of at least 2 IDs)');
           }

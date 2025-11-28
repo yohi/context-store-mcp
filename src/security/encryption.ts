@@ -1,5 +1,5 @@
 /**
- * Data Encryption Module
+ * データ暗号化モジュール
  *
  * AES-256-GCM暗号化とエンベロープ暗号化パターンを実装
  *
@@ -135,7 +135,7 @@ export class LocalMasterKeyProvider implements MasterKeyProvider {
     if (process.env['NODE_ENV'] === 'production') {
       throw new Error(
         'LocalMasterKeyProvider is not allowed in production environment. ' +
-          'Use a proper key management service (AWS KMS, HashiCorp Vault, Azure Key Vault, etc.) instead.'
+        'Use a proper key management service (AWS KMS, HashiCorp Vault, Azure Key Vault, etc.) instead.'
       );
     }
 
@@ -146,7 +146,7 @@ export class LocalMasterKeyProvider implements MasterKeyProvider {
       if (!hexPattern.test(masterKeyHex)) {
         throw new Error(
           'Master key must be exactly 64 hexadecimal characters (0-9, a-f, A-F). ' +
-            `Received ${masterKeyHex.length} characters.`
+          `Received ${masterKeyHex.length} characters.`
         );
       }
       this.masterKey = Buffer.from(masterKeyHex, 'hex');
@@ -154,7 +154,7 @@ export class LocalMasterKeyProvider implements MasterKeyProvider {
       this.masterKey = crypto.randomBytes(KEY_LENGTH);
       console.warn(
         'Warning: Using randomly generated master key. ' +
-          'Set MASTER_KEY_HEX environment variable for persistent encryption.'
+        'Set MASTER_KEY_HEX environment variable for persistent encryption.'
       );
     }
 
@@ -266,8 +266,8 @@ export class LocalMasterKeyProvider implements MasterKeyProvider {
     // ローカル実装の制限事項を警告
     console.warn(
       'Warning: LocalMasterKeyProvider.rotateKey() has limited functionality.\n' +
-        'For production use, implement a proper MasterKeyProvider with KMS integration.\n' +
-        'See method documentation for complete rotation strategy.'
+      'For production use, implement a proper MasterKeyProvider with KMS integration.\n' +
+      'See method documentation for complete rotation strategy.'
     );
 
     // キーバージョンのインクリメント（基本的なバージョン追跡のみ）
@@ -278,8 +278,8 @@ export class LocalMasterKeyProvider implements MasterKeyProvider {
 
     console.log(
       `Master key rotated to version ${this.keyVersion}.\n` +
-        'Note: Existing DEKs must be manually re-encrypted with the new CMK.\n' +
-        'This is a development-only implementation. Use a proper KMS in production.'
+      'Note: Existing DEKs must be manually re-encrypted with the new CMK.\n' +
+      'This is a development-only implementation. Use a proper KMS in production.'
     );
 
     // 実装ノート: 完全なローテーション実装には以下が必要:
@@ -453,7 +453,7 @@ export class EncryptionManager {
     if (encryptedData.keyVersion !== dek.version) {
       throw new Error(
         `Key version mismatch: encrypted with version ${encryptedData.keyVersion}, ` +
-          `but DEK is version ${dek.version}`
+        `but DEK is version ${dek.version}`
       );
     }
 
@@ -543,9 +543,9 @@ export class KeyRotationManager {
     if (lifetimeMs <= 0) {
       console.warn(
         `Warning: Invalid DEK timestamps detected (id: ${dek.id}). ` +
-          `createdAt: ${dek.createdAt.toISOString()}, ` +
-          `expiresAt: ${dek.expiresAt.toISOString()}. ` +
-          `Forcing rotation due to corrupted or reversed timestamps.`
+        `createdAt: ${dek.createdAt.toISOString()}, ` +
+        `expiresAt: ${dek.expiresAt.toISOString()}. ` +
+        `Forcing rotation due to corrupted or reversed timestamps.`
       );
       return true; // タイムスタンプが破損している場合は強制ローテーション
     }

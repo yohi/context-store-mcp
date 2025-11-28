@@ -1,5 +1,5 @@
 /**
- * Transaction Coordinator
+ * トランザクションコーディネーター
  *
  * タスク9.1: トランザクション調整とSagaパターン
  * - PostgreSQL-Neo4j間の調整戦略
@@ -17,7 +17,7 @@ import type { Driver, Session } from 'neo4j-driver';
 import type { MemoryId, MemoryType, MemoryMetadata } from '../memory/types.js';
 
 /**
- * Memory Entity (PostgreSQL + Neo4j 間で共有)
+ * メモリエエンティティ (PostgreSQL + Neo4j 間で共有)
  */
 export interface MemoryEntity {
   id: MemoryId;
@@ -27,7 +27,7 @@ export interface MemoryEntity {
 }
 
 /**
- * Logger interface for structured logging
+ * 構造化ロギングのためのロガーインターフェース
  */
 export interface Logger {
   warn(message: string, context?: Record<string, unknown>): void;
@@ -37,7 +37,7 @@ export interface Logger {
 }
 
 /**
- * Default console-based logger implementation
+ * デフォルトのコンソールベースロガー実装
  */
 const defaultLogger: Logger = {
   warn: (message: string, context?: Record<string, unknown>) => {
@@ -55,54 +55,54 @@ const defaultLogger: Logger = {
 };
 
 /**
- * Transaction Coordinator Configuration
+ * トランザクションコーディネーター設定
  */
 export interface TransactionCoordinatorConfig {
-  /** PostgreSQL connection pool */
+  /** PostgreSQL接続プール */
   postgresPool: Pool;
-  /** Neo4j driver */
+  /** Neo4jドライバー */
   neo4jDriver: Driver;
-  /** Logger instance for structured logging (default: console-based logger) */
+  /** 構造化ロギング用ロガーインスタンス (デフォルト: コンソールベースロガー) */
   logger?: Logger;
-  /** Maximum number of retry attempts (default: 3) */
+  /** 最大リトライ回数 (デフォルト: 3) */
   maxRetries?: number;
-  /** Initial delay in milliseconds for retry backoff (default: 100ms) */
+  /** リトライバックオフの初期遅延（ミリ秒） (デフォルト: 100ms) */
   initialDelayMs?: number;
-  /** Maximum delay in milliseconds for retry backoff (default: 400ms) */
+  /** リトライバックオフの最大遅延（ミリ秒） (デフォルト: 400ms) */
   maxDelayMs?: number;
-  /** Backoff multiplier for exponential backoff (default: 2.0) */
+  /** エクスポネンシャルバックオフの乗数 (デフォルト: 2.0) */
   backoffMultiplier?: number;
 }
 
 /**
- * Transaction Result - Discriminated Union
+ * トランザクション結果 - 判別共用体
  *
- * - 'ok': Complete success (both PostgreSQL and Neo4j succeeded)
- * - 'partial': Partial success (PostgreSQL succeeded, Neo4j failed or warning)
- * - 'failed': Complete failure (PostgreSQL failed or critical error)
+ * - 'ok': 完全成功 (PostgreSQLとNeo4jの両方が成功)
+ * - 'partial': 部分成功 (PostgreSQLは成功、Neo4jは失敗または警告)
+ * - 'failed': 完全失敗 (PostgreSQLが失敗または致命的エラー)
  */
 export type TransactionResult =
   | {
-    /** Success status */
+    /** 成功ステータス */
     status: 'ok';
-    /** Memory ID for successful operation */
+    /** 成功した操作のメモリID */
     memoryId: MemoryId;
   }
   | {
-    /** Partial success status */
+    /** 部分成功ステータス */
     status: 'partial';
-    /** Memory ID for partially successful operation */
+    /** 部分成功した操作のメモリID */
     memoryId: MemoryId;
-    /** Warning information for partial success */
+    /** 部分成功に関する警告情報 */
     warning: {
       type: 'SYNC_FAILURE';
       message: string;
     };
   }
   | {
-    /** Failure status */
+    /** 失敗ステータス */
     status: 'failed';
-    /** Error information for failed operation */
+    /** 失敗した操作のエラー情報 */
     error: {
       type: 'POSTGRESQL_ERROR' | 'NEO4J_ERROR' | 'SYNC_FAILURE';
       message: string;
@@ -111,7 +111,7 @@ export type TransactionResult =
   };
 
 /**
- * Transaction Coordinator
+ * トランザクションコーディネーター
  *
  * PostgreSQL (Master DB) と Neo4j (Secondary DB) 間のトランザクション調整を行う。
  * Sagaパターンを採用し、補償トランザクションで不整合を解決する。
@@ -132,7 +132,7 @@ export class TransactionCoordinator {
   }
 
   /**
-   * Store Memory with Saga Pattern
+   * Sagaパターンを使用した記憶の保存
    *
    * フロー:
    * 1. PostgreSQL に記憶を保存（マスターDB）
@@ -210,7 +210,7 @@ export class TransactionCoordinator {
   }
 
   /**
-   * Update Memory with Saga Pattern
+   * Sagaパターンを使用した記憶の更新
    *
    * フロー:
    * 1. PostgreSQL の記憶を更新（マスターDB）
@@ -289,7 +289,7 @@ export class TransactionCoordinator {
   }
 
   /**
-   * Delete Memory with Saga Pattern
+   * Sagaパターンを使用した記憶の削除
    *
    * フロー:
    * 1. Neo4j からノードとエッジを削除（依存関係を先に削除）
@@ -343,8 +343,8 @@ export class TransactionCoordinator {
   }
 
   /**
-   * Hard Delete Memory (Physical Deletion)
-   * Used for Garbage Collection
+   * 記憶の物理削除（ハードデリート）
+   * ガベージコレクションで使用
    */
   async hardDeleteMemory(memoryId: MemoryId): Promise<TransactionResult> {
     // Step 1: PostgreSQL から物理削除（マスターDBを先に削除）
@@ -386,9 +386,9 @@ export class TransactionCoordinator {
   }
 
   /**
-   * Insert memory into PostgreSQL
-   * @returns Number of rows inserted (0 if conflict, 1 if new insert)
-   * @throws Error if insertion fails (for retry mechanism)
+   * PostgreSQLに記憶を挿入
+   * @returns 挿入された行数 (競合時は0、新規挿入時は1)
+   * @throws 挿入失敗時にエラーをスロー (リトライ機構用)
    */
   private async insertIntoPostgreSQLOrThrow(memory: MemoryEntity): Promise<number> {
     const result = await this.config.postgresPool.query(
@@ -401,9 +401,9 @@ export class TransactionCoordinator {
   }
 
   /**
-   * Update memory in PostgreSQL
-   * @returns Number of rows updated (0 if not found, 1 if updated)
-   * @throws Error if update fails (for retry mechanism)
+   * PostgreSQLの記憶を更新
+   * @returns 更新された行数 (見つからない場合は0、更新時は1)
+   * @throws 更新失敗時にエラーをスロー (リトライ機構用)
    */
   private async updateIntoPostgreSQLOrThrow(memory: MemoryEntity): Promise<number> {
     const result = await this.config.postgresPool.query(
@@ -416,7 +416,7 @@ export class TransactionCoordinator {
   }
 
   /**
-   * Create Neo4j Node
+   * Neo4jノードを作成
    */
   private async createNeo4jNode(
     memory: MemoryEntity
@@ -445,7 +445,7 @@ export class TransactionCoordinator {
   }
 
   /**
-   * Delete Neo4j Node
+   * Neo4jノードを削除
    */
   private async deleteNeo4jNode(memoryId: MemoryId): Promise<{ success: boolean; error?: string }> {
     let session: Session | null = null;
@@ -466,7 +466,7 @@ export class TransactionCoordinator {
   }
 
   /**
-   * Soft Delete from PostgreSQL
+   * PostgreSQLからソフト削除
    */
   private async softDeleteFromPostgreSQL(
     memoryId: MemoryId
@@ -484,8 +484,8 @@ export class TransactionCoordinator {
   }
 
   /**
-   * Mark Sync Failure for background retry
-   * @throws Error if marking sync failure fails (caller must handle)
+   * バックグラウンドリトライ用に同期失敗をマーク
+   * @throws 同期失敗のマークに失敗した場合にエラーをスロー (呼び出し元で処理が必要)
    *
    * べき等性の保証:
    * - 新規挿入直後のレコード (sync_status='synced') を 'pending_graph' に更新
@@ -508,8 +508,8 @@ export class TransactionCoordinator {
   }
 
   /**
-   * Save memory version history
-   * Note: memoryType is included in metadata to ensure it's available during version restoration
+   * 記憶のバージョン履歴を保存
+   * 注: バージョン復元時に利用可能にするため、memoryTypeをメタデータに含めます
    */
   async saveMemoryVersion(memory: MemoryEntity, version: number): Promise<void> {
     try {
@@ -537,7 +537,7 @@ export class TransactionCoordinator {
   }
 
   /**
-   * Get memory versions
+   * 記憶のバージョン一覧を取得
    */
   async getMemoryVersions(memoryId: MemoryId): Promise<any[]> {
     try {
@@ -560,9 +560,9 @@ export class TransactionCoordinator {
   }
 
   /**
-   * Revert memory to specific version
-   * Note: This only fetches the data. The actual update should be handled by storeMemory/updateMemory
-   * to ensure consistency across all stores (Neo4j, Vector).
+   * 記憶を特定のバージョンに戻す
+   * 注: これはデータの取得のみを行います。実際の更新はstoreMemory/updateMemoryで処理し、
+   * すべてのストア（Neo4j, Vector）間での整合性を保証する必要があります。
    */
   async getMemoryVersion(memoryId: MemoryId, version: number): Promise<MemoryEntity | null> {
     try {
@@ -625,7 +625,7 @@ export class TransactionCoordinator {
   }
 
   /**
-   * Find soft-deleted memories older than a specific date
+   * 特定の日時より古いソフト削除された記憶を検索
    */
   async findSoftDeletedMemories(olderThan: Date): Promise<MemoryId[]> {
     try {
@@ -641,7 +641,7 @@ export class TransactionCoordinator {
   }
 
   /**
-   * Get current database size in bytes
+   * 現在のデータベースサイズ（バイト）を取得
    */
   async getDatabaseSize(): Promise<number> {
     try {
@@ -657,9 +657,9 @@ export class TransactionCoordinator {
   }
 
   /**
-   * Delete memories with low importance that haven't been accessed recently
-   * Triggers soft deletion for identified memories.
-   * Returns number of memories successfully deleted.
+   * 最近アクセスされていない重要度の低い記憶を削除
+   * 特定された記憶に対してソフト削除をトリガーします。
+   * 正常に削除された記憶の数を返します。
    */
   async deleteLowImportanceMemories(
     importanceThreshold: number,
@@ -707,7 +707,7 @@ export class TransactionCoordinator {
   }
 
   /**
-   * Retry with Exponential Backoff
+   * エクスポネンシャルバックオフによるリトライ
    *
    * 指数バックオフによる再試行戦略:
    * - 試行1: 100ms待機後に試行

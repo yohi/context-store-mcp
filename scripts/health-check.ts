@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * System Health Check Script
+ * システムヘルスチェックスクリプト
  * システムヘルスチェックスクリプト
  *
  * このスクリプトは、Context Store MCPシステムの全コンポーネントが
@@ -21,7 +21,7 @@ function addResult(result: HealthCheckResult) {
   results.push(result);
 }
 
-// 1. MCP Server Health Check
+// 1. MCPサーバーヘルスチェック
 async function checkMCPServer(): Promise<void> {
   const component = 'MCP Server';
 
@@ -68,7 +68,7 @@ async function checkMCPServer(): Promise<void> {
   }
 }
 
-// 2. Memory Manager Health Check
+// 2. メモリマネージャーヘルスチェック
 async function checkMemoryManager(): Promise<void> {
   const component = 'Memory Manager';
 
@@ -114,7 +114,7 @@ async function checkMemoryManager(): Promise<void> {
   }
 }
 
-// 3. Query Processor Health Check
+// 3. クエリプロセッサヘルスチェック
 async function checkQueryProcessor(): Promise<void> {
   const component = 'Query Processor';
 
@@ -160,7 +160,7 @@ async function checkQueryProcessor(): Promise<void> {
   }
 }
 
-// 4. PostgreSQL Health Check
+// 4. PostgreSQLヘルスチェック
 async function checkPostgreSQL(): Promise<void> {
   const component = 'PostgreSQL';
 
@@ -208,7 +208,7 @@ async function checkPostgreSQL(): Promise<void> {
   }
 }
 
-// 5. Neo4j Health Check
+// 5. Neo4jヘルスチェック
 async function checkNeo4j(): Promise<void> {
   const component = 'Neo4j';
 
@@ -256,7 +256,7 @@ async function checkNeo4j(): Promise<void> {
   }
 }
 
-// 6. Redis Health Check
+// 6. Redisヘルスチェック
 async function checkRedis(): Promise<void> {
   const component = 'Redis';
 
@@ -303,7 +303,7 @@ async function checkRedis(): Promise<void> {
   }
 }
 
-// 7. Security Components Health Check
+// 7. セキュリティコンポーネントヘルスチェック
 async function checkSecurityComponents(): Promise<void> {
   const component = 'Security Components';
 
@@ -351,7 +351,7 @@ async function checkSecurityComponents(): Promise<void> {
   }
 }
 
-// 8. Monitoring System Health Check
+// 8. 監視システムヘルスチェック
 async function checkMonitoringSystem(): Promise<void> {
   const component = 'Monitoring System';
 
@@ -398,7 +398,7 @@ async function checkMonitoringSystem(): Promise<void> {
   }
 }
 
-// 9. System Resources Check
+// 9. システムリソースチェック
 async function checkSystemResources(): Promise<void> {
   const component = 'System Resources';
 
