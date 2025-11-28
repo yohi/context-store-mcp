@@ -325,8 +325,8 @@ describe('MemoryManager - Auto Cleanup (Task 3.3)', () => {
       const memoryId = storeResult.value;
       await memoryManager.deleteMemory(memoryId);
 
-      // Set deletedAt to >24 hours ago to make it eligible for GC
-      const oldDate = new Date(Date.now() - 25 * 60 * 60 * 1000); // 25 hours ago
+      // Set deletedAt to >30 days ago to make it eligible for GC
+      const oldDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000); // 31 days ago
       memoryManager.setDeletedAtForTest(memoryId, oldDate);
 
       // Verify memory exists before GC
@@ -360,8 +360,8 @@ describe('MemoryManager - Auto Cleanup (Task 3.3)', () => {
       // Mark as protected AFTER deletion (simulating edge case)
       await memoryManager.updateMemory(memoryId, { isProtected: true });
 
-      // Set deletedAt to >24 hours ago (would normally be eligible for GC)
-      const oldDate = new Date(Date.now() - 25 * 60 * 60 * 1000); // 25 hours ago
+      // Set deletedAt to >30 days ago (would normally be eligible for GC)
+      const oldDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000); // 31 days ago
       memoryManager.setDeletedAtForTest(memoryId, oldDate);
 
       // Verify memory state before GC
@@ -402,8 +402,8 @@ describe('MemoryManager - Auto Cleanup (Task 3.3)', () => {
       await memoryManager.deleteMemory(recentId);
       await memoryManager.deleteMemory(oldId);
 
-      // Set old memory's deletedAt to >24 hours ago
-      const oldDate = new Date(Date.now() - 25 * 60 * 60 * 1000); // 25 hours ago
+      // Set old memory's deletedAt to >30 days ago
+      const oldDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000); // 31 days ago
       memoryManager.setDeletedAtForTest(oldId, oldDate);
 
       // Verify both memories exist and are deleted before GC
@@ -424,12 +424,12 @@ describe('MemoryManager - Auto Cleanup (Task 3.3)', () => {
       // Run GC - should only remove old memory, keep recent one
       await memoryManager.performGarbageCollection();
 
-      // Recent memory should still exist (within 24 hours)
+      // Recent memory should still exist (within 30 days)
       recentMemory = memoryManager.getMemoryForTest(recentId);
       expect(recentMemory).toBeDefined();
       expect(recentMemory?.isDeleted).toBe(true);
 
-      // Old memory should be completely removed (>24 hours old)
+      // Old memory should be completely removed (>30 days old)
       oldMemory = memoryManager.getMemoryForTest(oldId);
       expect(oldMemory).toBeUndefined();
     });
@@ -504,8 +504,8 @@ describe('MemoryManager - Auto Cleanup (Task 3.3)', () => {
       // Soft delete the first memory
       await memoryManager.deleteMemory(deleteId);
 
-      // Set deletedAt to >24 hours ago to make it eligible for GC
-      const oldDate = new Date(Date.now() - 25 * 60 * 60 * 1000); // 25 hours ago
+      // Set deletedAt to >30 days ago to make it eligible for GC
+      const oldDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000); // 31 days ago
       memoryManager.setDeletedAtForTest(deleteId, oldDate);
 
       // Verify initial state: 2 memories (1 deleted, 1 active)

@@ -12,12 +12,22 @@ import {
   ListToolsRequestSchema,
   ListResourcesRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import type { HybridSearchOptions, SearchFilters } from '../query/types.js';
+import { MemoryManager } from '../memory/memory-manager.js';
+import type { MemoryType } from '../memory/types.js';
+import { GarbageCollectionJob } from '../monitoring/garbage-collection-job.js';
 
 /**
  * MCPサーバーインスタンスを作成して設定する
  */
-export function createContextStoreServer(): Server {
+export function createContextStoreServer(deps?: { memoryManager?: MemoryManager }): Server {
+  // MemoryManagerの初期化
+  // 注入されたインスタンスがあればそれを使用し、なければ新規作成する
+  const memoryManager = deps?.memoryManager ?? new MemoryManager();
+
+  // ガベージコレクションジョブの初期化と開始 (5分間隔)
+  const gcJob = new GarbageCollectionJob(memoryManager);
+  gcJob.start();
+
   const server = new Server(
     {
       name: 'context-store-mcp',
@@ -70,7 +80,7 @@ export function createContextStoreServer(): Server {
             properties: {
               query: {
                 type: 'string',
-                description: '検索クエリ',
+                description: '検索クエリ (現在、実装上の制約によりタイプフィルタ等のみ機能します)',
               },
               filters: {
                 type: 'object',
@@ -121,10 +131,44 @@ export function createContextStoreServer(): Server {
               },
               content: {
                 type: 'string',
-                description: '新しい内容',
+                description: '新しい内容 (オプション)',
+              },
+              metadata: {
+                type: 'object',
+                description: '新しいメタデータ (オプション)',
               },
             },
-            required: ['id', 'content'],
+            required: ['id'],
+          },
+        },
+        {
+          name: 'suggest_memory_merges',
+          description: '指定された記憶に対するマージ（統合）候補を提案します',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              memoryId: {
+                type: 'string',
+                description: 'ベースとなる記憶のID',
+              },
+            },
+            required: ['memoryId'],
+          },
+        },
+        {
+          name: 'merge_memories',
+          description: '複数の記憶を統合して新しい記憶を作成し、元の記憶を削除します',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              memoryIds: {
+                type: 'array',
+                items: { type: 'string' },
+                description: '統合する記憶のIDリスト（2つ以上）',
+                minItems: 2,
+              },
+            },
+            required: ['memoryIds'],
           },
         },
       ],
@@ -140,54 +184,168 @@ export function createContextStoreServer(): Server {
       throw new Error('Invalid arguments: must be an object');
     }
 
-    switch (name) {
-      case 'store_memory': {
-        // 記憶保存ツール - コンテンツを保存
-        if (!('content' in args)) {
-          throw new Error('Missing required parameter: content');
-        }
-        // args.metadata is optional
-        return {
-          content: [{ type: 'text', text: 'Memory stored successfully' }],
-        };
-      }
+    try {
+      switch (name) {
+        case 'store_memory': {
+          // 記憶保存ツール
+          const content = args.content as string;
+          if (!content) throw new Error('Missing required parameter: content');
+          
+          const metadata = (args.metadata as any) || {};
+          
+          // memoryTypeの処理
+          let memoryType: MemoryType | undefined;
+          if (metadata.memoryType) {
+            memoryType = metadata.memoryType as MemoryType;
+            // metadataからは削除しておく（MemoryManagerが一元管理するため）
+            delete metadata.memoryType;
+          }
 
-      case 'search_memory': {
-        // 記憶検索ツール - クエリで検索
-        if (!('query' in args)) {
-          throw new Error('Missing required parameter: query');
-        }
-        // args.filters is optional
-        return {
-          content: [{ type: 'text', text: 'Search results' }],
-        };
-      }
+          const result = await memoryManager.storeMemory({
+            content,
+            metadata,
+            memoryType,
+          });
 
-      case 'delete_memory': {
-        // 記憶削除ツール - IDで削除
-        if (!('id' in args)) {
-          throw new Error('Missing required parameter: id');
-        }
-        return {
-          content: [{ type: 'text', text: 'Memory deleted successfully' }],
-        };
-      }
+          if (!result.success) {
+            return {
+              content: [{ type: 'text', text: `Error storing memory: ${result.error.message}` }],
+              isError: true,
+            };
+          }
 
-      case 'update_memory': {
-        // 記憶更新ツール - IDとコンテンツで更新
-        if (!('id' in args)) {
-          throw new Error('Missing required parameter: id');
+          return {
+            content: [{ type: 'text', text: `Memory stored successfully. ID: ${result.value}` }],
+          };
         }
-        if (!('content' in args)) {
-          throw new Error('Missing required parameter: content');
-        }
-        return {
-          content: [{ type: 'text', text: 'Memory updated successfully' }],
-        };
-      }
 
-      default:
-        throw new Error(`Unknown tool: ${name}`);
+        case 'search_memory': {
+          // 記憶検索ツール
+          // 現在のMemoryManager.searchMemoriesはメタデータフィルタのみ対応
+          // ベクトル検索は findSimilarMemories だが、統合的な検索インターフェースは未完成
+          // ここでは簡易的に searchMemories を使用
+          
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const query = args.query as string; 
+          const filters = (args.filters as any) || {};
+
+          const results = await memoryManager.searchMemories({
+            tags: filters.tags,
+            memoryTypes: filters.memoryTypes,
+            limit: filters.limit,
+          });
+
+          return {
+            content: [{ type: 'text', text: JSON.stringify(results, null, 2) }],
+          };
+        }
+
+        case 'delete_memory': {
+          // 記憶削除ツール
+          const id = args.id as string;
+          if (!id) throw new Error('Missing required parameter: id');
+
+          const result = await memoryManager.deleteMemory(id);
+
+          if (!result.success) {
+            return {
+              content: [{ type: 'text', text: `Error deleting memory: ${result.error.message}` }],
+              isError: true,
+            };
+          }
+
+          return {
+            content: [{ type: 'text', text: 'Memory deleted successfully' }],
+          };
+        }
+
+        case 'update_memory': {
+          // 記憶更新ツール
+          const id = args.id as string;
+          if (!id) throw new Error('Missing required parameter: id');
+
+          const updates: any = {};
+          if (args.content) updates.content = args.content;
+          if (args.metadata) updates.metadata = args.metadata;
+
+          const result = await memoryManager.updateMemory(id, updates);
+
+          if (!result.success) {
+            return {
+              content: [{ type: 'text', text: `Error updating memory: ${result.error.message}` }],
+              isError: true,
+            };
+          }
+
+          return {
+            content: [{ type: 'text', text: 'Memory updated successfully' }],
+          };
+        }
+
+        case 'suggest_memory_merges': {
+          // マージ提案ツール
+          const memoryId = args.memoryId as string;
+          if (!memoryId) throw new Error('Missing required parameter: memoryId');
+
+          const suggestions = await memoryManager.suggestMerges(memoryId);
+
+          if (suggestions.length === 0) {
+            return {
+              content: [{ type: 'text', text: 'No merge suggestions found.' }],
+            };
+          }
+
+          // 提案を見やすく整形
+          const formattedSuggestions = suggestions.map(m => ({
+            id: m.id,
+            type: m.memoryType,
+            preview: m.content.substring(0, 100) + (m.content.length > 100 ? '...' : ''),
+            tags: Array.isArray(m.metadata?.tags) ? m.metadata.tags : (m.metadata?.tags ? [m.metadata.tags] : []),
+            timestamp: m.createdAt
+          }));
+
+          return {
+            content: [{ 
+              type: 'text', 
+              text: `Found ${suggestions.length} potential merge candidates:\n${JSON.stringify(formattedSuggestions, null, 2)}` 
+            }],
+          };
+        }
+
+        case 'merge_memories': {
+          // マージ実行ツール
+          const memoryIds = args.memoryIds as string[];
+          if (!memoryIds || !Array.isArray(memoryIds) || memoryIds.length < 2) {
+            throw new Error('Missing required parameter: memoryIds (must be an array of at least 2 IDs)');
+          }
+
+          const result = await memoryManager.mergeMemories(memoryIds);
+
+          if (!result.success) {
+            return {
+              content: [{ type: 'text', text: `Error merging memories: ${result.error.message}` }],
+              isError: true,
+            };
+          }
+
+          return {
+            content: [{ type: 'text', text: `Memories merged successfully. New Memory ID: ${result.value}` }],
+          };
+        }
+
+        default:
+          throw new Error(`Unknown tool: ${name}`);
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Internal Error: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   });
 
