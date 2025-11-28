@@ -360,8 +360,8 @@ describe('MemoryManager - Auto Cleanup (Task 3.3)', () => {
       // Mark as protected AFTER deletion (simulating edge case)
       await memoryManager.updateMemory(memoryId, { isProtected: true });
 
-      // Set deletedAt to >24 hours ago (would normally be eligible for GC)
-      const oldDate = new Date(Date.now() - 25 * 60 * 60 * 1000); // 25 hours ago
+      // Set deletedAt to >30 days ago (would normally be eligible for GC)
+      const oldDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000); // 31 days ago
       memoryManager.setDeletedAtForTest(memoryId, oldDate);
 
       // Verify memory state before GC
