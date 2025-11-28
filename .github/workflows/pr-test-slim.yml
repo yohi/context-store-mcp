@@ -6,7 +6,7 @@ on:
 jobs:
   test-slim:
     name: Run Tests on Ubuntu Slim
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     services:
       postgres:
         image: pgvector/pgvector:pg16
