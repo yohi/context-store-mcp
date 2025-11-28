@@ -299,6 +299,17 @@ describe('MCP Server Core Features', () => {
         }
     });
     await new Promise(resolve => setTimeout(resolve, 10));
-    // This check is tricky without direct access to MemoryManager, but search results should be empty or different
+    
+    const res5 = transport.sentMessages.find(m => (m as any).id === 5);
+    expect(res5).toBeDefined();
+    const searchResult = JSON.parse((res5 as any).result.content[0].text);
+    
+    // Should find the merged memory
+    expect(searchResult.length).toBeGreaterThan(0);
+    
+    // Should NOT find original IDs
+    const foundIds = searchResult.map((m: any) => m.id);
+    expect(foundIds).not.toContain(id1);
+    expect(foundIds).not.toContain(id2);
   });
 });
