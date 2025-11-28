@@ -258,8 +258,9 @@ interface MemoryManagerService {
 
   // 統合・履歴管理 (Task 3.2)
   suggestMerges(memoryId: MemoryId): Promise<Memory[]>;
-  findSimilarMemories(memoryId: MemoryId, threshold?: number): Promise<Memory[]>;
-  getMemoryVersions(memoryId: MemoryId): Promise<MemoryHistoryEntry[]>;
+  findSimilarMemories(content: string, limit?: number): Promise<Memory[]>;
+  findSimilarMemoriesById(memoryId: MemoryId, threshold?: number): Promise<Memory[]>;
+  getMemoryHistory(memoryId: MemoryId): Promise<MemoryHistoryEntry[]>;
   revertToVersion(memoryId: MemoryId, version: number): Promise<Result<boolean, MemoryError>>;
 
   // メモリ管理
