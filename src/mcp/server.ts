@@ -14,14 +14,19 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { MemoryManager } from '../memory/memory-manager.js';
 import type { MemoryType } from '../memory/types.js';
+import { GarbageCollectionJob } from '../monitoring/garbage-collection-job.js';
 
 /**
  * MCPサーバーインスタンスを作成して設定する
  */
-export function createContextStoreServer(): Server {
+export function createContextStoreServer(deps?: { memoryManager?: MemoryManager }): Server {
   // MemoryManagerの初期化
-  // 将来的には構成（DB接続など）をここで渡す
-  const memoryManager = new MemoryManager();
+  // 注入されたインスタンスがあればそれを使用し、なければ新規作成する
+  const memoryManager = deps?.memoryManager ?? new MemoryManager();
+
+  // ガベージコレクションジョブの初期化と開始 (5分間隔)
+  const gcJob = new GarbageCollectionJob(memoryManager);
+  gcJob.start();
 
   const server = new Server(
     {

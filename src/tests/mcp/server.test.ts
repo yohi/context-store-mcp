@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import { createContextStoreServer } from '../../mcp/server.js';
+import { MemoryManager } from '../../memory/memory-manager.js';
+import type { VectorStoreAdapter } from '../../storage/vector-store-adapter.js';
 
 // Mock Transport to capture messages
 class MockTransport implements Transport {
@@ -35,9 +37,17 @@ class MockTransport implements Transport {
 describe('MCP Server Core Features', () => {
   let server: Server;
   let transport: MockTransport;
+  let mockVectorStore: VectorStoreAdapter;
 
   beforeEach(async () => {
-    server = createContextStoreServer();
+    mockVectorStore = {
+      searchSimilar: vi.fn().mockResolvedValue([]), // Default empty
+    } as unknown as VectorStoreAdapter;
+
+    // Inject mock VectorStore into MemoryManager, and inject manager into Server
+    const memoryManager = new MemoryManager({ vectorStore: mockVectorStore });
+    server = createContextStoreServer({ memoryManager });
+    
     transport = new MockTransport();
     await server.connect(transport);
   });
@@ -192,6 +202,11 @@ describe('MCP Server Core Features', () => {
     const res2 = transport.sentMessages.find(m => (m as any).id === 3);
     const id2 = (res2 as any).result.content[0].text.match(/ID: ([a-f0-9-]+)/)[1];
 
+    // Configure mock to return id2 as high similarity match
+    (mockVectorStore.searchSimilar as any).mockResolvedValue([
+        { id: id2, similarity: 0.95, content: 'Minutes from Project Alpha kickoff.', metadata: { tags: ['project-alpha', 'meeting'] } }
+    ]);
+
     // 3. Suggest Merges for A
     transport.receive({
       jsonrpc: '2.0',
@@ -209,15 +224,10 @@ describe('MCP Server Core Features', () => {
     const res3 = transport.sentMessages.find(m => (m as any).id === 4);
     expect(res3).toBeDefined();
     
-    // Note: Since vector search is mocked/limited in MemoryManager without vector store,
-    // suggestions rely on tag/time overlap in the current in-memory implementation.
-    // We expect to find id2 as a candidate.
     const outputText = (res3 as any).result.content[0].text;
-    if (outputText.includes('No merge suggestions')) {
-        console.warn('Skipping suggestion check: In-memory similarity detection might be too strict for this test input.');
-    } else {
-        expect(outputText).toContain(id2);
-    }
+    
+    // Deterministic assertion: must contain the suggested ID
+    expect(outputText).toContain(id2);
   });
 
   it('should merge memories successfully', async () => {
