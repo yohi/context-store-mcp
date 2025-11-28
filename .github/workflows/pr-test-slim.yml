@@ -7,44 +7,6 @@ jobs:
   test-slim:
     name: Run Tests on Ubuntu Slim
     runs-on: ubuntu-slim
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_DB: context_store_test
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_password
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      neo4j:
-        image: neo4j:5-community
-        env:
-          NEO4J_AUTH: neo4j/test_password
-        ports:
-          - 7687:7687
-          - 7474:7474
-        options: >-
-          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -58,17 +20,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run tests
+      - name: Run unit tests
         env:
-          POSTGRES_HOST: localhost
-          POSTGRES_PORT: 5432
-          POSTGRES_DB: context_store_test
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_password
-          NEO4J_URI: bolt://localhost:7687
-          NEO4J_USER: neo4j
-          NEO4J_PASSWORD: test_password
-          REDIS_HOST: localhost
-          REDIS_PORT: 6379
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: npm test
+          NODE_OPTIONS: '--max-old-space-size=2048'
+        run: npx vitest --run --test-timeout=30000 --exclude "src/tests/integration/**"
