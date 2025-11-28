@@ -1,5 +1,5 @@
 /**
- * Security Event Detector
+ * セキュリティイベント検出器
  *
  * Requirements: 6.6 - データ漏洩のリスク検出と通知
  * - 検出条件:
@@ -15,7 +15,7 @@ import { randomUUID } from 'crypto';
 import { AuditLogger } from './audit-logger.js';
 
 /**
- * Anomaly patterns
+ * 異常パターン
  */
 export type AnomalyPattern =
   | 'excessive_data_access'
@@ -24,12 +24,12 @@ export type AnomalyPattern =
   | 'auth_failure_spike';
 
 /**
- * Threat levels
+ * 脅威レベル
  */
 export type ThreatLevel = 'warning' | 'important' | 'critical';
 
 /**
- * Security event
+ * セキュリティイベント
  */
 export interface SecurityEvent {
   id: string;
@@ -44,24 +44,24 @@ export interface SecurityEvent {
 }
 
 /**
- * Detection parameters
+ * 検出パラメータ
  */
 export interface DetectionParams {
-  /** Time window in minutes for anomaly detection (default: 5) */
+  /** 異常検出の時間枠（分）（デフォルト: 5） */
   timeWindowMinutes?: number;
-  /** Whether to use baseline comparison for detection (default: false) */
+  /** 検出にベースライン比較を使用するかどうか（デフォルト: false） */
   useBaseline?: boolean;
   /**
-   * Whether to verify audit log signatures before processing
-   * When true, logs with invalid signatures are excluded from detection
-   * Invalid logs are counted and logged but not passed to detection algorithms
-   * (default: false)
+   * 処理前に監査ログの署名を検証するかどうか
+   * trueの場合、無効な署名を持つログは検出から除外されます
+   * 無効なログはカウントされログに記録されますが、検出アルゴリズムには渡されません
+   * （デフォルト: false）
    */
   verifyAuditLogSignature?: boolean;
 }
 
 /**
- * Query parameters for security events
+ * セキュリティイベントのクエリパラメータ
  */
 export interface SecurityEventQuery {
   startTime?: Date;
@@ -72,7 +72,7 @@ export interface SecurityEventQuery {
 }
 
 /**
- * Security event with metadata for retention management
+ * 保持管理用のメタデータ付きセキュリティイベント
  */
 interface SecurityEventWithMetadata {
   event: SecurityEvent;
@@ -80,7 +80,7 @@ interface SecurityEventWithMetadata {
 }
 
 /**
- * Known IP entry with TTL tracking
+ * TTL追跡付きの既知IPエントリ
  */
 interface KnownIpEntry {
   ips: Set<string>;
@@ -88,7 +88,7 @@ interface KnownIpEntry {
 }
 
 /**
- * User baseline entry with TTL tracking
+ * TTL追跡付きのユーザーベースラインエントリ
  */
 interface UserBaselineEntry {
   baseline: number;
@@ -96,27 +96,27 @@ interface UserBaselineEntry {
 }
 
 /**
- * Retention configuration
+ * 保持設定
  */
 interface RetentionConfig {
-  /** Security events retention in days (default: 365) */
+  /** セキュリティイベントの保持期間（日）（デフォルト: 365） */
   securityEventsRetentionDays: number;
-  /** Known IPs TTL in days (default: 90) */
+  /** 既知IPのTTL（日）（デフォルト: 90） */
   knownIpsTTLDays: number;
-  /** User baselines TTL in days (default: 90) */
+  /** ユーザーベースラインのTTL（日）（デフォルト: 90） */
   userBaselinesTTLDays: number;
-  /** Maximum security events to store (default: 10000) */
+  /** 保存する最大セキュリティイベント数（デフォルト: 10000） */
   maxSecurityEvents: number;
-  /** Maximum known IP entries (default: 5000) */
+  /** 最大既知IPエントリ数（デフォルト: 5000） */
   maxKnownIpEntries: number;
-  /** Maximum user baseline entries (default: 5000) */
+  /** 最大ユーザーベースラインエントリ数（デフォルト: 5000） */
   maxUserBaselineEntries: number;
-  /** Cleanup interval in milliseconds (default: 1 hour) */
+  /** クリーンアップ間隔（ミリ秒）（デフォルト: 1時間） */
   cleanupIntervalMs: number;
 }
 
 /**
- * Default retention configuration
+ * デフォルトの保持設定
  */
 const DEFAULT_RETENTION_CONFIG: RetentionConfig = {
   securityEventsRetentionDays: 365,
@@ -129,9 +129,9 @@ const DEFAULT_RETENTION_CONFIG: RetentionConfig = {
 };
 
 /**
- * Security Event Detector
+ * セキュリティイベント検出器
  *
- * Detects security anomalies and potential data leakage
+ * セキュリティ異常と潜在的なデータ漏洩を検出します
  */
 export class SecurityEventDetector {
   private auditLogger: AuditLogger;
@@ -147,8 +147,8 @@ export class SecurityEventDetector {
   private readonly AUTH_FAILURE_THRESHOLD = 50;
   private readonly BASELINE_MULTIPLIER = 10;
 
-  // Threat level multipliers for absolute threshold detection
-  // Important: 110% of threshold, Critical: 120% of threshold
+  // 絶対閾値検出用の脅威レベル乗数
+  // Important: 閾値の110%, Critical: 閾値の120%
   private readonly EXCESSIVE_ACCESS_IMPORTANT_MULTIPLIER = 1.1;
   private readonly EXCESSIVE_ACCESS_CRITICAL_MULTIPLIER = 1.2;
 
@@ -159,15 +159,15 @@ export class SecurityEventDetector {
     this.userBaselines = new Map();
     this.retentionConfig = { ...DEFAULT_RETENTION_CONFIG, ...retentionConfig };
 
-    // Start periodic cleanup
+    // 定期的なクリーンアップを開始
     this.startCleanupTask();
   }
 
   /**
-   * Detect anomalies in audit logs
+   * 監査ログの異常を検出
    *
-   * @param params - Detection parameters
-   * @returns Detected security events
+   * @param params - 検出パラメータ
+   * @returns 検出されたセキュリティイベント
    */
   async detectAnomalies(params: DetectionParams): Promise<SecurityEvent[]> {
     const timeWindowMinutes = params.timeWindowMinutes || 5;
@@ -179,7 +179,7 @@ export class SecurityEventDetector {
       endTime,
     });
 
-    // Verify audit log signatures if requested
+    // 要求された場合、監査ログの署名を検証
     if (params.verifyAuditLogSignature === true) {
       const { validLogs, invalidCount } = await this.filterValidLogs(recentLogs);
       recentLogs = validLogs;
@@ -193,26 +193,26 @@ export class SecurityEventDetector {
 
     const detectedEvents: SecurityEvent[] = [];
 
-    // 1. Detect excessive data access
+    // 1. 過剰なデータアクセスを検出
     const excessiveAccessEvents = await this.detectExcessiveDataAccess(
       recentLogs,
       params.useBaseline
     );
     detectedEvents.push(...excessiveAccessEvents);
 
-    // 2. Detect unknown IP access
+    // 2. 未知のIPアクセスを検出
     const unknownIpEvents = await this.detectUnknownIpAccess(recentLogs);
     detectedEvents.push(...unknownIpEvents);
 
-    // 3. Detect bulk export attempts
+    // 3. 大量エクスポート試行を検出
     const bulkExportEvents = await this.detectBulkExportAttempts(recentLogs);
     detectedEvents.push(...bulkExportEvents);
 
-    // 4. Detect auth failure spikes
+    // 4. 認証失敗の急増を検出
     const authFailureEvents = await this.detectAuthFailureSpikes(recentLogs);
     detectedEvents.push(...authFailureEvents);
 
-    // Store detected events with metadata
+    // 検出されたイベントをメタデータとともに保存
     detectedEvents.forEach((event) => {
       this.securityEvents.set(event.id, {
         event,
@@ -220,14 +220,14 @@ export class SecurityEventDetector {
       });
     });
 
-    // Opportunistic cleanup if needed
+    // 必要に応じて日和見的なクリーンアップを実行
     this.opportunisticCleanup();
 
     return detectedEvents;
   }
 
   /**
-   * Detect excessive data access
+   * 過剰なデータアクセスを検出
    */
   private async detectExcessiveDataAccess(
     logs: Awaited<ReturnType<AuditLogger['queryLogs']>>,
@@ -236,7 +236,7 @@ export class SecurityEventDetector {
     const events: SecurityEvent[] = [];
     const userAccessCounts = new Map<string, { count: number; sessionId?: string }>();
 
-    // Count accesses per user
+    // ユーザーごとのアクセスをカウント
     logs.forEach((log) => {
       if (log.eventType === 'memory_searched') {
         const current = userAccessCounts.get(log.userId) || { count: 0 };
@@ -247,23 +247,23 @@ export class SecurityEventDetector {
       }
     });
 
-    // Check for excessive access
+    // 過剰なアクセスをチェック
     for (const [userId, data] of userAccessCounts.entries()) {
       let isExcessive = false;
       let threatLevel: ThreatLevel = 'warning';
       const entry = this.userBaselines.get(userId);
 
       if (useBaseline && entry) {
-        // Update last access time
+        // 最終アクセス時刻を更新
         entry.lastAccess = new Date();
 
-        // Use baseline comparison
+        // ベースライン比較を使用
         if (data.count >= entry.baseline * this.BASELINE_MULTIPLIER) {
           isExcessive = true;
           threatLevel = 'critical';
         }
       } else {
-        // Use absolute threshold
+        // 絶対閾値を使用
         if (data.count >= this.EXCESSIVE_ACCESS_THRESHOLD) {
           isExcessive = true;
           if (data.count >= this.EXCESSIVE_ACCESS_THRESHOLD * this.EXCESSIVE_ACCESS_CRITICAL_MULTIPLIER) {
@@ -300,34 +300,34 @@ export class SecurityEventDetector {
   }
 
   /**
-   * Detect unknown IP access
+   * 未知のIPアクセスを検出
    */
   private async detectUnknownIpAccess(
     logs: Awaited<ReturnType<AuditLogger['queryLogs']>>
   ): Promise<SecurityEvent[]> {
     const events: SecurityEvent[] = [];
-    const seenKeys = new Set<string>(); // Track userId|ipAddress to deduplicate
+    const seenKeys = new Set<string>(); // 重複排除のために userId|ipAddress を追跡
 
     for (const log of logs) {
       const entry = this.knownIps.get(log.userId);
       const dedupeKey = `${log.userId}|${log.ipAddress}`;
 
-      // Skip if we've already seen this userId+IP combination
+      // この userId+IP の組み合わせを既に確認済みの場合はスキップ
       if (seenKeys.has(dedupeKey)) {
         continue;
       }
 
-      // Treat undefined entry as empty known IPs set
+      // undefinedエントリは空の既知IPセットとして扱う
       const knownIps = entry?.ips || new Set<string>();
 
-      // Check if this IP is unknown
+      // このIPが未知かどうかチェック
       if (!knownIps.has(log.ipAddress)) {
-        // Update last access time if entry exists
+        // エントリが存在する場合、最終アクセス時刻を更新
         if (entry) {
           entry.lastAccess = new Date();
         }
 
-        // Mark this combination as seen
+        // この組み合わせを確認済みとしてマーク
         seenKeys.add(dedupeKey);
 
         events.push({
@@ -351,7 +351,7 @@ export class SecurityEventDetector {
   }
 
   /**
-   * Detect bulk export attempts
+   * 大量エクスポート試行を検出
    */
   private async detectBulkExportAttempts(
     logs: Awaited<ReturnType<AuditLogger['queryLogs']>>
@@ -359,7 +359,7 @@ export class SecurityEventDetector {
     const events: SecurityEvent[] = [];
     const sessionAccessCounts = new Map<string, { count: number; userId: string }>();
 
-    // Count accesses per session
+    // セッションごとのアクセスをカウント
     logs.forEach((log) => {
       if (log.eventType === 'memory_searched') {
         const current = sessionAccessCounts.get(log.sessionId) || { count: 0, userId: log.userId };
@@ -370,7 +370,7 @@ export class SecurityEventDetector {
       }
     });
 
-    // Check for bulk export
+    // 大量エクスポートをチェック
     for (const [sessionId, data] of sessionAccessCounts.entries()) {
       if (data.count >= this.BULK_EXPORT_THRESHOLD) {
         events.push({
@@ -397,7 +397,7 @@ export class SecurityEventDetector {
   }
 
   /**
-   * Detect auth failure spikes
+   * 認証失敗の急増を検出
    */
   private async detectAuthFailureSpikes(
     logs: Awaited<ReturnType<AuditLogger['queryLogs']>>
@@ -405,7 +405,7 @@ export class SecurityEventDetector {
     const events: SecurityEvent[] = [];
     const authFailureCounts = new Map<string, { count: number; userId: string }>();
 
-    // Count auth failures per IP
+    // IPごとの認証失敗をカウント
     logs.forEach((log) => {
       if (log.eventType === 'auth_failed') {
         const current = authFailureCounts.get(log.ipAddress) || { count: 0, userId: log.userId };
@@ -416,7 +416,7 @@ export class SecurityEventDetector {
       }
     });
 
-    // Check for auth failure spikes
+    // 認証失敗の急増をチェック
     for (const [ipAddress, data] of authFailureCounts.entries()) {
       if (data.count >= this.AUTH_FAILURE_THRESHOLD) {
         events.push({
@@ -439,26 +439,26 @@ export class SecurityEventDetector {
   }
 
   /**
-   * Classify threat level
+   * 脅威レベルを分類
    *
-   * @param event - Security event
-   * @returns Threat level
+   * @param event - セキュリティイベント
+   * @returns 脅威レベル
    */
   classifyThreatLevel(event: SecurityEvent): ThreatLevel {
     return event.threatLevel;
   }
 
   /**
-   * Get security events
+   * セキュリティイベントを取得
    *
-   * @param query - Query parameters
-   * @returns Matching security events
+   * @param query - クエリパラメータ
+   * @returns 一致するセキュリティイベント
    */
   async getSecurityEvents(query: SecurityEventQuery): Promise<SecurityEvent[]> {
-    // Extract events from metadata wrapper
+    // メタデータラッパーからイベントを抽出
     let results = Array.from(this.securityEvents.values()).map((entry) => entry.event);
 
-    // Apply filters
+    // フィルタを適用
     if (query.startTime) {
       results = results.filter((event) => event.timestamp >= query.startTime!);
     }
@@ -479,17 +479,17 @@ export class SecurityEventDetector {
       results = results.filter((event) => event.anomalyPattern === query.anomalyPattern);
     }
 
-    // Sort by timestamp descending
+    // タイムスタンプの降順でソート
     results.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
 
     return results;
   }
 
   /**
-   * Register known IP for a user
+   * ユーザーの既知IPを登録
    *
-   * @param userId - User ID
-   * @param ipAddress - IP address
+   * @param userId - ユーザーID
+   * @param ipAddress - IPアドレス
    */
   async registerKnownIp(userId: string, ipAddress: string): Promise<void> {
     const now = new Date();
@@ -505,21 +505,21 @@ export class SecurityEventDetector {
     entry.ips.add(ipAddress);
     entry.lastAccess = now;
 
-    // Opportunistic cleanup if needed
+    // 必要に応じて日和見的なクリーンアップを実行
     this.opportunisticCleanup();
   }
 
   /**
-   * Get known IPs for a user
+   * ユーザーの既知IPを取得
    *
-   * @param userId - User ID
-   * @returns Known IP addresses
+   * @param userId - ユーザーID
+   * @returns 既知のIPアドレス
    */
   async getKnownIps(userId: string): Promise<string[]> {
     const entry = this.knownIps.get(userId);
 
     if (entry) {
-      // Update last access time
+      // 最終アクセス時刻を更新
       entry.lastAccess = new Date();
       return Array.from(entry.ips);
     }
@@ -528,10 +528,10 @@ export class SecurityEventDetector {
   }
 
   /**
-   * Establish baseline access count for a user
+   * ユーザーのベースラインアクセス数を確立
    *
-   * @param userId - User ID
-   * @param count - Baseline access count
+   * @param userId - ユーザーID
+   * @param count - ベースラインアクセス数
    */
   async establishBaseline(userId: string, count: number): Promise<void> {
     this.userBaselines.set(userId, {
@@ -539,21 +539,21 @@ export class SecurityEventDetector {
       lastAccess: new Date(),
     });
 
-    // Opportunistic cleanup if needed
+    // 必要に応じて日和見的なクリーンアップを実行
     this.opportunisticCleanup();
   }
 
   /**
-   * Get baseline for a user
+   * ユーザーのベースラインを取得
    *
-   * @param userId - User ID
-   * @returns Baseline access count
+   * @param userId - ユーザーID
+   * @returns ベースラインアクセス数
    */
   async getBaseline(userId: string): Promise<number | undefined> {
     const entry = this.userBaselines.get(userId);
 
     if (entry) {
-      // Update last access time
+      // 最終アクセス時刻を更新
       entry.lastAccess = new Date();
       return entry.baseline;
     }
@@ -562,10 +562,10 @@ export class SecurityEventDetector {
   }
 
   /**
-   * Filter valid logs by verifying audit log signatures
+   * 監査ログの署名を検証して有効なログをフィルタリング
    *
-   * @param logs - Audit logs to filter
-   * @returns Object containing valid logs and count of invalid logs
+   * @param logs - フィルタリングする監査ログ
+   * @returns 有効なログと無効なログの数を含むオブジェクト
    */
   private async filterValidLogs(
     logs: Awaited<ReturnType<typeof this.auditLogger.queryLogs>>
@@ -580,10 +580,10 @@ export class SecurityEventDetector {
         validLogs.push(log);
       } else {
         invalidCount++;
-        // Log invalid entry for audit purposes
+        // 監査目的で無効なエントリを記録
         console.warn(
           `[SecurityEventDetector] Invalid signature detected for audit log: ${log.id} ` +
-            `(eventType: ${log.eventType}, userId: ${log.userId}, timestamp: ${log.timestamp.toISOString()})`
+          `(eventType: ${log.eventType}, userId: ${log.userId}, timestamp: ${log.timestamp.toISOString()})`
         );
       }
     }
@@ -592,21 +592,21 @@ export class SecurityEventDetector {
   }
 
   /**
-   * Start periodic cleanup task
+   * 定期的なクリーンアップタスクを開始
    */
   private startCleanupTask(): void {
     this.cleanupTimer = setInterval(() => {
       this.performCleanup();
     }, this.retentionConfig.cleanupIntervalMs);
 
-    // Ensure timer doesn't prevent process exit
+    // タイマーがプロセス終了を妨げないようにする
     if (this.cleanupTimer.unref) {
       this.cleanupTimer.unref();
     }
   }
 
   /**
-   * Stop cleanup task
+   * クリーンアップタスクを停止
    */
   stopCleanupTask(): void {
     if (this.cleanupTimer) {
@@ -616,39 +616,39 @@ export class SecurityEventDetector {
   }
 
   /**
-   * Perform cleanup of expired entries
+   * 期限切れエントリのクリーンアップを実行
    *
-   * Removes entries based on TTL and size limits
-   * Non-blocking - processes in batches to avoid long pauses
+   * TTLとサイズ制限に基づいてエントリを削除します
+   * ノンブロッキング - 長い一時停止を避けるためにバッチ処理します
    */
   private performCleanup(): void {
     const now = new Date();
 
-    // Clean up security events
+    // セキュリティイベントをクリーンアップ
     this.cleanupSecurityEvents(now);
 
-    // Clean up known IPs
+    // 既知IPをクリーンアップ
     this.cleanupKnownIps(now);
 
-    // Clean up user baselines
+    // ユーザーベースラインをクリーンアップ
     this.cleanupUserBaselines(now);
   }
 
   /**
-   * Clean up security events based on retention policy
+   * 保持ポリシーに基づいてセキュリティイベントをクリーンアップ
    */
   private cleanupSecurityEvents(now: Date): void {
     const retentionMs = this.retentionConfig.securityEventsRetentionDays * 24 * 60 * 60 * 1000;
     const cutoffTime = new Date(now.getTime() - retentionMs);
 
-    // Remove expired entries
+    // 期限切れエントリを削除
     for (const [id, entry] of this.securityEvents.entries()) {
       if (entry.timestamp < cutoffTime) {
         this.securityEvents.delete(id);
       }
     }
 
-    // Enforce max size by removing oldest entries
+    // 最も古いエントリを削除して最大サイズを強制
     if (this.securityEvents.size > this.retentionConfig.maxSecurityEvents) {
       const entries = Array.from(this.securityEvents.entries());
       entries.sort((a, b) => a[1].timestamp.getTime() - b[1].timestamp.getTime());
@@ -661,20 +661,20 @@ export class SecurityEventDetector {
   }
 
   /**
-   * Clean up known IPs based on TTL
+   * TTLに基づいて既知IPをクリーンアップ
    */
   private cleanupKnownIps(now: Date): void {
     const ttlMs = this.retentionConfig.knownIpsTTLDays * 24 * 60 * 60 * 1000;
     const cutoffTime = new Date(now.getTime() - ttlMs);
 
-    // Remove expired entries
+    // 期限切れエントリを削除
     for (const [userId, entry] of this.knownIps.entries()) {
       if (entry.lastAccess < cutoffTime) {
         this.knownIps.delete(userId);
       }
     }
 
-    // Enforce max size by removing least recently accessed
+    // 最も最近アクセスされていないエントリを削除して最大サイズを強制
     if (this.knownIps.size > this.retentionConfig.maxKnownIpEntries) {
       const entries = Array.from(this.knownIps.entries());
       entries.sort((a, b) => a[1].lastAccess.getTime() - b[1].lastAccess.getTime());
@@ -687,20 +687,20 @@ export class SecurityEventDetector {
   }
 
   /**
-   * Clean up user baselines based on TTL
+   * TTLに基づいてユーザーベースラインをクリーンアップ
    */
   private cleanupUserBaselines(now: Date): void {
     const ttlMs = this.retentionConfig.userBaselinesTTLDays * 24 * 60 * 60 * 1000;
     const cutoffTime = new Date(now.getTime() - ttlMs);
 
-    // Remove expired entries
+    // 期限切れエントリを削除
     for (const [userId, entry] of this.userBaselines.entries()) {
       if (entry.lastAccess < cutoffTime) {
         this.userBaselines.delete(userId);
       }
     }
 
-    // Enforce max size by removing least recently accessed
+    // 最も最近アクセスされていないエントリを削除して最大サイズを強制
     if (this.userBaselines.size > this.retentionConfig.maxUserBaselineEntries) {
       const entries = Array.from(this.userBaselines.entries());
       entries.sort((a, b) => a[1].lastAccess.getTime() - b[1].lastAccess.getTime());
@@ -713,15 +713,15 @@ export class SecurityEventDetector {
   }
 
   /**
-   * Opportunistically clean up entries on access
+   * アクセス時に日和見的にエントリをクリーンアップ
    *
-   * Checks size limits and performs cleanup if needed
-   * This prevents cleanup spikes during periodic tasks
+   * サイズ制限をチェックし、必要に応じてクリーンアップを実行します
+   * これにより、定期的なタスク中のクリーンアップスパイクを防ぎます
    */
   private opportunisticCleanup(): void {
     const now = new Date();
 
-    // Quick size checks - only clean if over limits
+    // クイックサイズチェック - 制限を超えている場合のみクリーンアップ
     if (this.securityEvents.size > this.retentionConfig.maxSecurityEvents * 1.1) {
       this.cleanupSecurityEvents(now);
     }

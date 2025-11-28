@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Configuration Validation Script
+ * 設定検証スクリプト
  * システム設定の検証スクリプト
  *
  * このスクリプトは、Context Store MCPシステムの全設定が

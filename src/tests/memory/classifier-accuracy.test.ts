@@ -292,7 +292,7 @@ describe('MemoryClassifier Accuracy Measurement', () => {
         },
       ]);
 
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Training completed'));
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('学習完了'));
 
       consoleSpy.mockRestore();
     });

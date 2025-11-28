@@ -1,12 +1,12 @@
 /**
- * MCP Standard Error Codes and Custom Error Classes
+ * MCP標準エラーコードとカスタムエラークラス
  * MCP標準エラーコードとカスタムエラークラス
  *
  * Based on JSON-RPC 2.0 Specification and MCP extensions
  */
 
 /**
- * MCP/JSON-RPC 2.0 Standard Error Codes
+ * MCP/JSON-RPC 2.0 標準エラーコード
  * @see https://www.jsonrpc.org/specification#error_object
  */
 export enum ErrorCode {
@@ -29,7 +29,7 @@ export enum ErrorCode {
 }
 
 /**
- * MCP Standard Error Class
+ * MCP標準エラークラス
  * MCP標準エラーを表現するクラス
  */
 export class McpError extends Error {

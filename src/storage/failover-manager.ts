@@ -16,7 +16,7 @@ import type { Driver, Session } from 'neo4j-driver';
 import { CircuitBreaker } from './circuit-breaker.js';
 
 /**
- * System Operation Mode
+ * システム動作モード
  */
 export enum OperationMode {
   /** 正常動作モード */
@@ -30,23 +30,23 @@ export enum OperationMode {
 }
 
 /**
- * Failover Manager Configuration
+ * フェイルオーバーマネージャーの設定
  */
 export interface FailoverManagerConfig {
-  /** PostgreSQL connection pool */
+  /** PostgreSQL接続プール */
   postgresPool: Pool;
-  /** Neo4j driver */
+  /** Neo4jドライバー */
   neo4jDriver: Driver;
-  /** Health check interval in milliseconds (default: 30000ms = 30s) */
+  /** ヘルスチェック間隔（ミリ秒） (デフォルト: 30000ms = 30秒) */
   healthCheckInterval?: number;
-  /** Enable automatic health checks (default: false) */
+  /** 自動ヘルスチェックを有効にする (デフォルト: false) */
   enableAutoHealthCheck?: boolean;
-  /** Logger instance (default: console) */
+  /** ロガーインスタンス (デフォルト: console) */
   logger?: Console;
 }
 
 /**
- * Memory Metadata (for read-only mode)
+ * 記憶メタデータ（読み取り専用モード用）
  */
 export interface MemoryMetadata {
   id: string;
@@ -56,7 +56,7 @@ export interface MemoryMetadata {
 }
 
 /**
- * Store Memory Result
+ * 記憶保存結果
  */
 export interface StoreMemoryResult {
   success: boolean;
@@ -66,7 +66,7 @@ export interface StoreMemoryResult {
 }
 
 /**
- * Search Result
+ * 検索結果
  */
 export interface SearchResult {
   id: string;
@@ -125,28 +125,28 @@ export class FailoverManager {
   }
 
   /**
-   * Get current operation mode
+   * 現在の動作モードを取得する
    */
   getMode(): OperationMode {
     return this.mode;
   }
 
   /**
-   * Check if PostgreSQL is available
+   * PostgreSQLが利用可能か確認する
    */
   isPostgresAvailable(): boolean {
     return this.mode !== OperationMode.READ_ONLY && this.mode !== OperationMode.UNAVAILABLE;
   }
 
   /**
-   * Check if Neo4j (Graph) is available
+   * Neo4j（グラフ）が利用可能か確認する
    */
   isGraphAvailable(): boolean {
     return this.mode === OperationMode.NORMAL;
   }
 
   /**
-   * Handle PostgreSQL failure
+   * PostgreSQL障害を処理する
    */
   async handlePostgresFailure(): Promise<void> {
     if (this.isGraphAvailable()) {
@@ -159,7 +159,7 @@ export class FailoverManager {
   }
 
   /**
-   * Handle Neo4j failure
+   * Neo4j障害を処理する
    */
   async handleNeo4jFailure(): Promise<void> {
     if (this.isPostgresAvailable()) {
@@ -172,7 +172,7 @@ export class FailoverManager {
   }
 
   /**
-   * Get memory metadata (read-only mode)
+   * 記憶メタデータを取得する（読み取り専用モード）
    */
   async getMemoryMetadata(memoryId: string): Promise<MemoryMetadata> {
     if (this.mode === OperationMode.UNAVAILABLE) {
@@ -236,7 +236,7 @@ export class FailoverManager {
   }
 
   /**
-   * Store memory
+   * 記憶を保存する
    */
   async storeMemory(memory: { id: string; content: string; memoryType?: string }): Promise<StoreMemoryResult> {
     if (this.mode === OperationMode.UNAVAILABLE) {
@@ -339,7 +339,7 @@ export class FailoverManager {
   }
 
   /**
-   * Search memories
+   * 記憶を検索する
    */
   async searchMemories(query: string): Promise<SearchResult[]> {
     if (this.mode === OperationMode.UNAVAILABLE) {
@@ -386,7 +386,7 @@ export class FailoverManager {
   }
 
   /**
-   * Check PostgreSQL health
+   * PostgreSQLのヘルスチェックを行う
    */
   async checkPostgresHealth(): Promise<boolean> {
     try {
@@ -412,7 +412,7 @@ export class FailoverManager {
   }
 
   /**
-   * Check if Neo4j is healthy (internal helper)
+   * Neo4jが正常か確認する（内部ヘルパー）
    */
   private async isNeo4jHealthy(): Promise<boolean> {
     try {
@@ -424,7 +424,7 @@ export class FailoverManager {
   }
 
   /**
-   * Check Neo4j health
+   * Neo4jのヘルスチェックを行う
    */
   async checkNeo4jHealth(): Promise<boolean> {
     try {
@@ -446,7 +446,7 @@ export class FailoverManager {
   }
 
   /**
-   * Start periodic health check
+   * 定期的なヘルスチェックを開始する
    */
   private startHealthCheck(): void {
     this.healthCheckTimer = setInterval(async () => {
@@ -456,7 +456,7 @@ export class FailoverManager {
   }
 
   /**
-   * Stop periodic health check
+   * 定期的なヘルスチェックを停止する
    */
   stopHealthCheck(): void {
     if (this.healthCheckTimer) {
@@ -466,7 +466,7 @@ export class FailoverManager {
   }
 
   /**
-   * Cleanup resources
+   * リソースをクリーンアップする
    */
   async cleanup(): Promise<void> {
     this.stopHealthCheck();

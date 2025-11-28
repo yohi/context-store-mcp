@@ -11,7 +11,7 @@
  */
 
 /**
- * Circuit Breaker State
+ * サーキットブレーカーの状態
  */
 export enum CircuitState {
   /** 正常動作、リクエスト通過 */
@@ -23,23 +23,23 @@ export enum CircuitState {
 }
 
 /**
- * Circuit Breaker Configuration
+ * サーキットブレーカーの設定
  */
 export interface CircuitBreakerConfig {
-  /** Failure count threshold to open circuit (default: 5) */
+  /** サーキットを開くための失敗回数の閾値 (デフォルト: 5) */
   failureThreshold?: number;
-  /** Success count threshold to close circuit from HALF_OPEN (default: 2) */
+  /** HALF_OPENからサーキットを閉じるための成功回数の閾値 (デフォルト: 2) */
   successThreshold?: number;
-  /** Timeout in milliseconds before transitioning from OPEN to HALF_OPEN (default: 30000ms = 30s) */
+  /** OPENからHALF_OPENに遷移するまでのタイムアウト（ミリ秒） (デフォルト: 30000ms = 30秒) */
   timeout?: number;
-  /** Window size for failure rate calculation (default: 10) */
+  /** 失敗率計算のためのウィンドウサイズ (デフォルト: 10) */
   windowSize?: number;
-  /** Failure rate threshold (0.0-1.0) to open circuit (default: 0.5 = 50%) */
+  /** サーキットを開くための失敗率の閾値 (0.0-1.0) (デフォルト: 0.5 = 50%) */
   failureRateThreshold?: number;
 }
 
 /**
- * Circuit Breaker Error
+ * サーキットブレーカーエラー
  */
 export class CircuitBreakerOpenError extends Error {
   constructor() {
@@ -78,7 +78,7 @@ export class CircuitBreaker {
   }
 
   /**
-   * Execute operation with circuit breaker protection
+   * サーキットブレーカー保護付きで操作を実行する
    */
   async execute<T>(operation: () => Promise<T>): Promise<T> {
     // OPEN状態の場合、timeoutが経過していればHALF_OPENに遷移
@@ -101,7 +101,7 @@ export class CircuitBreaker {
   }
 
   /**
-   * Get current circuit state
+   * 現在のサーキット状態を取得する
    */
   getState(): CircuitState {
     // OPEN状態でtimeoutが経過していればHALF_OPENに自動遷移
@@ -112,7 +112,7 @@ export class CircuitBreaker {
   }
 
   /**
-   * Reset circuit breaker to CLOSED state
+   * サーキットブレーカーをCLOSED状態にリセットする
    */
   reset(): void {
     this.state = CircuitState.CLOSED;
@@ -123,7 +123,7 @@ export class CircuitBreaker {
   }
 
   /**
-   * Handle successful operation
+   * 成功した操作を処理する
    */
   private onSuccess(): void {
     this.recentResults.push(true);
@@ -143,7 +143,7 @@ export class CircuitBreaker {
   }
 
   /**
-   * Handle failed operation
+   * 失敗した操作を処理する
    */
   private onFailure(): void {
     this.recentResults.push(false);
@@ -166,7 +166,7 @@ export class CircuitBreaker {
   }
 
   /**
-   * Check if circuit should open
+   * サーキットを開くべきか確認する
    */
   private shouldOpen(): boolean {
     // 即座の連続障害検出: failureThreshold以上の連続失敗でサーキットを開く
@@ -186,7 +186,7 @@ export class CircuitBreaker {
   }
 
   /**
-   * Check if circuit should transition from OPEN to HALF_OPEN
+   * OPENからHALF_OPENに遷移すべきか確認する
    */
   private shouldTransitionToHalfOpen(): boolean {
     if (!this.lastFailureTime) {
@@ -196,7 +196,7 @@ export class CircuitBreaker {
   }
 
   /**
-   * Transition to OPEN state
+   * OPEN状態に遷移する
    */
   private transitionToOpen(): void {
     this.state = CircuitState.OPEN;
@@ -204,7 +204,7 @@ export class CircuitBreaker {
   }
 
   /**
-   * Transition to HALF_OPEN state
+   * HALF_OPEN状態に遷移する
    */
   private transitionToHalfOpen(): void {
     this.state = CircuitState.HALF_OPEN;
@@ -212,7 +212,7 @@ export class CircuitBreaker {
   }
 
   /**
-   * Transition to CLOSED state
+   * CLOSED状態に遷移する
    */
   private transitionToClosed(): void {
     this.state = CircuitState.CLOSED;

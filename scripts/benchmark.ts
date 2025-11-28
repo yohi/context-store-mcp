@@ -1,8 +1,8 @@
 #!/usr/bin/env tsx
 
 /**
- * Performance Benchmark Script
- * Tests system performance under various load conditions
+ * パフォーマンスベンチマークスクリプト
+ * 様々な負荷条件下でのシステムパフォーマンスをテストします
  */
 
 interface BenchmarkResult {
@@ -29,7 +29,7 @@ class PerformanceBenchmark {
   private results: BenchmarkResult[] = [];
 
   async runBenchmark(config: BenchmarkConfig): Promise<BenchmarkResult> {
-    // Input validation to prevent infinite loops and invalid statistics
+    // 無限ループと無効な統計を防ぐための入力検証
     if (config.concurrency <= 0) {
       throw new Error(
         `Invalid concurrency: ${config.concurrency}. Concurrency must be greater than 0.`
@@ -50,7 +50,7 @@ class PerformanceBenchmark {
     let failCount = 0;
     const startTime = Date.now();
 
-    // Run requests in batches
+    // リクエストをバッチで実行
     const batchSize = config.concurrency;
     const batches = Math.ceil(config.totalRequests / batchSize);
 
@@ -75,7 +75,7 @@ class PerformanceBenchmark {
 
       await Promise.all(promises);
 
-      // Progress indicator
+      // 進捗インジケーター
       const progress = ((batch + 1) / batches) * 100;
       process.stdout.write(`\r   Progress: ${progress.toFixed(1)}%`);
     }
@@ -83,13 +83,20 @@ class PerformanceBenchmark {
     const endTime = Date.now();
     const duration = (endTime - startTime) / 1000; // seconds
 
-    // Calculate statistics
+    // 統計の計算
     latencies.sort((a, b) => a - b);
-    const avgLatency =
-      latencies.reduce((sum, l) => sum + l, 0) / latencies.length;
-    const p50 = latencies[Math.floor(latencies.length * 0.5)];
-    const p95 = latencies[Math.floor(latencies.length * 0.95)];
-    const p99 = latencies[Math.floor(latencies.length * 0.99)];
+
+    let avgLatency = 0;
+    let p50 = 0;
+    let p95 = 0;
+    let p99 = 0;
+
+    if (latencies.length > 0) {
+      avgLatency = latencies.reduce((sum, l) => sum + l, 0) / latencies.length;
+      p50 = latencies[Math.floor(latencies.length * 0.5)];
+      p95 = latencies[Math.floor(latencies.length * 0.95)];
+      p99 = latencies[Math.floor(latencies.length * 0.99)];
+    }
     const throughput = successCount / duration;
 
     const result: BenchmarkResult = {
@@ -123,7 +130,7 @@ class PerformanceBenchmark {
     console.log(`   P95 Latency: ${result.p95Latency}ms`);
     console.log(`   P99 Latency: ${result.p99Latency}ms`);
 
-    // Check against SLA (P95 < 2000ms)
+    // SLAチェック (P95 < 2000ms)
     if (result.p95Latency < 2000) {
       console.log(`   ✅ SLA Met: P95 < 2000ms`);
     } else {
@@ -147,19 +154,19 @@ class PerformanceBenchmark {
   }
 }
 
-// Mock operations for benchmarking
+// ベンチマーク用のモック操作
 async function mockMemoryStore(): Promise<void> {
-  // Simulate memory storage operation
+  // 記憶保存操作をシミュレート
   await new Promise((resolve) => setTimeout(resolve, Math.random() * 50 + 10));
 }
 
 async function mockMemorySearch(): Promise<void> {
-  // Simulate memory search operation
+  // 記憶検索操作をシミュレート
   await new Promise((resolve) => setTimeout(resolve, Math.random() * 100 + 50));
 }
 
 async function mockHybridSearch(): Promise<void> {
-  // Simulate hybrid search operation
+  // ハイブリッド検索操作をシミュレート
   await new Promise((resolve) => setTimeout(resolve, Math.random() * 200 + 100));
 }
 
@@ -169,7 +176,7 @@ async function main() {
 
   const benchmark = new PerformanceBenchmark();
 
-  // Benchmark 1: Memory Storage
+  // ベンチマーク 1: 記憶保存
   await benchmark.runBenchmark({
     name: 'Memory Storage',
     concurrency: 10,
@@ -177,7 +184,7 @@ async function main() {
     operation: mockMemoryStore,
   });
 
-  // Benchmark 2: Vector Search
+  // ベンチマーク 2: ベクトル検索
   await benchmark.runBenchmark({
     name: 'Vector Search',
     concurrency: 20,
@@ -185,7 +192,7 @@ async function main() {
     operation: mockMemorySearch,
   });
 
-  // Benchmark 3: Hybrid Search
+  // ベンチマーク 3: ハイブリッド検索
   await benchmark.runBenchmark({
     name: 'Hybrid Search',
     concurrency: 10,
@@ -193,7 +200,7 @@ async function main() {
     operation: mockHybridSearch,
   });
 
-  // Benchmark 4: High Concurrency
+  // ベンチマーク 4: 高並行性テスト
   await benchmark.runBenchmark({
     name: 'High Concurrency Test',
     concurrency: 100,
@@ -201,7 +208,7 @@ async function main() {
     operation: mockMemorySearch,
   });
 
-  // Print summary
+  // サマリーの表示
   benchmark.printSummary();
 
   console.log('\n✅ All benchmarks completed!');
@@ -211,7 +218,7 @@ async function main() {
   console.log('   integrate with actual MCP server endpoints.\n');
 }
 
-// Run benchmarks
+// ベンチマークの実行
 main().catch((error) => {
   console.error('Benchmark failed:', error);
   process.exit(1);

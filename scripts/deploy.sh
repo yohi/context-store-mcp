@@ -1,22 +1,22 @@
 #!/bin/bash
 
-# Context Store MCP Deployment Script
-# This script handles the deployment of the Context Store MCP system
+# Context Store MCP デプロイメントスクリプト
+# このスクリプトはContext Store MCPシステムのデプロイを処理します
 
-set -e  # Exit on error
+set -e  # エラー時に終了
 
-# Colors for output
+# 出力用の色設定
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m' # 色なし
 
-# Configuration
+# 設定
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 ENV_FILE="${PROJECT_ROOT}/.env.production"
 
-# Functions
+# 関数定義
 log_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
 }
@@ -32,13 +32,13 @@ log_error() {
 check_prerequisites() {
     log_info "Checking prerequisites..."
     
-    # Check Docker
+    # Dockerの確認
     if ! command -v docker &> /dev/null; then
         log_error "Docker is not installed. Please install Docker first."
         exit 1
     fi
     
-    # Check Docker Compose and set wrapper variable
+    # Docker Composeの確認とラッパー変数の設定
     if command -v docker-compose &> /dev/null; then
         DOCKER_COMPOSE_BIN="docker-compose"
         log_info "Using docker-compose (v1)"
@@ -50,13 +50,13 @@ check_prerequisites() {
         exit 1
     fi
     
-    # Check Node.js
+    # Node.jsの確認
     if ! command -v node &> /dev/null; then
         log_error "Node.js is not installed. Please install Node.js 20+ first."
         exit 1
     fi
     
-    # Check environment file
+    # 環境変数ファイルの確認
     if [ ! -f "$ENV_FILE" ]; then
         log_error "Production environment file not found: $ENV_FILE"
         log_info "Please copy .env.production.example to .env.production and configure it."
@@ -69,12 +69,12 @@ check_prerequisites() {
 validate_environment() {
     log_info "Validating environment configuration..."
     
-    # Source environment file
+    # 環境変数ファイルの読み込み
     set -a
     source "$ENV_FILE"
     set +a
     
-    # Check required variables
+    # 必須変数の確認
     REQUIRED_VARS=(
         "POSTGRES_PASSWORD"
         "NEO4J_PASSWORD"
@@ -98,7 +98,7 @@ run_security_scan() {
     
     cd "$PROJECT_ROOT"
     
-    # Check for npm audit
+    # npm auditの実行
     if npm audit --production --audit-level=high; then
         log_info "No high-severity vulnerabilities found."
     else
@@ -116,15 +116,15 @@ build_application() {
     
     cd "$PROJECT_ROOT"
     
-    # Install dependencies
+    # 依存関係のインストール
     log_info "Installing dependencies..."
     npm ci --omit=dev
     
-    # Build TypeScript
+    # TypeScriptのビルド
     log_info "Compiling TypeScript..."
     npm run build
     
-    # Verify build
+    # ビルドの検証
     if [ ! -f "dist/index.js" ]; then
         log_error "Build failed: dist/index.js not found."
         exit 1
@@ -138,7 +138,7 @@ build_docker_image() {
     
     cd "$PROJECT_ROOT"
     
-    # Build image
+    # イメージのビルド
     docker build -t "context-store-mcp:latest" -t "context-store-mcp:$(date +%Y%m%d-%H%M%S)" .
     
     log_info "Docker image built successfully."
@@ -149,7 +149,7 @@ run_tests() {
     
     cd "$PROJECT_ROOT"
     
-    # Run unit tests
+    # ユニットテストの実行
     if npm test -- --run; then
         log_info "All tests passed."
     else
@@ -163,19 +163,19 @@ deploy_services() {
     
     cd "$PROJECT_ROOT"
     
-    # Stop existing services
+    # 既存サービスの停止
     log_info "Stopping existing services..."
     $DOCKER_COMPOSE_BIN -f docker-compose.prod.yml down
     
-    # Start services
+    # サービスの開始
     log_info "Starting services..."
     $DOCKER_COMPOSE_BIN -f docker-compose.prod.yml up -d
     
-    # Wait for services to be healthy
+    # サービスの健全性を待機
     log_info "Waiting for services to be healthy..."
     sleep 10
     
-    # Check service health
+    # サービスの健全性確認
     if $DOCKER_COMPOSE_BIN -f docker-compose.prod.yml ps | grep -q "unhealthy"; then
         log_error "Some services are unhealthy. Please check logs."
         $DOCKER_COMPOSE_BIN -f docker-compose.prod.yml ps
@@ -190,10 +190,10 @@ run_health_check() {
     
     cd "$PROJECT_ROOT"
     
-    # Wait for application to start
+    # アプリケーションの起動待機
     sleep 5
     
-    # Run health check script
+    # ヘルスチェック・スクリプトの実行
     if npx tsx scripts/health-check.ts; then
         log_info "Health check passed."
     else
@@ -209,7 +209,7 @@ show_status() {
     log_info "Logs can be viewed with: $DOCKER_COMPOSE_BIN -f docker-compose.prod.yml logs -f"
 }
 
-# Main deployment flow
+# メインデプロイフロー
 main() {
     log_info "Starting Context Store MCP deployment..."
     echo ""
@@ -229,5 +229,5 @@ main() {
     log_info "Application is running at http://localhost:${APP_PORT:-3000}"
 }
 
-# Run main function
+# メイン関数の実行
 main "$@"
