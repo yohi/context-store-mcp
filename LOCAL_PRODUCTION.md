@@ -86,7 +86,7 @@ cd context-store-mcp
 `.env.production.local`ファイルを作成します：
 
 ```bash
-cp .env.production.example .env.production.local
+cp .env.production.local.example .env.production.local
 ```
 
 `.env.production.local`を編集して、以下の重要な値を設定します：
