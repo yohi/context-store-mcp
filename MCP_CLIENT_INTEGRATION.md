@@ -177,29 +177,23 @@ VS Codeの設定（`settings.json`）に以下を追加：
 {
   "cline.mcpServers": {
     "context-store": {
-      "command": "node",
+      "command": "/bin/bash",
       "args": [
-        "/path/to/context-store-mcp/dist/index.js"
+        "-lc",
+        "set -a && source /path/to/.env.production.local && set +a && node /path/to/context-store-mcp/dist/index.js"
       ],
       "env": {
-        "POSTGRES_HOST": "localhost",
-        "POSTGRES_PORT": "5432",
-        "POSTGRES_DB": "context_store_dev",
-        "POSTGRES_USER": "context_store_user",
-        "POSTGRES_PASSWORD": "dev_password_123",
-        "NEO4J_URI": "bolt://localhost:7687",
-        "NEO4J_USER": "neo4j",
-        "NEO4J_PASSWORD": "dev_password_123",
-        "REDIS_HOST": "localhost",
-        "REDIS_PORT": "6379",
-        "REDIS_PASSWORD": "dev_password_123",
-        "OPENAI_API_KEY": "your-api-key-here",
         "LOG_LEVEL": "info"
       }
     }
   }
 }
 ```
+
+> ⚠️ **セキュリティ警告**
+> - `settings.json` にデータベースやAPIキーなどのシークレットを直接記載しないでください。
+> - `/.env.production.local` のような **.gitignore 済みの環境変数ファイル** に資格情報を保存し、起動時に `source` して渡してください。
+> - テスト用であっても簡易パスワードや `OPENAI_API_KEY=sk-your-api-key-here` のようなプレースホルダーをリポジトリへコミットしないよう徹底してください。
 
 #### 3. VS Codeの再読み込み
 
@@ -222,27 +216,45 @@ npm install @modelcontextprotocol/sdk
 ### 基本的な接続例
 
 ```typescript
+import { config as loadEnv } from 'dotenv';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
+// 任意: gitignore 済みファイルから資格情報をロード
+// loadEnv({ path: '/path/to/.env.production.local' });
+
+const requiredSecrets = [
+  'POSTGRES_HOST',
+  'POSTGRES_PORT',
+  'POSTGRES_DB',
+  'POSTGRES_USER',
+  'POSTGRES_PASSWORD',
+  'NEO4J_URI',
+  'NEO4J_USER',
+  'NEO4J_PASSWORD',
+  'REDIS_HOST',
+  'REDIS_PORT',
+  'REDIS_PASSWORD',
+  'OPENAI_API_KEY',
+];
+
+requiredSecrets.forEach((key) => {
+  if (!process.env[key]) {
+    throw new Error(`環境変数 ${key} が設定されていません`);
+  }
+});
+
+const serverEnv = Object.fromEntries(
+  requiredSecrets.map((key) => [key, process.env[key] as string])
+);
+
 async function main() {
-  // サーバープロセスの起動
+  // サーバープロセスの起動（環境変数は process.env から受け渡し）
   const transport = new StdioClientTransport({
     command: 'node',
     args: ['/path/to/context-store-mcp/dist/index.js'],
     env: {
-      POSTGRES_HOST: 'localhost',
-      POSTGRES_PORT: '5432',
-      POSTGRES_DB: 'context_store_dev',
-      POSTGRES_USER: 'context_store_user',
-      POSTGRES_PASSWORD: 'dev_password_123',
-      NEO4J_URI: 'bolt://localhost:7687',
-      NEO4J_USER: 'neo4j',
-      NEO4J_PASSWORD: 'dev_password_123',
-      REDIS_HOST: 'localhost',
-      REDIS_PORT: '6379',
-      REDIS_PASSWORD: 'dev_password_123',
-      OPENAI_API_KEY: 'your-api-key-here',
+      ...serverEnv,
       LOG_LEVEL: 'info',
     },
   });
@@ -295,6 +307,16 @@ async function main() {
 }
 
 main().catch(console.error);
+```
+
+> 🔐 環境変数は OS のセキュアストレージや `.env.production.local` のような gitignore 済みファイルで管理し、リポジトリや共有設定ファイルに書き込まないでください。
+
+任意で `dotenv` を使う場合は、次のように起動コードの先頭で読み込めます：
+
+```typescript
+import dotenv from 'dotenv';
+dotenv.config({ path: '/path/to/.env.production.local' });
+```
 ```
 
 ### 記憶の保存例

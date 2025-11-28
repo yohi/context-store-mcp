@@ -78,8 +78,8 @@ echo -e "${BLUE}[3/4] Redisのバックアップ...${NC}"
 
 # Redis バックアップ
 if docker ps | grep -q "context-store-redis-prod"; then
-    # Redisに保存を強制
-    docker exec context-store-redis-prod redis-cli -a "${REDIS_PASSWORD:-changeme}" SAVE 2>/dev/null || true
+    # Redisに保存を強制（REDISCLI_AUTH 経由でパスワードを渡す）
+    docker exec -e "REDISCLI_AUTH=${REDIS_PASSWORD:-changeme}" context-store-redis-prod redis-cli SAVE 2>/dev/null || true
     docker cp context-store-redis-prod:/data/dump.rdb "$BACKUP_PATH/redis.rdb"
     echo -e "${GREEN}✓ Redisのバックアップが完了しました${NC}"
 else

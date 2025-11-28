@@ -4,33 +4,38 @@
 <dict>
     <key>Label</key>
     <string>com.contextstore.mcp</string>
-    
+
+    <key>WorkingDirectory</key>
+    <string>/home/y_ohi/program/context-store-mcp</string>
+
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>-c</string>
-        <string>cd ~/program/context-store-mcp && /usr/local/bin/docker-compose -f docker-compose.prod.yml up -d</string>
+        <string>docker-compose</string>
+        <string>-f</string>
+        <string>docker-compose.prod.yml</string>
+        <string>up</string>
+        <string>-d</string>
     </array>
-    
+
     <key>RunAtLoad</key>
     <true/>
-    
+
     <key>KeepAlive</key>
     <dict>
         <key>SuccessfulExit</key>
         <false/>
     </dict>
-    
+
     <key>StandardOutPath</key>
     <string>/tmp/context-store-mcp.log</string>
-    
+
     <key>StandardErrorPath</key>
     <string>/tmp/context-store-mcp.error.log</string>
-    
+
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
 </dict>
 </plist>

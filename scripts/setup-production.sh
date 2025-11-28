@@ -7,6 +7,8 @@
 
 set -e  # エラーで停止
 
+SENTINEL_VALUE="REPLACE_ME_REQUIRED"
+
 # 色定義
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -88,21 +90,26 @@ SIGNATURE_SECRET=$(generate_password)
 echo -e "${GREEN}✓ パスワードを生成しました${NC}"
 
 # .env.production.local にパスワードを設定
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    # macOS
-    sed -i '' "s/POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$POSTGRES_PASSWORD/" .env.production.local
-    sed -i '' "s/NEO4J_PASSWORD=.*/NEO4J_PASSWORD=$NEO4J_PASSWORD/" .env.production.local
-    sed -i '' "s/REDIS_PASSWORD=.*/REDIS_PASSWORD=$REDIS_PASSWORD/" .env.production.local
-    sed -i '' "s/SIGNATURE_SECRET=.*/SIGNATURE_SECRET=$SIGNATURE_SECRET/" .env.production.local
-else
-    # Linux
-    sed -i "s/POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$POSTGRES_PASSWORD/" .env.production.local
-    sed -i "s/NEO4J_PASSWORD=.*/NEO4J_PASSWORD=$NEO4J_PASSWORD/" .env.production.local
-    sed -i "s/REDIS_PASSWORD=.*/REDIS_PASSWORD=$REDIS_PASSWORD/" .env.production.local
-    sed -i "s/SIGNATURE_SECRET=.*/SIGNATURE_SECRET=$SIGNATURE_SECRET/" .env.production.local
-fi
+set_secret() {
+    local key="$1"
+    local value="$2"
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "s|^${key}=${SENTINEL_VALUE}|${key}=${value}|" .env.production.local
+    else
+        sed -i "s|^${key}=${SENTINEL_VALUE}|${key}=${value}|" .env.production.local
+    fi
+}
+
+set_secret "POSTGRES_PASSWORD" "$POSTGRES_PASSWORD"
+set_secret "NEO4J_PASSWORD" "$NEO4J_PASSWORD"
+set_secret "REDIS_PASSWORD" "$REDIS_PASSWORD"
+set_secret "SIGNATURE_SECRET" "$SIGNATURE_SECRET"
 
 echo -e "${GREEN}✓ パスワードを .env.production.local に設定しました${NC}"
+
+if grep -q "$SENTINEL_VALUE" .env.production.local; then
+    echo -e "${YELLOW}警告: まだ ${SENTINEL_VALUE} が残っています。手動で確認してください。${NC}"
+fi
 
 echo ""
 echo -e "${BLUE}[4/7] OpenAI API Key の設定...${NC}"
@@ -112,7 +119,7 @@ if grep -q "OPENAI_API_KEY=sk-your-api-key-here" .env.production.local; then
     echo -e "${YELLOW}警告: OpenAI API Key が設定されていません${NC}"
     echo "OpenAI API Key を入力してください（https://platform.openai.com/api-keys から取得）:"
     read -r OPENAI_API_KEY
-    
+
     if [ -n "$OPENAI_API_KEY" ]; then
         if [[ "$OSTYPE" == "darwin"* ]]; then
             sed -i '' "s/OPENAI_API_KEY=.*/OPENAI_API_KEY=$OPENAI_API_KEY/" .env.production.local

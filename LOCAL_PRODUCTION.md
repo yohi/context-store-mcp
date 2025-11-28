@@ -48,7 +48,7 @@
 
 ```bash
 # 1. リポジトリのクローン
-git clone https://github.com/your-org/context-store-mcp.git
+git clone https://github.com/yohi/context-store-mcp.git
 cd context-store-mcp
 
 # 2. 自動セットアップスクリプトの実行
@@ -77,7 +77,7 @@ npm run health-check
 ### 1. リポジトリの準備
 
 ```bash
-git clone https://github.com/your-org/context-store-mcp.git
+git clone https://github.com/yohi/context-store-mcp.git
 cd context-store-mcp
 ```
 
@@ -448,6 +448,22 @@ sudo cp systemd/context-store-mcp.service /etc/systemd/system/
 sudo systemctl daemon-reload
 ```
 
+> [!IMPORTANT] パス要件
+> - サービス定義は `WorkingDirectory` と `EnvironmentFile` を `/home/%u/program/context-store-mcp` に固定しています。
+> - そのまま使う場合は **リポジトリを `~/program/context-store-mcp` に配置**するか、以下のいずれかで対応してください。
+>   1. **シンボリックリンクを作成**: 例として `/srv/context-store-mcp` に設置した場合
+>      ```bash
+>      sudo mkdir -p /home/$USER/program
+>      sudo ln -s /srv/context-store-mcp /home/$USER/program/context-store-mcp
+>      ```
+>   2. **サービスファイルを編集**して実際のパスに変更:
+>      ```bash
+>      sudo editor /etc/systemd/system/context-store-mcp.service
+>      # WorkingDirectory と EnvironmentFile を /absolute/path/context-store-mcp に更新
+>      sudo systemctl daemon-reload
+>      ```
+> - `EnvironmentFile` を別パスに置く場合も同様に書き換えてください。
+
 #### 2. サービスの有効化
 
 ```bash
@@ -625,7 +641,7 @@ launchctl list | grep contextstore
 
 問題が解決しない場合：
 
-1. [GitHub Issues](https://github.com/your-org/context-store-mcp/issues)で検索
+1. [GitHub Issues](https://github.com/yohi/context-store-mcp/issues)で検索
 2. 新しいIssueを作成（ログとシステム情報を含める）
 
 ---

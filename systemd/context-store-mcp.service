@@ -1,6 +1,6 @@
 [Unit]
 Description=Context Store MCP Server
-Documentation=https://github.com/your-org/context-store-mcp
+Documentation=https://github.com/yohi/context-store-mcp
 After=docker.service
 Requires=docker.service
 

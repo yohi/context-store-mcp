@@ -32,6 +32,38 @@ set -a
 source .env.production.local
 set +a
 
+# セキュリティ検証: REPLACE_ME_REQUIRED センチネル値のチェック
+echo -e "${BLUE}セキュリティ検証を実行しています...${NC}"
+
+SENTINEL_VALUE="REPLACE_ME_REQUIRED"
+mapfile -t SENTINEL_LINES < <(grep -n "$SENTINEL_VALUE" .env.production.local || true)
+
+if [ "${#SENTINEL_LINES[@]}" -gt 0 ]; then
+    echo -e "${RED}============================================${NC}"
+    echo -e "${RED}セキュリティエラー: 未設定のシークレットが検出されました${NC}"
+    echo -e "${RED}============================================${NC}"
+    echo ""
+    echo -e "${YELLOW}以下の変数がプレースホルダー値 (${SENTINEL_VALUE}) のままです:${NC}"
+    for entry in "${SENTINEL_LINES[@]}"; do
+        line_no="${entry%%:*}"
+        assignment="${entry#*:}"
+        var_name="${assignment%%=*}"
+        echo -e "  - ${RED}${var_name}${NC} (行 ${line_no})"
+    done
+    echo ""
+    echo -e "${BLUE}解決方法:${NC}"
+    echo "1. セットアップスクリプトを実行して強固なパスワードを自動生成:"
+    echo -e "   ${GREEN}./scripts/setup-production.sh${NC}"
+    echo ""
+    echo "2. または、手動で .env.production.local を編集して強固なパスワードを設定:"
+    echo -e "   ${GREEN}openssl rand -base64 32${NC} でパスワードを生成できます"
+    echo ""
+    exit 1
+fi
+
+echo -e "${GREEN}✓ セキュリティ検証に合格しました${NC}"
+echo ""
+
 echo -e "${BLUE}[1/3] Dockerサービスを起動しています...${NC}"
 
 # サービスの起動
@@ -48,12 +80,12 @@ ELAPSED=0
 while [ $ELAPSED -lt $TIMEOUT ]; do
     HEALTHY_COUNT=$(docker-compose -f docker-compose.prod.yml ps | grep -c "Up (healthy)" || true)
     TOTAL_COUNT=$(docker-compose -f docker-compose.prod.yml ps | grep -c "Up" || true)
-    
+
     if [ "$HEALTHY_COUNT" -ge 3 ]; then
         echo -e "${GREEN}✓ 全サービスが正常に起動しました${NC}"
         break
     fi
-    
+
     sleep 2
     ELAPSED=$((ELAPSED + 2))
     echo -n "."

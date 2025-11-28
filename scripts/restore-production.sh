@@ -114,9 +114,9 @@ if [ -f "$BACKUP_PATH/neo4j.tar.gz" ]; then
     # Neo4jを停止
     docker-compose -f docker-compose.prod.yml stop neo4j
     # データを復元
-    docker cp "$BACKUP_PATH/neo4j.tar.gz" context-store-neo4j-prod:/tmp/
-    docker exec context-store-neo4j-prod tar xzf /tmp/neo4j_backup.tar.gz -C /
-    docker exec context-store-neo4j-prod rm /tmp/neo4j_backup.tar.gz
+    docker cp "$BACKUP_PATH/neo4j.tar.gz" context-store-neo4j-prod:/tmp/neo4j.tar.gz
+    docker exec context-store-neo4j-prod tar xzf /tmp/neo4j.tar.gz -C /
+    docker exec context-store-neo4j-prod rm /tmp/neo4j.tar.gz
     # Neo4jを再起動
     docker-compose -f docker-compose.prod.yml start neo4j
     sleep 5
