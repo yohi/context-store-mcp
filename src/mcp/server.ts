@@ -295,7 +295,7 @@ export function createContextStoreServer(): Server {
             id: m.id,
             type: m.memoryType,
             preview: m.content.substring(0, 100) + (m.content.length > 100 ? '...' : ''),
-            tags: m.metadata.tags,
+            tags: Array.isArray(m.metadata?.tags) ? m.metadata.tags : (m.metadata?.tags ? [m.metadata.tags] : []),
             timestamp: m.createdAt
           }));
 
