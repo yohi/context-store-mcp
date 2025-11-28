@@ -53,10 +53,10 @@ npm run dev
 ./scripts/start-production.sh
 
 # 3. MCPクライアント（Claude Desktop等）を設定
-# LOCAL_PRODUCTION.md を参照
+# docs/deployment/local-production.md を参照
 ```
 
-詳細は [LOCAL_PRODUCTION.md](./LOCAL_PRODUCTION.md) を参照してください。
+詳細は [docs/deployment/local-production.md](./docs/deployment/local-production.md) を参照してください。
 
 ### リモート本番環境
 
@@ -76,13 +76,12 @@ cp .env.production.example .env.production
 ## 📚 ドキュメント
 
 ### デプロイメント
-- **[ローカル本番環境](./LOCAL_PRODUCTION.md)** - ローカルマシンで本番サーバーを運用
-- **[MCPクライアント統合](./MCP_CLIENT_INTEGRATION.md)** - Claude Desktop等との統合方法
+- **[ローカル本番環境](./docs/deployment/local-production.md)** - ローカルマシンで本番サーバーを運用
+- **[MCPクライアント統合](./docs/integration/mcp-clients.md)** - Claude Desktop等との統合方法
 - **[クイックスタート](./QUICK_START.md)** - 5分でデプロイ
-- **[デプロイメントガイド](./DEPLOYMENT.md)** - 詳細な手順
-- **[デプロイメントチェックリスト](./DEPLOYMENT_CHECKLIST.md)** - 確認項目
-- **[本番環境準備ガイド](./PRODUCTION_READINESS.md)** - 本番環境の要件
-- **[デプロイメント概要](./DEPLOYMENT_SUMMARY.md)** - 実装内容の概要
+- **[デプロイメントガイド](./docs/deployment/guide.md)** - 詳細な手順
+- **[デプロイメントチェックリスト](./docs/deployment/checklist.md)** - 確認項目
+- **[本番環境準備ガイド](./docs/deployment/production-readiness.md)** - 本番環境の要件
 
 ### 開発
 - **[技術スタック](.kiro/steering/tech.md)** - 使用技術
