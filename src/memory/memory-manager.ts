@@ -1134,11 +1134,13 @@ export class MemoryManager implements MemoryManagerService {
     };
 
     // TODO: GraphStoreAdapterを使用してリンクを保存
-    console.warn('Link creation not fully implemented without GraphStoreAdapter', link);
-
+    console.warn('Link creation not fully implemented without GraphStoreAdapter');
     return {
-      success: true,
-      value: linkId,
+      success: false,
+      error: {
+        type: 'STORAGE_ERROR',
+        message: 'Link creation requires GraphStoreAdapter (not yet implemented)',
+      },
     };
   }
 
@@ -1148,6 +1150,7 @@ export class MemoryManager implements MemoryManagerService {
    */
   async getLinks(_memoryId: MemoryId): Promise<MemoryLink[]> {
     // TODO: GraphStoreAdapterを使用
+    console.warn('getLinks not fully implemented without GraphStoreAdapter');
     return [];
   }
 
@@ -1157,9 +1160,13 @@ export class MemoryManager implements MemoryManagerService {
    */
   async deleteLink(_linkId: string): Promise<Result<boolean, MemoryError>> {
     // TODO: GraphStoreAdapterを使用
+    console.warn('deleteLink not fully implemented without GraphStoreAdapter');
     return {
-      success: true,
-      value: true,
+      success: false,
+      error: {
+        type: 'STORAGE_ERROR',
+        message: 'Link deletion requires GraphStoreAdapter (not yet implemented)',
+      },
     };
   }
 
