@@ -27,6 +27,9 @@ import type { GraphStoreAdapter } from '../storage/graph-store-adapter.js';
 import type { TransactionCoordinator } from '../storage/transaction-coordinator.js';
 import type { StorageAdapter } from '../storage/storage-adapter.js';
 import { PostgresStorageAdapter } from '../storage/postgres-store-adapter.js';
+import { getLogger } from '../monitoring/structured-logger.js';
+
+const processLogger = getLogger();
 
 export interface MemoryManagerConfig {
   storage?: StorageAdapter;
@@ -43,9 +46,16 @@ export class MemoryManager implements MemoryManagerService {
   private transactionCoordinator?: TransactionCoordinator;
   private classifier?: MemoryClassifierService;
 
+  // このMemoryManagerがPoolを作成したかどうかを追跡
+  private ownsStorage: boolean = false;
+
+  // dispose()が既に呼ばれたかを追跡（冪等性のため）
+  private isDisposed: boolean = false;
+
   constructor(config?: MemoryManagerConfig) {
     if (config?.storage) {
       this.storage = config.storage;
+      this.ownsStorage = false; // 外部から提供されたストレージ
     } else {
       // デフォルトでPostgreSQLアダプターを使用
       const pool = new Pool({
@@ -55,12 +65,33 @@ export class MemoryManager implements MemoryManagerService {
         connectionTimeoutMillis: 2000,
       });
       this.storage = new PostgresStorageAdapter(pool);
+      this.ownsStorage = true; // このMemoryManagerがPoolを作成した
     }
 
     if (config) {
       if (config.vectorStore) this.vectorStore = config.vectorStore;
       if (config.transactionCoordinator) this.transactionCoordinator = config.transactionCoordinator;
       if (config.classifier) this.classifier = config.classifier;
+    }
+  }
+
+  /**
+   * リソースをクリーンアップし、データベース接続を閉じる
+   */
+  async dispose(): Promise<void> {
+    if (this.isDisposed) {
+      return;
+    }
+    this.isDisposed = true;
+
+    // 自分で作成したPoolのみをクリーンアップ
+    if (this.ownsStorage) {
+      if (this.storage.close) {
+        await this.storage.close();
+      } else if (this.storage instanceof PostgresStorageAdapter) {
+        // StorageAdapterの型定義更新が反映されていない場合のフォールバック
+        await this.storage.close();
+      }
     }
   }
 
@@ -145,18 +176,14 @@ export class MemoryManager implements MemoryManagerService {
       }
       // 注意: Sagaが結果整合性を処理するため、現時点では部分的な成功の警告は無視します
     } else {
-      // フォールバック: 単純なストレージアダプターを使用
-      try {
-        await this.storage.storeMemory(memory);
-      } catch (error) {
-        return {
-          success: false,
-          error: {
-            type: 'STORAGE_ERROR',
-            message: error instanceof Error ? error.message : String(error),
-          },
-        };
-      }
+      processLogger.error('TransactionCoordinator unavailable for storeMemory', { memoryId });
+      return {
+        success: false,
+        error: {
+          type: 'TRANSACTION_UNAVAILABLE',
+          message: 'TransactionCoordinator is required for data consistency but is unavailable',
+        },
+      };
     }
 
     // ベクトルストアに埋め込みを保存
@@ -286,33 +313,14 @@ export class MemoryManager implements MemoryManagerService {
         };
       }
     } else {
-      // フォールバック: 単純なストレージアダプターを使用
-      // 更新用オブジェクトを作成
-      const updatePayload: Partial<Memory> = {
-        ...updates,
-        updatedAt: new Date(),
-        version: existing.version + 1,
+      processLogger.error('TransactionCoordinator unavailable for updateMemory', { memoryId: id });
+      return {
+        success: false,
+        error: {
+          type: 'TRANSACTION_UNAVAILABLE',
+          message: 'TransactionCoordinator is required for data consistency but is unavailable',
+        },
       };
-
-      if (normalizedMetadata) {
-        updatePayload.metadata = normalizedMetadata;
-      }
-
-      // 保護されたフィールドの削除（念のため）
-      delete updatePayload.id;
-      delete updatePayload.createdAt;
-
-      try {
-        await this.storage.updateMemory(id, updatePayload);
-      } catch (error) {
-        return {
-          success: false,
-          error: {
-            type: 'STORAGE_ERROR',
-            message: error instanceof Error ? error.message : String(error),
-          },
-        };
-      }
     }
 
     // ベクトルストアの更新（コンテンツが変更された場合）
@@ -393,18 +401,14 @@ export class MemoryManager implements MemoryManagerService {
         };
       }
     } else {
-      // フォールバック: 単純なストレージアダプターを使用
-      try {
-        await this.storage.deleteMemory(id);
-      } catch (error) {
-        return {
-          success: false,
-          error: {
-            type: 'STORAGE_ERROR',
-            message: error instanceof Error ? error.message : String(error),
-          },
-        };
-      }
+      processLogger.error('TransactionCoordinator unavailable for deleteMemory', { memoryId: id });
+      return {
+        success: false,
+        error: {
+          type: 'TRANSACTION_UNAVAILABLE',
+          message: 'TransactionCoordinator is required for data consistency but is unavailable',
+        },
+      };
     }
 
     // ベクトルストアからの削除（論理削除）
@@ -1037,10 +1041,10 @@ export class MemoryManager implements MemoryManagerService {
   async createLink(
     from: MemoryId,
     to: MemoryId,
-    linkType: MemoryLinkType,
+    _linkType: MemoryLinkType,
     strength: number = 0.5,
-    createdBy: 'user' | 'system' = 'system',
-    reasoning?: string
+    _createdBy: 'user' | 'system' = 'system',
+    _reasoning?: string
   ): Promise<Result<string, MemoryError>> {
     // 自己リンクを防止
     if (from === to) {
@@ -1119,20 +1123,6 @@ export class MemoryManager implements MemoryManagerService {
       };
     }
 
-    const linkId = randomUUID();
-    const link: MemoryLink = {
-      linkId,
-      fromMemoryId: from,
-      toMemoryId: to,
-      linkType,
-      strength,
-      metadata: {
-        createdAt: new Date(),
-        createdBy,
-        ...(reasoning ? { reasoning } : {}),
-      },
-    };
-
     // TODO: GraphStoreAdapterを使用してリンクを保存
     console.warn('Link creation not fully implemented without GraphStoreAdapter');
     return {
@@ -1205,5 +1195,40 @@ export class MemoryManager implements MemoryManagerService {
       console.error('Failed to get all memory IDs:', e);
       return [];
     }
+  }
+
+  /**
+   * MemoryManagerが所有するリソースをクリーンアップする
+   * 
+   * このメソッドは、MemoryManagerが作成したデータベース接続プールを
+   * 適切にクローズします。アプリケーションのシャットダウン時に呼び出す必要があります。
+   * 
+   * このメソッドは冪等であり、複数回呼び出しても安全です。
+   * 
+   * @example
+   * ```typescript
+   * const memoryManager = new MemoryManager();
+   * // ... 使用 ...
+   * await memoryManager.dispose(); // シャットダウン時
+   * ```
+   */
+  async dispose(): Promise<void> {
+    // 既にdisposeされている場合は何もしない（冪等性）
+    if (this.isDisposed) {
+      return;
+    }
+
+    // このMemoryManagerがストレージを作成した場合のみクローズ
+    if (this.ownsStorage && this.storage instanceof PostgresStorageAdapter) {
+      try {
+        await this.storage.close();
+        console.log('MemoryManager: PostgreSQL connection pool closed');
+      } catch (error) {
+        console.error('MemoryManager: Error closing storage:', error);
+        throw error;
+      }
+    }
+
+    this.isDisposed = true;
   }
 }

@@ -162,4 +162,12 @@ export class PostgresStorageAdapter implements StorageAdapter {
             version: row.version,
         };
     }
+
+    /**
+     * データベース接続プールをクローズする
+     * すべてのアクティブな接続を終了し、リソースを解放します
+     */
+    async close(): Promise<void> {
+        await this.pool.end();
+    }
 }

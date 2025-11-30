@@ -26,4 +26,7 @@ export interface StorageAdapter {
 
   /** すべての記憶IDを取得する（整合性調整用） */
   getAllMemoryIds(): Promise<MemoryId[]>;
+
+  /** リソースを解放し、接続を閉じる */
+  close?(): Promise<void>;
 }
