@@ -155,7 +155,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
             updatedAt: new Date(row.updated_at),
             lastAccessedAt: new Date(row.last_accessed_at),
             accessCount: row.access_count,
-            importanceScore: parseFloat(row.importance_score),
+            importanceScore: row.importance_score == null ? 0 : (typeof row.importance_score === 'number' ? row.importance_score : parseFloat(row.importance_score)) || 0,
             isDeleted: row.is_deleted,
             isProtected: row.is_protected,
             deletedAt: row.deleted_at ? new Date(row.deleted_at) : null,

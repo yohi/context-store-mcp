@@ -423,6 +423,73 @@ export class MemoryManager implements MemoryManagerService {
   }
 
   /**
+   * 論理削除された記憶を復元する（内部使用のみ）
+   * 
+   * このメソッドは、updateMemoryの保護フィールドフィルタリングをバイパスして、
+   * isDeletedとdeletedAtフィールドを直接更新します。
+   * 主にロールバックシナリオで使用されます。
+   * 
+   * @param id - 復元する記憶のID
+   * @returns 成功した場合はtrue、失敗した場合はエラー
+   */
+  private async restoreMemory(id: MemoryId): Promise<Result<boolean, MemoryError>> {
+    // TransactionCoordinatorを使用して直接データベースを更新
+    if (this.transactionCoordinator) {
+      try {
+        // PostgreSQLで直接更新を実行
+        await (this.transactionCoordinator as any).postgresPool.query(
+          'UPDATE memories SET is_deleted = false, deleted_at = null WHERE id = $1',
+          [id]
+        );
+        return {
+          success: true,
+          value: true,
+        };
+      } catch (error) {
+        return {
+          success: false,
+          error: {
+            type: 'STORAGE_ERROR',
+            message: `Failed to restore memory ${id}: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        };
+      }
+    } else {
+      // TransactionCoordinatorがない場合は、ストレージアダプターを直接使用
+      try {
+        // PostgresStorageAdapterのプールに直接アクセス
+        const pool = (this.storage as any).pool as Pool;
+        if (pool) {
+          await pool.query(
+            'UPDATE memories SET is_deleted = false, deleted_at = null WHERE id = $1',
+            [id]
+          );
+          return {
+            success: true,
+            value: true,
+          };
+        } else {
+          return {
+            success: false,
+            error: {
+              type: 'STORAGE_ERROR',
+              message: 'Cannot restore memory: no database connection available',
+            },
+          };
+        }
+      } catch (error) {
+        return {
+          success: false,
+          error: {
+            type: 'STORAGE_ERROR',
+            message: `Failed to restore memory ${id}: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        };
+      }
+    }
+  }
+
+  /**
    * 記憶の履歴を取得する
    * 要件: Task 3.2
    */
@@ -804,7 +871,8 @@ export class MemoryManager implements MemoryManagerService {
           const original = snapshot.get(deletedId);
           if (original) {
             // 復元ロジック（isDeleted=falseにして更新）
-            await this.updateMemory(deletedId, { isDeleted: false, deletedAt: null });
+            // updateMemoryは保護フィールドをフィルタリングするため、専用のrestoreMemoryメソッドを使用
+            await this.restoreMemory(deletedId);
           }
         }
 

@@ -31,6 +31,10 @@ export function createContextStoreServer(deps?: { memoryManager?: MemoryManager 
 
   if (!memoryManager) {
     // DB接続プールの作成
+    if (!process.env['DATABASE_URL']) {
+      throw new Error('DATABASE_URL environment variable is required but not set.');
+    }
+
     const pool = new Pool({
       connectionString: process.env['DATABASE_URL'],
       max: 20,
