@@ -19,8 +19,9 @@ export default defineConfig({
             },
         },
         globalSetup: './src/tests/integration/global-setup.ts',
+        globalTeardown: './src/tests/integration/global-teardown.ts',
+        setupFiles: ['./src/tests/integration/setup.ts'],
     },
-    globalTeardown: './src/tests/integration/global-teardown.ts',
     resolve: {
         alias: {
             '@': path.resolve(__dirname, './src'),
