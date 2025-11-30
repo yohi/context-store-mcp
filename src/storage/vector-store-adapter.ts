@@ -225,6 +225,14 @@ export interface IVectorStoreAdapter {
    * HNSWインデックスの最適化を実行
    */
   reindexVectors(): Promise<void>;
+
+  /**
+   * 既存の記憶に対して埋め込みベクトルを生成して保存
+   *
+   * @param id - 記憶ID
+   * @param content - 記憶コンテンツ
+   */
+  addEmbeddingForMemory(id: VectorId, content: string): Promise<void>;
 }
 
 /**
@@ -504,6 +512,26 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
     } catch (error) {
       await client.query('ROLLBACK');
       throw new Error(`Failed to store vector: ${error}`);
+    } finally {
+      client.release();
+    }
+  }
+
+  async addEmbeddingForMemory(id: VectorId, content: string): Promise<void> {
+    // ベクトル生成
+    const embedding = await this.generateEmbedding(content);
+    const normalizedEmbedding = this.normalizeVector(embedding);
+
+    // PostgreSQLに保存
+    const client = await this.pool.connect();
+    try {
+      // memory_vectors テーブルにベクトルを保存 (UPSERT)
+      await client.query(
+        `INSERT INTO memory_vectors (memory_id, embedding)
+         VALUES ($1, $2::vector)
+         ON CONFLICT (memory_id) DO UPDATE SET embedding = $2::vector`,
+        [id, this.toPgvector(normalizedEmbedding)]
+      );
     } finally {
       client.release();
     }

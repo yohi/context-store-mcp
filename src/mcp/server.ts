@@ -16,13 +16,70 @@ import { MemoryManager } from '../memory/memory-manager.js';
 import type { MemoryType } from '../memory/types.js';
 import { GarbageCollectionJob } from '../monitoring/garbage-collection-job.js';
 
+import { Pool } from 'pg';
+import neo4j from 'neo4j-driver';
+import { PostgresStorageAdapter } from '../storage/postgres-store-adapter.js';
+import { VectorStoreAdapter } from '../storage/vector-store-adapter.js';
+import { TransactionCoordinator } from '../storage/transaction-coordinator.js';
+
 /**
  * MCPサーバーインスタンスを作成して設定する
  */
 export function createContextStoreServer(deps?: { memoryManager?: MemoryManager }): Server {
   // MemoryManagerの初期化
-  // 注入されたインスタンスがあればそれを使用し、なければ新規作成する
-  const memoryManager = deps?.memoryManager ?? new MemoryManager();
+  let memoryManager = deps?.memoryManager;
+
+  if (!memoryManager) {
+    // DB接続プールの作成
+    const pool = new Pool({
+      connectionString: process.env['DATABASE_URL'],
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 2000,
+    });
+
+    const storage = new PostgresStorageAdapter(pool);
+
+    // VectorStoreの初期化 (OpenAI APIキーが必要)
+    let vectorStore: VectorStoreAdapter | undefined;
+    if (process.env['OPENAI_API_KEY']) {
+      vectorStore = new VectorStoreAdapter({
+        pool,
+        openaiApiKey: process.env['OPENAI_API_KEY'],
+      });
+    } else {
+      console.warn('OPENAI_API_KEY not found. Vector search will be disabled.');
+    }
+
+    // Neo4jドライバーの初期化
+    let neo4jDriver;
+    if (process.env['NEO4J_URI'] && process.env['NEO4J_USER'] && process.env['NEO4J_PASSWORD']) {
+      try {
+        neo4jDriver = neo4j.driver(
+          process.env['NEO4J_URI'],
+          neo4j.auth.basic(process.env['NEO4J_USER'], process.env['NEO4J_PASSWORD'])
+        );
+      } catch (error) {
+        console.warn('Failed to initialize Neo4j driver:', error);
+      }
+    }
+
+    // TransactionCoordinatorの初期化
+    let transactionCoordinator: TransactionCoordinator | undefined;
+    if (neo4jDriver) {
+      transactionCoordinator = new TransactionCoordinator({
+        postgresPool: pool,
+        neo4jDriver: neo4jDriver,
+      });
+    }
+
+    // MemoryManager設定オブジェクトを構築（undefinedプロパティを除外）
+    const config: any = { storage };
+    if (vectorStore) config.vectorStore = vectorStore;
+    if (transactionCoordinator) config.transactionCoordinator = transactionCoordinator;
+
+    memoryManager = new MemoryManager(config);
+  }
 
   // ガベージコレクションジョブの初期化と開始 (5分間隔)
   const gcJob = new GarbageCollectionJob(memoryManager);
