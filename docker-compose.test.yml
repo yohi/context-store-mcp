@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  postgres-test:
+    image: pgvector/pgvector:pg16
+    container_name: context-store-postgres-test
+    environment:
+      POSTGRES_DB: context_store_test
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./docker/init-scripts/test:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d context_store_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  neo4j-test:
+    image: neo4j:5.15
+    container_name: context-store-neo4j-test
+    environment:
+      NEO4J_AUTH: neo4j/test_password
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_memory_pagecache_size: 512M
+      NEO4J_dbms_memory_heap_initial__size: 512M
+      NEO4J_dbms_memory_heap_max__size: 1G
+    ports:
+      - "7475:7474"
+      - "7688:7687"
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p test_password 'RETURN 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
