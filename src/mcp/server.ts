@@ -16,17 +16,129 @@ import { MemoryManager } from '../memory/memory-manager.js';
 import type { MemoryType } from '../memory/types.js';
 import { GarbageCollectionJob } from '../monitoring/garbage-collection-job.js';
 
+import { Pool } from 'pg';
+import neo4j from 'neo4j-driver';
+import { PostgresStorageAdapter } from '../storage/postgres-store-adapter.js';
+import { VectorStoreAdapter } from '../storage/vector-store-adapter.js';
+import { TransactionCoordinator } from '../storage/transaction-coordinator.js';
+
 /**
  * MCPサーバーインスタンスを作成して設定する
+ * @returns サーバーインスタンスとクリーンアップ関数
  */
-export function createContextStoreServer(deps?: { memoryManager?: MemoryManager }): Server {
+export function createContextStoreServer(deps?: { memoryManager?: MemoryManager }): {
+  server: Server;
+  cleanup: () => Promise<void>;
+} {
   // MemoryManagerの初期化
-  // 注入されたインスタンスがあればそれを使用し、なければ新規作成する
-  const memoryManager = deps?.memoryManager ?? new MemoryManager();
+  let memoryManager = deps?.memoryManager;
+
+  // リソースのクリーンアップ用に外側のスコープで宣言
+  let pool: Pool | undefined;
+  let neo4jDriver: any;
+
+  if (!memoryManager) {
+    // DB接続プールの作成
+    if (!process.env['DATABASE_URL']) {
+      throw new Error('DATABASE_URL environment variable is required but not set.');
+    }
+
+    pool = new Pool({
+      connectionString: process.env['DATABASE_URL'],
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 2000,
+    });
+
+    const storage = new PostgresStorageAdapter(pool);
+
+    // VectorStoreの初期化 (OpenAI APIキーが必要)
+    let vectorStore: VectorStoreAdapter | undefined;
+    if (process.env['OPENAI_API_KEY']) {
+      vectorStore = new VectorStoreAdapter({
+        pool,
+        openaiApiKey: process.env['OPENAI_API_KEY'],
+      });
+    } else {
+      console.warn('OPENAI_API_KEY not found. Vector search will be disabled.');
+    }
+
+    // Neo4jドライバーの初期化
+    if (process.env['NEO4J_URI'] && process.env['NEO4J_USER'] && process.env['NEO4J_PASSWORD']) {
+      try {
+        neo4jDriver = neo4j.driver(
+          process.env['NEO4J_URI'],
+          neo4j.auth.basic(process.env['NEO4J_USER'], process.env['NEO4J_PASSWORD'])
+        );
+      } catch (error) {
+        console.warn('Failed to initialize Neo4j driver:', error);
+      }
+    }
+
+    // TransactionCoordinatorの初期化
+    let transactionCoordinator: TransactionCoordinator | undefined;
+    if (neo4jDriver) {
+      transactionCoordinator = new TransactionCoordinator({
+        postgresPool: pool,
+        neo4jDriver: neo4jDriver,
+      });
+    }
+
+    // MemoryManager設定オブジェクトを構築（undefinedプロパティを除外）
+    const config: any = { storage };
+    if (vectorStore) config.vectorStore = vectorStore;
+    if (transactionCoordinator) config.transactionCoordinator = transactionCoordinator;
+
+    memoryManager = new MemoryManager(config);
+  }
 
   // ガベージコレクションジョブの初期化と開始 (5分間隔)
   const gcJob = new GarbageCollectionJob(memoryManager);
   gcJob.start();
+
+  // クリーンアップ関数の定義
+  const cleanup = async (): Promise<void> => {
+    console.error('Shutting down Context Store MCP Server...');
+
+    // GCジョブを停止
+    gcJob.stop();
+
+    // MemoryManagerのリソースをクリーンアップ
+    // 注意: サーバがMemoryManagerにストレージを渡した場合 (ownsStorage = false)、
+    // dispose() は共有ストレージ/プールを閉じません。
+    // dispose() がストレージ/プールを閉じるのは、MemoryManagerが自身のストレージ/プールを作成した場合のみです。
+    try {
+      await memoryManager.dispose();
+    } catch (error) {
+      console.error('Error disposing MemoryManager:', error);
+    }
+
+    // データベース接続をクローズ（依存関係がない場合のみ）
+    // 注意: MemoryManagerが自身のPoolを作成した場合、dispose()で既にクローズされている
+    if (!deps?.memoryManager) {
+      // Poolのクローズ（サーバーが直接作成した場合のみ）
+      if (pool) {
+        try {
+          await pool.end();
+          console.error('PostgreSQL connection pool closed');
+        } catch (error) {
+          console.error('Error closing PostgreSQL pool:', error);
+        }
+      }
+
+      // Neo4jドライバーのクローズ
+      if (neo4jDriver) {
+        try {
+          await neo4jDriver.close();
+          console.error('Neo4j driver closed');
+        } catch (error) {
+          console.error('Error closing Neo4j driver:', error);
+        }
+      }
+    }
+
+    console.error('Context Store MCP Server shutdown complete');
+  };
 
   const server = new Server(
     {
@@ -369,11 +481,26 @@ export function createContextStoreServer(deps?: { memoryManager?: MemoryManager 
     };
   });
 
-  return server;
+  return { server, cleanup };
 }
 
 export async function main(): Promise<void> {
-  const server = createContextStoreServer();
+  const { server, cleanup } = createContextStoreServer();
+
+  // シグナルハンドラーの設定
+  const handleShutdown = async (signal: string) => {
+    console.error(`\nReceived ${signal}, shutting down gracefully...`);
+    try {
+      await cleanup();
+      process.exit(0);
+    } catch (error) {
+      console.error('Error during shutdown:', error);
+      process.exit(1);
+    }
+  };
+
+  process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+  process.on('SIGINT', () => handleShutdown('SIGINT'));
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

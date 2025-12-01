@@ -4,7 +4,7 @@
  */
 
 import { Pool } from 'pg';
-import neo4j, { Driver } from 'neo4j-driver';
+import neo4j from 'neo4j-driver';
 import dotenv from 'dotenv';
 import path from 'path';
 

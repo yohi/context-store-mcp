@@ -166,6 +166,51 @@ POSTGRES_DB=context_store_test npm test
 
 **注意**: 全ての検証は大文字小文字を区別せず行われるため、`CONTEXT_STORE`、`Context_Store` などの変形も適切に検出されます。
 
+## リソース管理
+
+### MemoryManagerのクリーンアップ
+
+`MemoryManager`は、内部でPostgreSQLの接続プールを管理する場合があります。アプリケーションのシャットダウン時には、必ず`dispose()`メソッドを呼び出してリソースを適切に解放してください。
+
+```typescript
+import { MemoryManager } from './memory/memory-manager.js';
+
+// MemoryManagerの作成
+const memoryManager = new MemoryManager();
+
+// ... 使用 ...
+
+// シャットダウン時のクリーンアップ
+process.on('SIGTERM', async () => {
+  await memoryManager.dispose();
+  process.exit(0);
+});
+```
+
+#### 重要な注意事項
+
+- **自動作成されたプール**: `MemoryManager`がストレージアダプターを自動作成した場合（コンストラクタで`storage`オプションを指定しない場合）、`dispose()`は内部の接続プールを自動的にクローズします。
+
+- **外部提供のストレージ**: `MemoryManager`のコンストラクタで`storage`オプションを指定した場合、`dispose()`は接続プールをクローズしません。この場合、呼び出し側が接続プールのライフサイクルを管理する責任があります。
+
+- **冪等性**: `dispose()`メソッドは冪等であり、複数回呼び出しても安全です。
+
+```typescript
+// 外部ストレージを使用する場合の例
+import { Pool } from 'pg';
+import { PostgresStorageAdapter } from './storage/postgres-store-adapter.js';
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const storage = new PostgresStorageAdapter(pool);
+const memoryManager = new MemoryManager({ storage });
+
+// ... 使用 ...
+
+// シャットダウン時
+await memoryManager.dispose(); // 何もしない（外部管理のため）
+await pool.end(); // 呼び出し側が明示的にクローズ
+```
+
 ## パフォーマンス目標
 
 - **レイテンシ**: P95 < 2000ms ✓

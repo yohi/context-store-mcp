@@ -21,36 +21,63 @@ import type {
   MemoryClassifierService,
 } from './types.js';
 
+import { Pool } from 'pg';
 import type { VectorStoreAdapter } from '../storage/vector-store-adapter.js';
 import type { GraphStoreAdapter } from '../storage/graph-store-adapter.js';
 import type { TransactionCoordinator } from '../storage/transaction-coordinator.js';
+import type { StorageAdapter } from '../storage/storage-adapter.js';
+import { PostgresStorageAdapter } from '../storage/postgres-store-adapter.js';
+import { getLogger } from '../monitoring/structured-logger.js';
+
+const processLogger = getLogger();
 
 export interface MemoryManagerConfig {
+  storage?: StorageAdapter;
   vectorStore?: VectorStoreAdapter;
   graphStore?: GraphStoreAdapter;
-  transactionCoordinator?: TransactionCoordinator;
+  transactionCoordinator?: TransactionCoordinator | Partial<TransactionCoordinator>;
   classifier?: MemoryClassifierService;
 }
 
 export class MemoryManager implements MemoryManagerService {
-  // テスト用のインメモリ保存（後のタスクでPostgreSQLに置き換え予定）
-  private memories: Map<MemoryId, Memory> = new Map();
-  // 記憶リンク用のインメモリ保存（後のタスクでNeo4jに置き換え予定）
-  private links: Map<string, MemoryLink> = new Map();
-  // 記憶履歴用のインメモリ保存
-  private history: Map<MemoryId, MemoryHistoryEntry[]> = new Map();
+  private storage: StorageAdapter;
 
   private vectorStore?: VectorStoreAdapter;
+  private graphStore?: GraphStoreAdapter;
   private transactionCoordinator?: TransactionCoordinator;
   private classifier?: MemoryClassifierService;
 
+  // このMemoryManagerがPoolを作成したかどうかを追跡
+  private ownsStorage: boolean = false;
+
+  // dispose()が既に呼ばれたかを追跡（冪等性のため）
+  private isDisposed: boolean = false;
+
   constructor(config?: MemoryManagerConfig) {
+    if (config?.storage) {
+      this.storage = config.storage;
+      this.ownsStorage = false; // 外部から提供されたストレージ
+    } else {
+      // デフォルトでPostgreSQLアダプターを使用
+      const pool = new Pool({
+        connectionString: process.env['DATABASE_URL'],
+        max: 20,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 2000,
+      });
+      this.storage = new PostgresStorageAdapter(pool);
+      this.ownsStorage = true; // このMemoryManagerがPoolを作成した
+    }
+
     if (config) {
       if (config.vectorStore) this.vectorStore = config.vectorStore;
-      if (config.transactionCoordinator) this.transactionCoordinator = config.transactionCoordinator;
+      if (config.graphStore) this.graphStore = config.graphStore;
+      if (config.transactionCoordinator) this.transactionCoordinator = config.transactionCoordinator as TransactionCoordinator;
       if (config.classifier) this.classifier = config.classifier;
     }
   }
+
+
 
   /**
    * 自動ID生成とタイムスタンプ管理を行い、新しい記憶を保存する
@@ -111,9 +138,6 @@ export class MemoryManager implements MemoryManagerService {
       version: 1, // 初期バージョン
     };
 
-    // メモリに保存（後でPostgreSQLに置き換え予定）
-    this.memories.set(memoryId, memory);
-
     // Transaction Coordinatorが利用可能な場合は使用
     if (this.transactionCoordinator) {
       const entity = {
@@ -126,8 +150,6 @@ export class MemoryManager implements MemoryManagerService {
       const result = await this.transactionCoordinator.storeMemoryWithSaga(entity);
 
       if (result.status === 'failed') {
-        // インメモリ保存をロールバック
-        this.memories.delete(memoryId);
         return {
           success: false,
           error: {
@@ -137,6 +159,25 @@ export class MemoryManager implements MemoryManagerService {
         };
       }
       // 注意: Sagaが結果整合性を処理するため、現時点では部分的な成功の警告は無視します
+    } else {
+      processLogger.error('TransactionCoordinator unavailable for storeMemory', { memoryId });
+      return {
+        success: false,
+        error: {
+          type: 'TRANSACTION_UNAVAILABLE',
+          message: 'TransactionCoordinator is required for data consistency but is unavailable',
+        },
+      };
+    }
+
+    // ベクトルストアに埋め込みを保存
+    if (this.vectorStore) {
+      try {
+        await this.vectorStore.addEmbeddingForMemory(memoryId, memory.content);
+      } catch (error) {
+        console.error(`Failed to store embedding for memory ${memoryId}:`, error);
+        // 埋め込みの失敗は警告としてログに記録し、操作自体は成功とみなす
+      }
     }
 
     return {
@@ -154,13 +195,47 @@ export class MemoryManager implements MemoryManagerService {
     updates: Partial<Memory>
   ): Promise<Result<boolean, MemoryError>> {
     // 記憶が存在するか確認
-    const existing = this.memories.get(id);
+    let existing: Memory | null = null;
+    try {
+      existing = await this.storage.getMemory(id);
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          type: 'STORAGE_ERROR',
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+
     if (!existing) {
       return {
         success: false,
         error: {
           type: 'MEMORY_NOT_FOUND',
           message: `Memory with ID ${id} not found`,
+        },
+      };
+    }
+
+    // 記憶が論理削除されているか確認
+    if (existing.isDeleted) {
+      return {
+        success: false,
+        error: {
+          type: 'MEMORY_NOT_FOUND',
+          message: `Memory with ID ${id} not found`,
+        },
+      };
+    }
+
+    // 記憶が保護されているか確認
+    if (existing.isProtected) {
+      return {
+        success: false,
+        error: {
+          type: 'STORAGE_ERROR',
+          message: `Cannot update protected memory: ${id}`,
         },
       };
     }
@@ -187,37 +262,6 @@ export class MemoryManager implements MemoryManagerService {
       normalizedMetadata = withoutType;
     }
 
-    // 更新前に現在の状態を履歴に保存
-    this.saveHistory(existing);
-
-    // 保護されたフィールドを除外して更新された記憶を作成
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const {
-      id: _id,
-      createdAt: _createdAt,
-      isDeleted: _isDeleted,
-      deletedAt: _deletedAt,
-      metadata: _metadata,
-      version: _version, // 更新からバージョンを除外
-      ...allowedUpdates
-    } = updates;
-
-    // 記憶を更新（保護されたフィールドを維持し、データの整合性を保つ）
-    const updatedMemory: Memory = {
-      ...existing,
-      ...allowedUpdates,
-      // 正規化されたメタデータが提供された場合は適用、それ以外は既存を維持
-      ...(normalizedMetadata !== undefined ? { metadata: normalizedMetadata } : {}),
-      id: existing.id, // IDは変更不可
-      createdAt: existing.createdAt, // createdAtは変更不可
-      isDeleted: existing.isDeleted, // isDeletedは更新経由で変更不可
-      deletedAt: existing.deletedAt ?? null, // deletedAtは更新経由で変更不可、undefinedをnullに正規化
-      updatedAt: new Date(), // 常にupdatedAtを更新
-      version: existing.version + 1, // バージョンをインクリメント
-    };
-
-    this.memories.set(id, updatedMemory);
-
     // Transaction Coordinatorが利用可能な場合は使用
     if (this.transactionCoordinator) {
       // 更新前に現在のバージョンを履歴に保存
@@ -229,19 +273,45 @@ export class MemoryManager implements MemoryManagerService {
       };
       await this.transactionCoordinator.saveMemoryVersion(entityToArchive, existing.version);
 
+      // 保護されたフィールドを除外して更新された記憶を作成
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const {
+        id: _id,
+        createdAt: _createdAt,
+        isDeleted: _isDeleted,
+        deletedAt: _deletedAt,
+        metadata: _metadata,
+        version: _version, // 更新からバージョンを除外
+        ...allowedUpdates
+      } = updates;
+
+      // 記憶を更新（保護されたフィールドを維持し、データの整合性を保つ）
+      const updatedMemory: Memory = {
+        ...existing,
+        ...allowedUpdates,
+        // 正規化されたメタデータが提供された場合は適用、それ以外は既存を維持
+        ...(normalizedMetadata !== undefined ? { metadata: normalizedMetadata } : {}),
+        id: existing.id, // IDは変更不可
+        createdAt: existing.createdAt, // createdAtは変更不可
+        isDeleted: existing.isDeleted, // isDeletedは更新経由で変更不可
+        deletedAt: existing.deletedAt ?? null, // deletedAtは更新経由で変更不可、undefinedをnullに正規化
+        updatedAt: new Date(), // 常にupdatedAtを更新
+        version: existing.version + 1, // バージョンをインクリメント
+      };
+
       // 記憶を更新
       const entity = {
         id: updatedMemory.id,
         content: updatedMemory.content,
         memoryType: updatedMemory.memoryType,
         metadata: updatedMemory.metadata,
+        isProtected: updatedMemory.isProtected,
+        isDeleted: updatedMemory.isDeleted,
       };
 
       const result = await this.transactionCoordinator.updateMemoryWithSaga(entity);
 
       if (result.status === 'failed') {
-        // インメモリ保存をロールバック
-        this.memories.set(id, existing);
         return {
           success: false,
           error: {
@@ -249,6 +319,24 @@ export class MemoryManager implements MemoryManagerService {
             message: result.error.message,
           },
         };
+      }
+    } else {
+      processLogger.error('TransactionCoordinator unavailable for updateMemory', { memoryId: id });
+      return {
+        success: false,
+        error: {
+          type: 'TRANSACTION_UNAVAILABLE',
+          message: 'TransactionCoordinator is required for data consistency but is unavailable',
+        },
+      };
+    }
+
+    // ベクトルストアの更新（コンテンツが変更された場合）
+    if (this.vectorStore && updates.content) {
+      try {
+        await this.vectorStore.addEmbeddingForMemory(id, updates.content);
+      } catch (error) {
+        console.error(`Failed to update embedding for memory ${id}:`, error);
       }
     }
 
@@ -264,7 +352,19 @@ export class MemoryManager implements MemoryManagerService {
    */
   async deleteMemory(id: MemoryId): Promise<Result<boolean, MemoryError>> {
     // 記憶が存在するか確認
-    const existing = this.memories.get(id);
+    let existing: Memory | null = null;
+    try {
+      existing = await this.storage.getMemory(id);
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          type: 'STORAGE_ERROR',
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+
     if (!existing) {
       return {
         success: false,
@@ -286,27 +386,20 @@ export class MemoryManager implements MemoryManagerService {
       };
     }
 
-    // 削除前に現在の状態を履歴に保存（オプションだが推奨）
-    this.saveHistory(existing);
-
-    // 論理削除: タイムスタンプ付きで削除済みとしてマーク（GDPR準拠）
-    const deletedMemory: Memory = {
-      ...existing,
-      isDeleted: true,
-      deletedAt: new Date(),
-      updatedAt: new Date(),
-      version: existing.version + 1, // 削除イベントのためにバージョンをインクリメント
-    };
-
-    this.memories.set(id, deletedMemory);
-
     // Transaction Coordinatorが利用可能な場合は使用
     if (this.transactionCoordinator) {
+      // 削除前に現在の状態を履歴に保存
+      const entityToArchive = {
+        id: existing.id,
+        content: existing.content,
+        memoryType: existing.memoryType,
+        metadata: existing.metadata,
+      };
+      await this.transactionCoordinator.saveMemoryVersion(entityToArchive, existing.version);
+
       const result = await this.transactionCoordinator.deleteMemoryWithSaga(id);
 
       if (result.status === 'failed') {
-        // インメモリ保存をロールバック（元に戻す）
-        this.memories.set(id, existing);
         return {
           success: false,
           error: {
@@ -315,12 +408,58 @@ export class MemoryManager implements MemoryManagerService {
           },
         };
       }
+    } else {
+      processLogger.error('TransactionCoordinator unavailable for deleteMemory', { memoryId: id });
+      return {
+        success: false,
+        error: {
+          type: 'TRANSACTION_UNAVAILABLE',
+          message: 'TransactionCoordinator is required for data consistency but is unavailable',
+        },
+      };
+    }
+
+    // ベクトルストアからの削除（論理削除）
+    if (this.vectorStore) {
+      try {
+        await this.vectorStore.deleteVector(id);
+      } catch (error) {
+        console.warn(`Failed to delete vector for memory ${id}:`, error);
+      }
     }
 
     return {
       success: true,
       value: true,
     };
+  }
+
+  /**
+   * 論理削除された記憶を復元する（内部使用のみ）
+   * 
+   * このメソッドは、updateMemoryの保護フィールドフィルタリングをバイパスして、
+   * isDeletedとdeletedAtフィールドを直接更新します。
+   * 主にロールバックシナリオで使用されます。
+   * 
+   * @param id - 復元する記憶のID
+   * @returns 成功した場合はtrue、失敗した場合はエラー
+   */
+  private async restoreMemory(id: MemoryId): Promise<Result<boolean, MemoryError>> {
+    try {
+      await this.storage.restoreMemory(id);
+      return {
+        success: true,
+        value: true,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          type: 'STORAGE_ERROR',
+          message: `Failed to restore memory ${id}: ${error instanceof Error ? error.message : String(error)}`,
+        },
+      };
+    }
   }
 
   /**
@@ -340,10 +479,12 @@ export class MemoryManager implements MemoryManagerService {
           timestamp: v.createdAt,
         }));
       } catch (error) {
-        console.error('Failed to fetch history from DB, falling back to in-memory:', error);
+        console.error('Failed to fetch history from DB:', error);
+        return [];
       }
     }
-    return this.history.get(id) || [];
+    // インメモリ履歴は廃止されたため、TCがない場合は空配列を返す
+    return [];
   }
 
   /**
@@ -372,13 +513,14 @@ export class MemoryManager implements MemoryManagerService {
         };
       }
     } else {
-      // インメモリ履歴にフォールバック
-      const history = this.history.get(memoryId) || [];
-      const entry = history.find((h) => h.version === version);
-      if (entry) {
-        targetContent = entry.content;
-        targetMetadata = entry.metadata;
-      }
+      // インメモリ履歴廃止のため、TCがない場合はエラー
+      return {
+        success: false,
+        error: {
+          type: 'STORAGE_ERROR',
+          message: 'Version history not available without TransactionCoordinator',
+        },
+      };
     }
 
     if (targetContent === undefined) {
@@ -409,10 +551,19 @@ export class MemoryManager implements MemoryManagerService {
    * 完全な実装にはVectorStoreAdapter (Task 5.1)とPostgreSQLが必要です。
    */
   async findSimilarMemories(content: string, limit: number = 5): Promise<Memory[]> {
-    if (this.vectorStore) {
-      try {
-        const results = await this.vectorStore.searchSimilar(content, limit);
-        const memories: Memory[] = [];
+    if (!this.vectorStore) {
+      console.warn('VectorStoreAdapter is not available. Cannot perform semantic search.');
+      return [];
+    }
+    if (!this.classifier) {
+      console.warn('MemoryClassifierService is not available. Cannot generate embeddings for semantic search.');
+      return [];
+    }
+
+    try {
+      // const embedding = await this.classifier.generateEmbedding(content); // Now handled by vectorStore
+      const results = await this.vectorStore.searchSimilar(content, limit);
+      const memories: Memory[] = [];
 
         for (const r of results) {
           try {
@@ -453,8 +604,6 @@ export class MemoryManager implements MemoryManagerService {
         console.error('Vector search failed:', error);
         return [];
       }
-    }
-    return [];
   }
 
   /**
@@ -462,7 +611,13 @@ export class MemoryManager implements MemoryManagerService {
    * 意味的類似性、タグの重複、時間的近接性を組み合わせる
    */
   async findSimilarMemoriesById(id: MemoryId, threshold: number = 0.8): Promise<Memory[]> {
-    const target = this.memories.get(id);
+    let target: Memory | null = null;
+    try {
+      target = await this.storage.getMemory(id);
+    } catch (e) {
+      return [];
+    }
+
     if (!target) return [];
 
     // 記憶ごとの最高スコアを保存する候補マップ
@@ -475,34 +630,46 @@ export class MemoryManager implements MemoryManagerService {
         for (const res of results) {
           if (res.id === id) continue; // 自分自身をスキップ
 
-          const memory = this.memories.get(res.id);
-          if (memory && !memory.isDeleted) {
-            candidates.set(res.id, { memory, score: res.similarity });
-          }
+          // VectorSearchResultからMemoryオブジェクトを構築
+          // 注意: 完全なMemoryオブジェクトではない可能性があるが、スコアリングには十分
+          const memory: Memory = {
+            id: res.id,
+            content: res.content,
+            memoryType: (res.metadata?.memoryType as MemoryType) || 'semantic',
+            metadata: (res.metadata as MemoryMetadata) || {},
+            createdAt: res.createdAt || new Date(),
+            updatedAt: res.updatedAt || new Date(),
+            lastAccessedAt: res.lastAccessedAt || new Date(),
+            accessCount: res.accessCount || 0,
+            importanceScore: res.importanceScore || 0,
+            isDeleted: false,
+            isProtected: false,
+            version: res.version || 1,
+            deletedAt: null,
+          };
+
+          candidates.set(res.id, { memory, score: res.similarity });
         }
       } catch (e) {
         console.warn('Vector search failed during findSimilarMemoriesById:', e);
       }
     }
 
-    // 2. タグと時間の分析 (インメモリキャッシュを反復処理)
-    // 完全なPG実装では、これはDBクエリになります。
-    // ここでは、キャッシュ/ソースとして機能する `this.memories` を反復処理します。
-    for (const memory of this.memories.values()) {
-      if (memory.id === id || memory.isDeleted) continue;
+    // 2. タグによる検索 (StorageAdapter経由)
+    if (target.metadata.tags && target.metadata.tags.length > 0) {
+      try {
+        const tagMatches = await this.storage.searchMemories({ tags: target.metadata.tags, limit: 20 });
+        for (const memory of tagMatches) {
+          if (memory.id === id) continue;
 
-      // 意味検索ですでに見つかっている場合は、再評価をスキップ（後でブーストします）
-      if (candidates.has(memory.id)) continue;
+          // 既に候補にある場合はスキップ（後でブースト）
+          if (candidates.has(memory.id)) continue;
 
-      // タグの重複を確認
-      const hasTagOverlap = this.calculateTagOverlap(target.metadata.tags, memory.metadata.tags);
-
-      // 時間的近接性を確認
-      const isCloseInTime = this.checkTimeProximity(target.createdAt, memory.createdAt);
-
-      // タグまたは時間が一致する場合、基本スコア0で候補として追加（ブーストされます）
-      if (hasTagOverlap || isCloseInTime) {
-        candidates.set(memory.id, { memory, score: 0.0 });
+          // 新規候補として追加（スコア0、後でブースト）
+          candidates.set(memory.id, { memory, score: 0.0 });
+        }
+      } catch (e) {
+        console.warn('Tag search failed during findSimilarMemoriesById:', e);
       }
     }
 
@@ -511,15 +678,14 @@ export class MemoryManager implements MemoryManagerService {
     for (const [, item] of candidates) {
       let finalScore = item.score;
 
-      // タグ重複のブースト (+0.15)
-      if (this.calculateTagOverlap(target.metadata.tags, item.memory.metadata.tags)) {
-        finalScore += 0.15;
-      }
-
-      // 時間的近接性のブースト (+0.15)
-      if (this.checkTimeProximity(target.createdAt, item.memory.createdAt)) {
-        finalScore += 0.15;
-      }
+        // タグ重複のブースト (+0.15)
+        if (this.calculateTagOverlap(target.metadata.tags, item.memory.metadata.tags)) {
+          finalScore += 0.15;
+        }
+        // 時間的近接性のブースト (+0.10)
+        if (item.memory.lastAccessedAt && target.lastAccessedAt && this.checkTimeProximity(target.lastAccessedAt, item.memory.lastAccessedAt)) {
+          finalScore += 0.10;
+        }
 
       // 閾値を確認
       if (finalScore >= threshold) {
@@ -553,34 +719,14 @@ export class MemoryManager implements MemoryManagerService {
    * 要件: Task 3.2 Issue #2
    */
   async suggestMerges(memoryId: MemoryId): Promise<Memory[]> {
-    const memory = this.memories.get(memoryId);
-    if (!memory) {
-      return [];
-    }
-
+    // 記憶の存在確認は findSimilarMemoriesById 内で行われるため、ここでは直接呼び出す
     // 高い閾値で強化された類似検索を使用
     // 統合のための強力な候補（意味的または強力な文脈的一致）が必要です
     // 閾値0.8は、良好な意味的一致、または（そこそこの一致 + タグ/時間ブースト）を意味します
     return this.findSimilarMemoriesById(memoryId, 0.8);
   }
 
-  /**
-   * 記憶のスナップショットを履歴に保存する
-   */
-  private saveHistory(memory: Memory): void {
-    const entry: MemoryHistoryEntry = {
-      id: randomUUID(),
-      memoryId: memory.id,
-      version: memory.version,
-      content: memory.content,
-      metadata: { ...memory.metadata }, // メタデータのディープコピー
-      timestamp: memory.updatedAt,
-    };
 
-    const currentHistory = this.history.get(memory.id) || [];
-    currentHistory.push(entry);
-    this.history.set(memory.id, currentHistory);
-  }
 
   /**
    * 複数の記憶を単一の記憶に統合する
@@ -601,40 +747,50 @@ export class MemoryManager implements MemoryManagerService {
     // すべての記憶が存在し、統合可能であることを確認
     const memories: Memory[] = [];
     for (const id of ids) {
-      const memory = this.memories.get(id);
-      if (!memory) {
-        return {
-          success: false,
-          error: {
-            type: 'MEMORY_NOT_FOUND',
-            message: `Memory with ID ${id} not found`,
-          },
-        };
-      }
+      try {
+        const memory = await this.storage.getMemory(id);
+        if (!memory) {
+          return {
+            success: false,
+            error: {
+              type: 'MEMORY_NOT_FOUND',
+              message: `Memory with ID ${id} not found`,
+            },
+          };
+        }
 
-      // 記憶が削除されているか確認
-      if (memory.isDeleted) {
-        return {
-          success: false,
-          error: {
-            type: 'INVALID_CONTENT',
-            message: `Cannot merge deleted memory: ${id}`,
-          },
-        };
-      }
+        // 記憶が削除されているか確認
+        if (memory.isDeleted) {
+          return {
+            success: false,
+            error: {
+              type: 'INVALID_CONTENT',
+              message: `Cannot merge deleted memory: ${id}`,
+            },
+          };
+        }
 
-      // 記憶が保護されているか確認
-      if (memory.isProtected) {
+        // 記憶が保護されているか確認
+        if (memory.isProtected) {
+          return {
+            success: false,
+            error: {
+              type: 'STORAGE_ERROR',
+              message: `Cannot merge protected memory: ${id}`,
+            },
+          };
+        }
+
+        memories.push(memory);
+      } catch (error) {
         return {
           success: false,
           error: {
             type: 'STORAGE_ERROR',
-            message: `Cannot merge protected memory: ${id}`,
+            message: `Failed to retrieve memory ${id}: ${error instanceof Error ? error.message : String(error)}`,
           },
         };
       }
-
-      memories.push(memory);
     }
 
     // すべての記憶からコンテンツを結合
@@ -672,12 +828,8 @@ export class MemoryManager implements MemoryManagerService {
 
     // 変更前にソース記憶のスナップショットをキャプチャ
     const snapshot = new Map<MemoryId, Memory>();
-    for (const id of ids) {
-      const memory = this.memories.get(id);
-      if (memory) {
-        // 元の状態を保持するためにディープコピー
-        snapshot.set(id, { ...memory });
-      }
+    for (const memory of memories) {
+      snapshot.set(memory.id, { ...memory });
     }
 
     // 失敗時のロールバック付きでソース記憶を論理削除
@@ -686,15 +838,28 @@ export class MemoryManager implements MemoryManagerService {
       const deleteResult = await this.deleteMemory(id);
       if (!deleteResult.success) {
         // ロールバック: すべての変更されたソース記憶を復元
+        // 注: 完全なロールバックは複雑（削除の取り消しが必要）。
+        // ここでは、削除に失敗した時点で停止し、手動介入を促すエラーメッセージを返すのが現実的。
+        // TransactionCoordinatorがあればSagaで補償されるはずだが、現状のアーキテクチャでは個別の操作の組み合わせ。
+
+        // 簡易的なロールバック: 統合された記憶を削除
+        await this.deleteMemory(mergeResult.value);
+
+        // 既に削除されたソース記憶の復元を試みる
         for (const deletedId of deletedIds) {
           const original = snapshot.get(deletedId);
           if (original) {
-            this.memories.set(deletedId, original);
+            // 復元ロジック（isDeleted=falseにして更新）
+            // updateMemoryは保護フィールドをフィルタリングするため、専用のrestoreMemoryメソッドを使用
+            const restoreResult = await this.restoreMemory(deletedId);
+            if (!restoreResult.success) {
+              console.error(
+                `Failed to restore source memory ${deletedId} during merge rollback:`,
+                restoreResult.error
+              );
+            }
           }
         }
-
-        // 不整合を避けるために統合された記憶を削除
-        this.memories.delete(mergeResult.value);
 
         return {
           success: false,
@@ -754,37 +919,6 @@ export class MemoryManager implements MemoryManagerService {
       }
     }
 
-    // 2. インメモリガベージコレクション（レガシー/キャッシュクリーンアップ）
-    // 古くて保護されていない論理削除された記憶を検索
-    const toRemoveInMemory: MemoryId[] = [];
-    for (const [id, memory] of this.memories.entries()) {
-      if (
-        memory.isDeleted &&
-        !memory.isProtected &&
-        memory.deletedAt !== null &&
-        memory.deletedAt !== undefined &&
-        memory.deletedAt < threshold
-      ) {
-        toRemoveInMemory.push(id);
-      }
-    }
-
-    // これらの記憶をメモリキャッシュから物理的に削除
-    for (const id of toRemoveInMemory) {
-      this.memories.delete(id);
-    }
-
-    // 削除された記憶を参照している孤立したリンクを削除
-    const toRemoveLinks: string[] = [];
-    for (const [lid, link] of this.links.entries()) {
-      // エンドポイントが見つからない（削除されている）か確認
-      if (!this.memories.has(link.fromMemoryId) || !this.memories.has(link.toMemoryId)) {
-        toRemoveLinks.push(lid);
-      }
-    }
-    for (const lid of toRemoveLinks) {
-      this.links.delete(lid);
-    }
   }
 
   /**
@@ -811,28 +945,10 @@ export class MemoryManager implements MemoryManagerService {
    * 要件: Task 3.3 - ストレージ最適化
    */
   async optimizeStorage(): Promise<void> {
-    // 削除されていないすべての記憶の重要度スコアを更新
-    for (const [id, memory] of this.memories.entries()) {
-      if (!memory.isDeleted) {
-        // アクセス数に基づく単純な重要度スコア計算
-        // 実際の実装では以下を考慮します:
-        // - 参照スコア（検索結果への出現）
-        // - グラフ中心性スコア
-        const referenceScore = Math.min(memory.accessCount / 100, 1.0);
-        const centralityScore = 0.5; // プレースホルダー（Neo4j PageRankから取得予定）
-
-        const importanceScore = referenceScore * 0.6 + centralityScore * 0.4;
-
-        // 新しい重要度スコアで記憶を更新
-        this.memories.set(id, {
-          ...memory,
-          importanceScore,
-        });
-      }
-    }
+    // インメモリ最適化は廃止されました。
+    // 将来的には、ここでTransactionCoordinatorを使用してDB側の最適化（VACUUMやインデックス再構築など）をトリガーできます。
 
     // 圧縮: 十分に長く削除されている論理削除された記憶を削除
-    // これは本質的に軽量なガベージコレクションです
     await this.performGarbageCollection();
   }
 
@@ -906,10 +1022,10 @@ export class MemoryManager implements MemoryManagerService {
   async createLink(
     from: MemoryId,
     to: MemoryId,
-    linkType: MemoryLinkType,
+    _linkType: MemoryLinkType,
     strength: number = 0.5,
-    createdBy: 'user' | 'system' = 'system',
-    reasoning?: string
+    _createdBy: 'user' | 'system' = 'system',
+    _reasoning?: string
   ): Promise<Result<string, MemoryError>> {
     // 自己リンクを防止
     if (from === to) {
@@ -922,47 +1038,57 @@ export class MemoryManager implements MemoryManagerService {
       };
     }
 
-    // 両方の記憶が存在することを確認
-    const fromMemory = this.memories.get(from);
-    const toMemory = this.memories.get(to);
+    // DBから確認
+    try {
+      const fromMemory = await this.storage.getMemory(from);
+      const toMemory = await this.storage.getMemory(to);
 
-    if (!fromMemory) {
+      if (!fromMemory) {
+        return {
+          success: false,
+          error: {
+            type: 'MEMORY_NOT_FOUND',
+            message: `Source memory with ID ${from} not found`,
+          },
+        };
+      }
+
+      if (!toMemory) {
+        return {
+          success: false,
+          error: {
+            type: 'MEMORY_NOT_FOUND',
+            message: `Target memory with ID ${to} not found`,
+          },
+        };
+      }
+
+      // いずれかの記憶が削除されているか確認
+      if (fromMemory.isDeleted) {
+        return {
+          success: false,
+          error: {
+            type: 'MEMORY_NOT_FOUND',
+            message: `Cannot create link: source memory ${from} is deleted`,
+          },
+        };
+      }
+
+      if (toMemory.isDeleted) {
+        return {
+          success: false,
+          error: {
+            type: 'MEMORY_NOT_FOUND',
+            message: `Cannot create link: target memory ${to} is deleted`,
+          },
+        };
+      }
+    } catch (e) {
       return {
         success: false,
         error: {
-          type: 'MEMORY_NOT_FOUND',
-          message: `Source memory with ID ${from} not found`,
-        },
-      };
-    }
-
-    if (!toMemory) {
-      return {
-        success: false,
-        error: {
-          type: 'MEMORY_NOT_FOUND',
-          message: `Target memory with ID ${to} not found`,
-        },
-      };
-    }
-
-    // いずれかの記憶が削除されているか確認
-    if (fromMemory.isDeleted) {
-      return {
-        success: false,
-        error: {
-          type: 'MEMORY_NOT_FOUND',
-          message: `Cannot create link: source memory ${from} is deleted`,
-        },
-      };
-    }
-
-    if (toMemory.isDeleted) {
-      return {
-        success: false,
-        error: {
-          type: 'MEMORY_NOT_FOUND',
-          message: `Cannot create link: target memory ${to} is deleted`,
+          type: 'STORAGE_ERROR',
+          message: String(e),
         },
       };
     }
@@ -978,44 +1104,35 @@ export class MemoryManager implements MemoryManagerService {
       };
     }
 
-    // 重複リンクを確認（同じfromMemoryId, toMemoryId, linkType）
-    for (const existingLink of this.links.values()) {
-      if (
-        existingLink.fromMemoryId === from &&
-        existingLink.toMemoryId === to &&
-        existingLink.linkType === linkType
-      ) {
-        // 重複を作成する代わりに既存のリンクIDを返す
+    if (this.graphStore) {
+      try {
+        const linkId = await this.graphStore.createRelationship(from, to, _linkType, {
+          strength,
+          createdBy: _createdBy,
+          ...(_reasoning ? { reasoning: _reasoning } : {}),
+          createdAt: new Date(),
+        });
         return {
           success: true,
-          value: existingLink.linkId,
+          value: linkId,
+        };
+      } catch (error) {
+        return {
+          success: false,
+          error: {
+            type: 'STORAGE_ERROR',
+            message: `Failed to create link: ${error instanceof Error ? error.message : String(error)}`,
+          },
         };
       }
     }
 
-    // リンクIDを生成
-    const linkId = randomUUID();
-
-    // リンクを作成
-    const link: MemoryLink = {
-      linkId,
-      fromMemoryId: from,
-      toMemoryId: to,
-      linkType,
-      strength,
-      metadata: {
-        createdAt: new Date(),
-        createdBy,
-        ...(reasoning !== undefined && { reasoning }),
-      },
-    };
-
-    // リンクを保存
-    this.links.set(linkId, link);
-
     return {
-      success: true,
-      value: linkId,
+      success: false,
+      error: {
+        type: 'STORAGE_ERROR',
+        message: 'GraphStoreAdapter is not available',
+      },
     };
   }
 
@@ -1024,23 +1141,33 @@ export class MemoryManager implements MemoryManagerService {
    * 要件: 3.5 (相互参照の管理)
    */
   async getLinks(memoryId: MemoryId): Promise<MemoryLink[]> {
-    const results: MemoryLink[] = [];
+    if (this.graphStore) {
+      try {
+        const relationships = await this.graphStore.getNodeRelationships(memoryId, 'both');
+        return relationships.map((rel) => {
+          const metadata: MemoryLink['metadata'] = {
+            createdAt: (rel.properties.createdAt as Date) || new Date(),
+            createdBy: (rel.properties.createdBy as 'user' | 'system') || 'system',
+          };
+          if (rel.properties.reasoning) {
+            metadata.reasoning = rel.properties.reasoning as string;
+          }
 
-    // この記憶がソースまたはターゲットであるすべてのリンクを検索
-    for (const link of this.links.values()) {
-      if (link.fromMemoryId === memoryId || link.toMemoryId === memoryId) {
-        // いずれかのエンドポイントが削除されているか見つからないリンクをスキップ
-        const fromMemory = this.memories.get(link.fromMemoryId);
-        const toMemory = this.memories.get(link.toMemoryId);
-
-        // 両方のエンドポイントが存在し、削除されていない場合のみリンクを含める
-        if (fromMemory && !fromMemory.isDeleted && toMemory && !toMemory.isDeleted) {
-          results.push(link);
-        }
+          return {
+            linkId: rel.id,
+            fromMemoryId: rel.fromNodeId,
+            toMemoryId: rel.toNodeId,
+            linkType: rel.type as MemoryLinkType,
+            strength: (rel.properties.strength as number) || 0.5,
+            metadata,
+          };
+        });
+      } catch (error) {
+        console.error(`Failed to get links for memory ${memoryId}:`, error);
+        return [];
       }
     }
-
-    return results;
+    return [];
   }
 
   /**
@@ -1048,24 +1175,37 @@ export class MemoryManager implements MemoryManagerService {
    * 要件: 3.5 (リンク管理)
    */
   async deleteLink(linkId: string): Promise<Result<boolean, MemoryError>> {
-    const link = this.links.get(linkId);
-
-    if (!link) {
-      return {
-        success: false,
-        error: {
-          type: 'MEMORY_NOT_FOUND',
-          message: `Link with ID ${linkId} not found`,
-        },
-      };
+    if (this.graphStore) {
+      try {
+        const success = await this.graphStore.deleteRelationship(linkId);
+        if (success) {
+          return { success: true, value: true };
+        } else {
+          return {
+            success: false,
+            error: {
+              type: 'STORAGE_ERROR',
+              message: `Link with ID ${linkId} not found or could not be deleted`,
+            },
+          };
+        }
+      } catch (error) {
+        return {
+          success: false,
+          error: {
+            type: 'STORAGE_ERROR',
+            message: `Failed to delete link ${linkId}: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        };
+      }
     }
 
-    // リンクを削除
-    this.links.delete(linkId);
-
     return {
-      success: true,
-      value: true,
+      success: false,
+      error: {
+        type: 'STORAGE_ERROR',
+        message: 'GraphStoreAdapter is not available',
+      },
     };
   }
 
@@ -1074,53 +1214,12 @@ export class MemoryManager implements MemoryManagerService {
    * 要件: 3.6 (タイプフィルタリング機能)
    */
   async searchMemories(params: SearchParams): Promise<Memory[]> {
-    const results: Memory[] = [];
-
-    // すべての記憶を反復処理
-    for (const memory of this.memories.values()) {
-      // 削除された記憶をスキップ
-      if (memory.isDeleted) {
-        continue;
-      }
-
-      // memoryTypeフィルタを適用
-      if (
-        params.memoryTypes &&
-        params.memoryTypes.length > 0 &&
-        !params.memoryTypes.includes(memory.memoryType)
-      ) {
-        continue;
-      }
-
-      // tagsフィルタを適用
-      if (params.tags && params.tags.length > 0) {
-        const memoryTags = memory.metadata.tags || [];
-        const hasMatchingTag = params.tags.some((tag) => memoryTags.includes(tag));
-        if (!hasMatchingTag) {
-          continue;
-        }
-      }
-
-      // userIdフィルタを適用
-      if (params.userId && memory.metadata.userId !== params.userId) {
-        continue;
-      }
-
-      // projectIdフィルタを適用
-      if (params.projectId && memory.metadata.projectId !== params.projectId) {
-        continue;
-      }
-
-      // 結果に追加
-      results.push(memory);
+    try {
+      return await this.storage.searchMemories(params);
+    } catch (error) {
+      console.error('Search failed:', error);
+      return [];
     }
-
-    // 制限を適用
-    if (params.limit && params.limit > 0) {
-      return results.slice(0, params.limit);
-    }
-
-    return results;
   }
 
   /**
@@ -1131,82 +1230,7 @@ export class MemoryManager implements MemoryManagerService {
     memoryId: MemoryId,
     newType: MemoryType
   ): Promise<Result<boolean, MemoryError>> {
-    const memory = this.memories.get(memoryId);
-
-    if (!memory) {
-      return {
-        success: false,
-        error: {
-          type: 'MEMORY_NOT_FOUND',
-          message: `Memory with ID ${memoryId} not found`,
-        },
-      };
-    }
-
-    // 削除された記憶の上書きは許可しない
-    if (memory.isDeleted) {
-      return {
-        success: false,
-        error: {
-          type: 'MEMORY_NOT_FOUND',
-          message: `Cannot override type of deleted memory ${memoryId}`,
-        },
-      };
-    }
-
-    // 記憶タイプを更新（単一の信頼できる情報源: トップレベルのmemoryTypeのみ）
-    // 単一の信頼できる情報源を維持するためにメタデータからmemoryTypeを削除
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { memoryType: _ignore, ...metadataWithoutType } = memory.metadata as MemoryMetadata & {
-      memoryType?: MemoryType;
-    };
-
-    const updated: Memory = {
-      ...memory,
-      memoryType: newType,
-      metadata: metadataWithoutType, // metadata.memoryTypeが削除されていることを確認
-      updatedAt: new Date(),
-    };
-
-    this.memories.set(memoryId, updated);
-
-    return {
-      success: true,
-      value: true,
-    };
-  }
-
-  /**
-   * テストヘルパー: IDで記憶を取得する（論理削除されたものを含む）
-   * テスト目的のみ - パブリックAPIの一部ではない
-   * @internal
-   */
-  getMemoryForTest(id: MemoryId): Memory | undefined {
-    return this.memories.get(id);
-  }
-
-  /**
-   * テストヘルパー: すべての記憶を取得する（論理削除されたものを含む）
-   * テスト目的のみ - パブリックAPIの一部ではない
-   * @internal
-   */
-  getAllMemoriesForTest(): Memory[] {
-    return Array.from(this.memories.values());
-  }
-
-  /**
-   * テストヘルパー: GCテスト用にdeletedAtタイムスタンプを手動設定する
-   * テスト目的のみ - 古い削除をシミュレート可能
-   * @internal
-   */
-  setDeletedAtForTest(id: MemoryId, deletedAt: Date): void {
-    const memory = this.memories.get(id);
-    if (memory) {
-      this.memories.set(id, {
-        ...memory,
-        deletedAt,
-      });
-    }
+    return this.updateMemory(memoryId, { memoryType: newType });
   }
 
   /**
@@ -1214,15 +1238,46 @@ export class MemoryManager implements MemoryManagerService {
    * 要件: 5.4 (整合性監視)
    */
   async getAllMemoryIds(): Promise<MemoryId[]> {
-    const ids: MemoryId[] = [];
+    try {
+      return await this.storage.getAllMemoryIds();
+    } catch (e) {
+      console.error('Failed to get all memory IDs:', e);
+      return [];
+    }
+  }
 
-    for (const [id, memory] of this.memories.entries()) {
-      // 削除されていない記憶のみを含める
-      if (!memory.isDeleted) {
-        ids.push(id);
+  /**
+   * MemoryManagerが所有するリソースをクリーンアップする
+   * 
+   * このメソッドは、MemoryManagerが作成したデータベース接続プールを
+   * 適切にクローズします。アプリケーションのシャットダウン時に呼び出す必要があります。
+   * 
+   * このメソッドは冪等であり、複数回呼び出しても安全です。
+   * 
+   * @example
+   * ```typescript
+   * const memoryManager = new MemoryManager();
+   * // ... 使用 ...
+   * await memoryManager.dispose(); // シャットダウン時
+   * ```
+   */
+  async dispose(): Promise<void> {
+    // 既にdisposeされている場合は何もしない（冪等性）
+    if (this.isDisposed) {
+      return;
+    }
+
+    // このMemoryManagerがストレージを作成した場合のみクローズ
+    if (this.ownsStorage && this.storage instanceof PostgresStorageAdapter) {
+      try {
+        await this.storage.close();
+        console.log('MemoryManager: PostgreSQL connection pool closed');
+      } catch (error) {
+        console.error('MemoryManager: Error closing storage:', error);
+        throw error;
       }
     }
 
-    return ids;
+    this.isDisposed = true;
   }
 }

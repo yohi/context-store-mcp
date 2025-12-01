@@ -24,6 +24,12 @@ export interface StorageAdapter {
   /** パラメータに基づいて記憶を検索する */
   searchMemories(params: SearchParams): Promise<Memory[]>;
 
+  /** 論理削除された記憶を復元する */
+  restoreMemory(id: MemoryId): Promise<void>;
+
   /** すべての記憶IDを取得する（整合性調整用） */
   getAllMemoryIds(): Promise<MemoryId[]>;
+
+  /** リソースを解放し、接続を閉じる */
+  close?(): Promise<void>;
 }

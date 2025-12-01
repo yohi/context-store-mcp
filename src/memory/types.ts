@@ -14,7 +14,8 @@ export type MemoryError =
   | { type: 'STORAGE_ERROR'; message: string }
   | { type: 'INVALID_CONTENT'; message: string }
   | { type: 'MEMORY_NOT_FOUND'; message: string }
-  | { type: 'QUOTA_EXCEEDED'; message: string };
+  | { type: 'QUOTA_EXCEEDED'; message: string }
+  | { type: 'TRANSACTION_UNAVAILABLE'; message: string };
 
 // 失敗する可能性のある操作の結果型
 export type Result<T, E> = { success: true; value: T } | { success: false; error: E };
@@ -168,6 +169,7 @@ export interface MemoryClassifierService {
   classifyContent(content: string): Promise<MemoryClassification>;
   getConfidenceScore(content: string, type: MemoryType): Promise<number>;
   trainClassifier(samples: TrainingSample[]): Promise<void>;
+  generateEmbedding(content: string): Promise<number[]>; // 新しく追加
 
   // 精度測定
   evaluateAccuracy(testSamples: LabeledSample[]): Promise<AccuracyMetrics>;

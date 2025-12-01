@@ -257,6 +257,17 @@ export class MemoryClassifier implements MemoryClassifierService {
     console.log(`学習完了。更新されたキーワード数: エピソード=${this.episodicKeywords.size}, 意味=${this.semanticKeywords.size}, 手続き=${this.proceduralKeywords.size}`);
   }
 
+  /**
+   * コンテンツの埋め込みを生成
+   * 要件: 3.4 (埋め込みベースの分類) - Phase 5 で実装予定
+   */
+  async generateEmbedding(content: string): Promise<number[]> {
+    // Phase 5 で実際の埋め込み生成ロジックを実装
+    // 現在はダミーの埋め込みを返す
+    // 例: contentの長さに応じたシンプルなベクトル
+    return [0.1, 0.2, 0.3, content.length * 0.01, 0.05];
+  }
+
   private getKeywordSet(type: MemoryType): Set<string> {
     switch (type) {
       case 'episodic': return this.episodicKeywords;

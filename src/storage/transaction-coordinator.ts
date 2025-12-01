@@ -427,10 +427,15 @@ export class TransactionCoordinator {
       await session.run(
         `MERGE (m:Memory {id: $id})
          ON CREATE SET m.created_at = datetime()
-         SET m.type = $type`,
+         SET m.content = $content,
+             m.type = $type,
+             m.metadata = $metadata,
+             m.updated_at = datetime()`,
         {
           id: memory.id,
+          content: memory.content,
           type: memory.memoryType,
+          metadata: JSON.stringify(memory.metadata),
         }
       );
       return { success: true };
@@ -630,7 +635,7 @@ export class TransactionCoordinator {
   async findSoftDeletedMemories(olderThan: Date): Promise<MemoryId[]> {
     try {
       const result = await this.config.postgresPool.query(
-        `SELECT id FROM memories WHERE is_deleted = true AND deleted_at < $1`,
+        `SELECT id FROM memories WHERE is_deleted = true AND deleted_at < $1 AND is_protected = false`,
         [olderThan]
       );
       return result.rows.map(row => row.id);
