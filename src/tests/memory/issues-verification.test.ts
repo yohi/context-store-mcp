@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MemoryManager } from '../../memory/memory-manager.js';
 import { TransactionCoordinator } from '../../storage/transaction-coordinator.js';
 import { VectorStoreAdapter } from '../../storage/vector-store-adapter.js';
+import { MockStorageAdapter } from '../mocks/index.js';
 
 // Mock dependencies
 vi.mock('../../storage/transaction-coordinator.js');
@@ -9,10 +10,12 @@ vi.mock('../../storage/vector-store-adapter.js');
 
 describe('Issues Verification', () => {
   let memoryManager: MemoryManager;
+  let mockStorage: MockStorageAdapter;
   let mockTxCoordinator: any;
   let mockVectorStore: any;
 
   beforeEach(() => {
+    mockStorage = new MockStorageAdapter();
     mockTxCoordinator = {
       getDatabaseSize: vi.fn(),
       deleteLowImportanceMemories: vi.fn(),
@@ -30,6 +33,7 @@ describe('Issues Verification', () => {
     };
 
     memoryManager = new MemoryManager({
+      storage: mockStorage,
       transactionCoordinator: mockTxCoordinator as unknown as TransactionCoordinator,
       vectorStore: mockVectorStore as unknown as VectorStoreAdapter,
     });
@@ -42,28 +46,36 @@ describe('Issues Verification', () => {
       const now = new Date();
 
       // Setup Target Memory
-      // @ts-ignore - accessing private map for setup
-      memoryManager.memories.set(targetId, {
+      mockStorage.memories.set(targetId, {
         id: targetId,
         content: 'Target Content',
         metadata: { tags: ['AI', 'Coding'] },
         createdAt: now,
         updatedAt: now,
+        lastAccessedAt: now,
+        accessCount: 0,
+        importanceScore: 0,
+        isProtected: false,
+        version: 1,
         memoryType: 'semantic',
         isDeleted: false
-      } as any);
+      });
 
       // Setup Candidate Memory (Tag Match)
-      // @ts-ignore
-      memoryManager.memories.set(candidateId, {
+      mockStorage.memories.set(candidateId, {
         id: candidateId,
         content: 'Candidate Content',
         metadata: { tags: ['Coding', 'Testing'] }, // Overlap: Coding
         createdAt: new Date(now.getTime() - 24 * 60 * 60 * 1000), // Different time
         updatedAt: now,
+        lastAccessedAt: now,
+        accessCount: 0,
+        importanceScore: 0,
+        isProtected: false,
+        version: 1,
         memoryType: 'semantic',
         isDeleted: false
-      } as any);
+      });
 
       // Mock vector search to return candidate with low score
       mockVectorStore.searchSimilar.mockResolvedValue([
@@ -84,26 +96,36 @@ describe('Issues Verification', () => {
         const now = new Date();
   
         // Setup Target
-        // @ts-ignore
-        memoryManager.memories.set(targetId, {
+        mockStorage.memories.set(targetId, {
           id: targetId,
           content: 'Target',
           metadata: { tags: ['A'] },
           createdAt: now,
           updatedAt: now,
+          lastAccessedAt: now,
+          accessCount: 0,
+          importanceScore: 0,
+          isProtected: false,
+          version: 1,
+          memoryType: 'semantic',
           isDeleted: false
-        } as any);
+        });
   
         // Setup Candidate (Time Match < 1h)
-        // @ts-ignore
-        memoryManager.memories.set(candidateId, {
+        mockStorage.memories.set(candidateId, {
           id: candidateId,
           content: 'Candidate',
           metadata: { tags: ['B'] },
           createdAt: new Date(now.getTime() - 30 * 60 * 1000), // 30 mins ago
           updatedAt: now,
+          lastAccessedAt: now,
+          accessCount: 0,
+          importanceScore: 0,
+          isProtected: false,
+          version: 1,
+          memoryType: 'semantic',
           isDeleted: false
-        } as any);
+        });
   
         // Mock vector search (low score)
         mockVectorStore.searchSimilar.mockResolvedValue([

@@ -3,12 +3,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryManager } from '../../memory/memory-manager.js';
 import { QueryProcessor } from '../../query/query-processor.js';
 import { VectorStoreAdapter } from '../../storage/vector-store-adapter.js';
+import { MockStorageAdapter, MockTransactionCoordinator } from '../mocks/index.js';
 
 // Minimal mocks for performance test
 const mockVectorStore = {
   storeWithEmbedding: vi.fn().mockResolvedValue('vec-id'),
   searchSimilar: vi.fn().mockResolvedValue([]),
   deleteVector: vi.fn(),
+  addEmbeddingForMemory: vi.fn().mockResolvedValue(undefined),
 } as unknown as VectorStoreAdapter;
 
 describe('System Load & Performance Tests (Task 12.3)', () => {
@@ -16,6 +18,8 @@ describe('System Load & Performance Tests (Task 12.3)', () => {
 
   beforeEach(() => {
     memoryManager = new MemoryManager({
+      storage: new MockStorageAdapter(),
+      transactionCoordinator: new MockTransactionCoordinator() as any,
       vectorStore: mockVectorStore,
     });
   });

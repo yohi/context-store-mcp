@@ -4,9 +4,36 @@
  * getNodeRelationships でのリレーションシップタイプ検証テスト
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { GraphStoreAdapter } from '../../storage/graph-store-adapter';
 import { randomUUID } from 'crypto';
+
+// Mock neo4j-driver
+vi.mock('neo4j-driver', () => {
+  const mockSession = {
+    run: vi.fn().mockImplementation((query) => {
+      if (query.includes('RETURN r, type(r) AS relType')) {
+         // Return mock relationships if needed, or empty list
+         return Promise.resolve({
+             records: []
+         });
+      }
+      return Promise.resolve({ records: [] });
+    }),
+    close: vi.fn().mockResolvedValue(undefined),
+    executeWrite: vi.fn().mockImplementation((cb) => cb(mockSession)),
+  };
+  const mockDriver = {
+    session: vi.fn().mockReturnValue(mockSession),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+  return {
+    default: {
+      driver: vi.fn().mockReturnValue(mockDriver),
+      auth: { basic: vi.fn() },
+    },
+  };
+});
 
 describe('getNodeRelationships Type Validation', () => {
   let adapter: GraphStoreAdapter;

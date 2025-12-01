@@ -36,6 +36,7 @@ class MockTransport implements Transport {
 
 describe('MCP Server Core Features', () => {
   let server: Server;
+  let cleanup: () => Promise<void>;
   let transport: MockTransport;
   let mockVectorStore: VectorStoreAdapter;
 
@@ -46,14 +47,16 @@ describe('MCP Server Core Features', () => {
 
     // Inject mock VectorStore into MemoryManager, and inject manager into Server
     const memoryManager = new MemoryManager({ vectorStore: mockVectorStore });
-    server = createContextStoreServer({ memoryManager });
+    const context = createContextStoreServer({ memoryManager });
+    server = context.server;
+    cleanup = context.cleanup;
     
     transport = new MockTransport();
     await server.connect(transport);
   });
 
   afterEach(async () => {
-    await server.close();
+    await cleanup();
   });
 
   it('should handle initialization handshake', async () => {

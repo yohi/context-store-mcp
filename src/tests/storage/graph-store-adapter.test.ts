@@ -18,8 +18,26 @@ import {
   CypherPatternBuilder,
   type GraphStoreConfig,
   type NodeId,
-  type NodeProperties,
 } from '../../storage/graph-store-adapter';
+
+// Mock neo4j-driver
+vi.mock('neo4j-driver', () => {
+  const mockSession = {
+    run: vi.fn().mockResolvedValue({ records: [] }),
+    close: vi.fn().mockResolvedValue(undefined),
+    executeWrite: vi.fn().mockImplementation((cb) => cb(mockSession)),
+  };
+  const mockDriver = {
+    session: vi.fn().mockReturnValue(mockSession),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+  return {
+    default: {
+      driver: vi.fn().mockReturnValue(mockDriver),
+      auth: { basic: vi.fn() },
+    },
+  };
+});
 
 describe('GraphStoreAdapter', () => {
   let driver: Driver;

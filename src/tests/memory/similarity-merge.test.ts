@@ -1,17 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryManager } from '../../memory/memory-manager.js';
 import { VectorStoreAdapter } from '../../storage/vector-store-adapter.js';
+import { MockStorageAdapter } from '../mocks/index.js';
 
 describe('Similarity and Merge', () => {
     let memoryManager: MemoryManager;
+    let mockStorage: MockStorageAdapter;
     let vectorStore: VectorStoreAdapter;
 
     beforeEach(() => {
+        mockStorage = new MockStorageAdapter();
         vectorStore = {
             searchSimilar: vi.fn(),
         } as unknown as VectorStoreAdapter;
 
         memoryManager = new MemoryManager({
+            storage: mockStorage,
             vectorStore,
         });
     });
@@ -33,12 +37,17 @@ describe('Similarity and Merge', () => {
         // Setup target memory
         const id = 'mem-1';
         const now = new Date();
-        (memoryManager as any).memories.set(id, {
+        mockStorage.memories.set(id, {
             id,
             content: 'original content',
             metadata: { tags: ['tag1'] },
             createdAt: now,
             updatedAt: now,
+            lastAccessedAt: now,
+            accessCount: 0,
+            importanceScore: 0,
+            isProtected: false,
+            version: 1,
             isDeleted: false,
             memoryType: 'semantic',
         });
@@ -52,22 +61,32 @@ describe('Similarity and Merge', () => {
         (vectorStore.searchSimilar as any).mockResolvedValue(mockResults);
 
         // Mock mem-2 as existing and not deleted
-        (memoryManager as any).memories.set('mem-2', { 
+        mockStorage.memories.set('mem-2', { 
             id: 'mem-2', 
             content: 'similar content',
             metadata: { tags: ['tag1'] },
             createdAt: now,
             updatedAt: now,
+            lastAccessedAt: now,
+            accessCount: 0,
+            importanceScore: 0,
+            isProtected: false,
+            version: 1,
             isDeleted: false,
             memoryType: 'semantic',
         });
         // Mock mem-3 as deleted
-        (memoryManager as any).memories.set('mem-3', { 
+        mockStorage.memories.set('mem-3', { 
             id: 'mem-3', 
             content: 'deleted content',
             metadata: {},
             createdAt: now,
             updatedAt: now,
+            lastAccessedAt: now,
+            accessCount: 0,
+            importanceScore: 0,
+            isProtected: false,
+            version: 1,
             isDeleted: true,
             memoryType: 'semantic',
         });

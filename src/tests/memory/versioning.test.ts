@@ -1,12 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryManager } from '../../memory/memory-manager.js';
 import { TransactionCoordinator } from '../../storage/transaction-coordinator.js';
+import { MockStorageAdapter } from '../mocks/index.js';
 
 describe('Memory Versioning', () => {
     let memoryManager: MemoryManager;
+    let mockStorage: MockStorageAdapter;
     let transactionCoordinator: TransactionCoordinator;
 
     beforeEach(() => {
+        mockStorage = new MockStorageAdapter();
         transactionCoordinator = {
             saveMemoryVersion: vi.fn(),
             getMemoryVersions: vi.fn(),
@@ -16,6 +19,7 @@ describe('Memory Versioning', () => {
         } as unknown as TransactionCoordinator;
 
         memoryManager = new MemoryManager({
+            storage: mockStorage,
             transactionCoordinator,
         });
     });
@@ -23,13 +27,19 @@ describe('Memory Versioning', () => {
     it('should save version history on update', async () => {
         // Setup initial memory
         const id = 'mem-1';
-        (memoryManager as any).memories.set(id, {
+        mockStorage.memories.set(id, {
             id,
             content: 'v1',
             version: 1,
             metadata: {},
             createdAt: new Date(),
             updatedAt: new Date(),
+            lastAccessedAt: new Date(),
+            accessCount: 0,
+            importanceScore: 0,
+            isProtected: false,
+            memoryType: 'semantic',
+            isDeleted: false,
         });
 
         await memoryManager.updateMemory(id, { content: 'v2' });
@@ -45,10 +55,19 @@ describe('Memory Versioning', () => {
 
     it('should revert to previous version', async () => {
         const id = 'mem-1';
-        (memoryManager as any).memories.set(id, {
+        mockStorage.memories.set(id, {
             id,
             content: 'v2',
             version: 2,
+            metadata: {},
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            lastAccessedAt: new Date(),
+            accessCount: 0,
+            importanceScore: 0,
+            isProtected: false,
+            memoryType: 'semantic',
+            isDeleted: false,
         });
 
         (transactionCoordinator.getMemoryVersion as any).mockResolvedValue({

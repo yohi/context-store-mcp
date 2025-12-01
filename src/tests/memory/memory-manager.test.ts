@@ -27,7 +27,7 @@ describe('MemoryManager - Basic Functionality (Task 3.1)', () => {
     // モックアダプターを初期化
     mockStorage = new MockStorageAdapter();
     mockVectorStore = new MockVectorStoreAdapter();
-    mockTransactionCoordinator = new MockTransactionCoordinator();
+    mockTransactionCoordinator = new MockTransactionCoordinator(mockStorage);
 
     // モックを注入してMemoryManagerを初期化
     memoryManager = new MemoryManager({
@@ -332,7 +332,7 @@ describe('MemoryManager - Auto Cleanup (Task 3.3)', () => {
     // モックアダプターを初期化
     mockStorage = new MockStorageAdapter();
     mockVectorStore = new MockVectorStoreAdapter();
-    mockTransactionCoordinator = new MockTransactionCoordinator();
+    mockTransactionCoordinator = new MockTransactionCoordinator(mockStorage);
 
     // モックを注入してMemoryManagerを初期化
     memoryManager = new MemoryManager({
@@ -572,7 +572,7 @@ describe('MemoryManager - Update, Delete, Merge (Task 3.2)', () => {
     // モックアダプターを初期化
     mockStorage = new MockStorageAdapter();
     mockVectorStore = new MockVectorStoreAdapter();
-    mockTransactionCoordinator = new MockTransactionCoordinator();
+    mockTransactionCoordinator = new MockTransactionCoordinator(mockStorage);
 
     // モックを注入してMemoryManagerを初期化
     memoryManager = new MemoryManager({
@@ -914,7 +914,7 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
     // モックアダプターを初期化
     mockStorage = new MockStorageAdapter();
     mockVectorStore = new MockVectorStoreAdapter();
-    mockTransactionCoordinator = new MockTransactionCoordinator();
+    mockTransactionCoordinator = new MockTransactionCoordinator(mockStorage);
 
     // モックを注入してMemoryManagerを初期化
     memoryManager = new MemoryManager({

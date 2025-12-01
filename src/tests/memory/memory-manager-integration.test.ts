@@ -3,6 +3,7 @@ import { MemoryManager } from '../../memory/memory-manager.js';
 import { VectorStoreAdapter } from '../../storage/vector-store-adapter.js';
 import { GraphStoreAdapter } from '../../storage/graph-store-adapter.js';
 import { TransactionCoordinator } from '../../storage/transaction-coordinator.js';
+import { MockStorageAdapter } from '../mocks/index.js';
 
 // Mocks
 vi.mock('../../storage/vector-store-adapter.js');
@@ -11,11 +12,13 @@ vi.mock('../../storage/transaction-coordinator.js');
 
 describe('MemoryManager Integration', () => {
   let memoryManager: MemoryManager;
+  let mockStorage: MockStorageAdapter;
   let mockVectorStore: {
     searchSimilar: Mock;
     searchSimilarAdvanced: Mock;
     storeWithEmbedding: Mock;
     deleteVector: Mock;
+    addEmbeddingForMemory: Mock;
   };
   let mockGraphStore: {
     createNode: Mock;
@@ -26,17 +29,21 @@ describe('MemoryManager Integration', () => {
   let mockCoordinator: {
     storeMemoryWithSaga: Mock;
     deleteMemoryWithSaga: Mock;
+    saveMemoryVersion: Mock;
   };
 
   beforeEach(() => {
     // Reset mocks
     vi.clearAllMocks();
 
+    mockStorage = new MockStorageAdapter();
+
     mockVectorStore = {
       searchSimilar: vi.fn(),
       searchSimilarAdvanced: vi.fn(),
       storeWithEmbedding: vi.fn(),
       deleteVector: vi.fn(),
+      addEmbeddingForMemory: vi.fn(),
     };
 
     mockGraphStore = {
@@ -49,10 +56,12 @@ describe('MemoryManager Integration', () => {
     mockCoordinator = {
       storeMemoryWithSaga: vi.fn(),
       deleteMemoryWithSaga: vi.fn(),
+      saveMemoryVersion: vi.fn(),
     };
 
     // Initialize MemoryManager with dependencies
     memoryManager = new MemoryManager({
+      storage: mockStorage,
       vectorStore: mockVectorStore as unknown as VectorStoreAdapter,
       graphStore: mockGraphStore as unknown as GraphStoreAdapter,
       transactionCoordinator: mockCoordinator as unknown as TransactionCoordinator
@@ -100,6 +109,22 @@ describe('MemoryManager Integration', () => {
     if (!storeResult.success) return;
 
     const memoryId = storeResult.value;
+
+    // Manually seed the storage so getMemory finds it
+    mockStorage.memories.set(memoryId, {
+        id: memoryId,
+        content: 'to delete',
+        metadata: {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        lastAccessedAt: new Date(),
+        accessCount: 0,
+        importanceScore: 0,
+        isProtected: false,
+        version: 1,
+        isDeleted: false,
+        memoryType: 'semantic'
+    });
 
     // Setup for deleteMemory
     mockCoordinator.deleteMemoryWithSaga.mockResolvedValue({

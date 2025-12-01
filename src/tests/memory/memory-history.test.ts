@@ -3,16 +3,63 @@
  * TDD for Task 3.2: History Management (Version Recording)
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { MemoryManager } from '../../memory/memory-manager.js';
 import type { MemoryId } from '../../memory/types.js';
+import { MockStorageAdapter, MockTransactionCoordinator } from '../mocks/index.js';
 
 describe('MemoryManager - History Management (Task 3.2)', () => {
   let memoryManager: MemoryManager;
+  let mockStorage: MockStorageAdapter;
+  let mockTransactionCoordinator: MockTransactionCoordinator;
   let memoryId: MemoryId;
 
   beforeEach(async () => {
-    memoryManager = new MemoryManager();
+    mockStorage = new MockStorageAdapter();
+    mockTransactionCoordinator = new MockTransactionCoordinator();
+    
+    // Link TC to Storage for updates
+    mockTransactionCoordinator.storeMemoryWithSaga = vi.fn().mockImplementation(async (entity) => {
+        // Mocking the effect of storage
+        const memory = {
+            id: entity.id,
+            content: entity.content,
+            memoryType: entity.memoryType,
+            metadata: entity.metadata,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            lastAccessedAt: new Date(),
+            accessCount: 0,
+            importanceScore: 0,
+            isDeleted: false,
+            isProtected: false,
+            version: entity.version || 1, // Handle version
+            deletedAt: null
+        };
+        mockStorage.memories.set(entity.id, memory);
+        return { status: 'ok', memoryId: entity.id };
+    });
+
+    mockTransactionCoordinator.updateMemoryWithSaga = vi.fn().mockImplementation(async (entity) => {
+        const existing = mockStorage.memories.get(entity.id);
+        if (existing) {
+            mockStorage.memories.set(entity.id, {
+                ...existing,
+                content: entity.content,
+                metadata: entity.metadata,
+                memoryType: entity.memoryType,
+                version: entity.version || existing.version + 1, // Handle version if passed
+                updatedAt: new Date()
+            });
+        }
+        return { status: 'ok', memoryId: entity.id };
+    });
+
+    memoryManager = new MemoryManager({
+        storage: mockStorage,
+        transactionCoordinator: mockTransactionCoordinator as any
+    });
+
     // Create a base memory
     const result = await memoryManager.storeMemory({
       content: 'Version 1 Content',
@@ -23,7 +70,7 @@ describe('MemoryManager - History Management (Task 3.2)', () => {
   });
 
   it('should initialize memory with version 1', async () => {
-    const memory = memoryManager.getMemoryForTest(memoryId);
+    const memory = mockStorage.getMemoryForTest(memoryId);
     expect(memory).toBeDefined();
     expect(memory?.version).toBe(1);
   });
@@ -33,7 +80,7 @@ describe('MemoryManager - History Management (Task 3.2)', () => {
       content: 'Version 2 Content',
     });
 
-    const memory = memoryManager.getMemoryForTest(memoryId);
+    const memory = mockStorage.getMemoryForTest(memoryId);
     expect(memory?.version).toBe(2);
     expect(memory?.content).toBe('Version 2 Content');
   });
@@ -77,12 +124,12 @@ describe('MemoryManager - History Management (Task 3.2)', () => {
     // Any successful update call should increment version for consistency with `updatedAt`
     // and create a history record, even if the content appears identical.
     
-    const memoryBefore = memoryManager.getMemoryForTest(memoryId);
+    const memoryBefore = mockStorage.getMemoryForTest(memoryId);
     const historyBefore = await memoryManager.getMemoryHistory(memoryId);
 
     await memoryManager.updateMemory(memoryId, { content: 'Version 1 Content' }); // Same content
     
-    const memoryAfter = memoryManager.getMemoryForTest(memoryId);
+    const memoryAfter = mockStorage.getMemoryForTest(memoryId);
     expect(memoryAfter?.version).toBeGreaterThan(memoryBefore!.version);
     
     const historyAfter = await memoryManager.getMemoryHistory(memoryId);
