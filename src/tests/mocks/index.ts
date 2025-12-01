@@ -1,7 +1,7 @@
 import type { StorageAdapter } from '../../storage/storage-adapter.js';
 import type { VectorStoreAdapter } from '../../storage/vector-store-adapter.js';
 import type { TransactionCoordinator } from '../../storage/transaction-coordinator.js';
-import type { Memory, MemoryId, SearchParams } from '../../memory/types.js';
+import type { Memory, MemoryId, SearchParams, MemoryType, MemoryClassifierService, TrainingSample, LabeledSample } from '../../memory/types.js';
 import { vi } from 'vitest';
 
 export class MockStorageAdapter implements StorageAdapter {
@@ -78,17 +78,17 @@ export class MockStorageAdapter implements StorageAdapter {
 }
 
 export class MockVectorStoreAdapter implements Partial<VectorStoreAdapter> {
-  addEmbeddingForMemory = vi.fn().mockImplementation(async (memoryId: string, embedding: number[], userId: string) => {
+  addEmbeddingForMemory = vi.fn().mockImplementation(async (_memoryId: string, _embedding: number[], _userId: string) => {
     return { success: true, value: true };
   });
   searchSimilar = vi.fn().mockResolvedValue([]);
-  async deleteVector(id: string): Promise<void> {}
+  async deleteVector(_id: string): Promise<boolean> { return true; }
 }
 
 export class MockTransactionCoordinator implements Partial<TransactionCoordinator> {
   public versions: any[] = [];
   public storedVersions: Map<string, any[]> = new Map();
-  private storage?: MockStorageAdapter;
+  private storage: MockStorageAdapter | undefined;
 
   constructor(storage?: MockStorageAdapter) {
     this.storage = storage;
@@ -103,82 +103,82 @@ export class MockTransactionCoordinator implements Partial<TransactionCoordinato
 
   storeMemoryWithSaga = vi.fn().mockImplementation(async (entity) => {
     if (this.storage) {
-        const memory = {
-            id: entity.id,
-            content: entity.content,
-            memoryType: entity.memoryType,
-            metadata: entity.metadata,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-            lastAccessedAt: new Date(),
-            accessCount: 0,
-            importanceScore: 0,
-            isDeleted: false,
-            isProtected: false,
-            version: 1,
-            deletedAt: null
-        };
-        this.storage.memories.set(entity.id, memory);
+      const memory = {
+        id: entity.id,
+        content: entity.content,
+        memoryType: entity.memoryType,
+        metadata: entity.metadata,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        lastAccessedAt: new Date(),
+        accessCount: 0,
+        importanceScore: 0,
+        isDeleted: false,
+        isProtected: false,
+        version: 1,
+        deletedAt: null
+      };
+      this.storage.memories.set(entity.id, memory);
     }
     return { status: 'ok', memoryId: entity.id };
   });
 
   updateMemoryWithSaga = vi.fn().mockImplementation(async (entity) => {
     if (this.storage) {
-        const existing = this.storage.memories.get(entity.id);
-        if (existing) {
-            this.storage.memories.set(entity.id, {
-                ...existing,
-                ...entity, // Apply all properties from entity
-                version: (existing.version || 1) + 1,
-                updatedAt: new Date()
-            });
-        }
+      const existing = this.storage.memories.get(entity.id);
+      if (existing) {
+        this.storage.memories.set(entity.id, {
+          ...existing,
+          ...entity, // Apply all properties from entity
+          version: (existing.version || 1) + 1,
+          updatedAt: new Date()
+        });
+      }
     }
     return { status: 'ok', memoryId: entity.id };
   });
 
   deleteMemoryWithSaga = vi.fn().mockImplementation(async (id) => {
-      if (this.storage) {
-          const existing = this.storage.memories.get(id);
-          if (existing) {
-              this.storage.memories.set(id, { ...existing, isDeleted: true, deletedAt: new Date() });
-          }
+    if (this.storage) {
+      const existing = this.storage.memories.get(id);
+      if (existing) {
+        this.storage.memories.set(id, { ...existing, isDeleted: true, deletedAt: new Date() });
       }
-      return { status: 'ok', memoryId: id };
+    }
+    return { status: 'ok', memoryId: id };
   });
-  
+
   saveMemoryVersion = vi.fn().mockImplementation(async (memoryData, versionNumber) => {
-      const memoryId = memoryData.id;
-      const currentVersions = this.storedVersions.get(memoryId) || [];
-      // Assuming memoryData contains content, metadata, etc.
-      currentVersions.push({
-          memoryId: memoryId,
-          version: versionNumber,
-          content: memoryData.content,
-          metadata: memoryData.metadata,
-          timestamp: new Date(), // Capture current time as history timestamp
-          // The 'id' in MemoryHistoryEntry refers to the history entry's ID, not memoryId.
-          // For mock, we can just use a placeholder or generate one.
-          id: `history-${memoryId}-v${versionNumber}` 
-      });
-      this.storedVersions.set(memoryId, currentVersions);
+    const memoryId = memoryData.id;
+    const currentVersions = this.storedVersions.get(memoryId) || [];
+    // Assuming memoryData contains content, metadata, etc.
+    currentVersions.push({
+      memoryId: memoryId,
+      version: versionNumber,
+      content: memoryData.content,
+      metadata: memoryData.metadata,
+      timestamp: new Date(), // Capture current time as history timestamp
+      // The 'id' in MemoryHistoryEntry refers to the history entry's ID, not memoryId.
+      // For mock, we can just use a placeholder or generate one.
+      id: `history-${memoryId}-v${versionNumber}`
+    });
+    this.storedVersions.set(memoryId, currentVersions);
   });
 
   getMemoryVersions = vi.fn().mockImplementation(async (memoryId) => {
-      return this.storedVersions.get(memoryId) || [];
+    return this.storedVersions.get(memoryId) || [];
   });
 
   getMemoryVersion = vi.fn().mockImplementation(async (memoryId: MemoryId, version: number) => {
-      const versions = this.storedVersions.get(memoryId);
-      if (!versions) {
-          return null;
-      }
-      return versions.find(entry => entry.version === version) || null;
+    const versions = this.storedVersions.get(memoryId);
+    if (!versions) {
+      return null;
+    }
+    return versions.find(entry => entry.version === version) || null;
   });
   findSoftDeletedMemories = vi.fn().mockImplementation(async (threshold: Date) => {
     if (!this.storage) return [];
-    const softDeleted = Array.from(this.storage.memories.values()).filter(m => 
+    const softDeleted = Array.from(this.storage.memories.values()).filter(m =>
       m.isDeleted && m.deletedAt && m.deletedAt < threshold && !m.isProtected
     );
     return softDeleted.map(m => m.id);
@@ -195,11 +195,11 @@ export class MockTransactionCoordinator implements Partial<TransactionCoordinato
     if (!this.storage) return 0;
     let deletedCount = 0;
     const memoriesToDelete = Array.from(this.storage.memories.values()).filter(m =>
-        !m.isProtected && m.importanceScore < importanceThreshold && m.updatedAt < olderThan
+      !m.isProtected && m.importanceScore < importanceThreshold && m.updatedAt < olderThan
     );
     for (const memory of memoriesToDelete) {
-        this.storage.memories.delete(memory.id);
-        deletedCount++;
+      this.storage.memories.delete(memory.id);
+      deletedCount++;
     }
     return deletedCount;
   });
@@ -207,14 +207,25 @@ export class MockTransactionCoordinator implements Partial<TransactionCoordinato
   getDatabaseSize = vi.fn().mockResolvedValue(0);
 }
 
+
+
 export class MockMemoryClassifierService implements MemoryClassifierService {
-  classifyContent = vi.fn().mockResolvedValue({ primaryType: 'semantic', confidence: 0.8 });
-  getConfidenceScore = vi.fn().mockResolvedValue(0.8);
-  trainClassifier = vi.fn().mockResolvedValue(undefined);
+  classifyContent = vi.fn().mockResolvedValue({
+    primaryType: 'semantic',
+    confidence: 0.8,
+    suggestedTypes: [],
+    features: { ruleBasedScore: 0.8, embeddingScore: 0, detectedKeywords: [] }
+  });
+  getConfidenceScore = vi.fn().mockImplementation(async (_content: string, _type: MemoryType) => 0.8);
+  trainClassifier = vi.fn().mockImplementation(async (_samples: TrainingSample[]) => undefined);
   generateEmbedding = vi.fn().mockImplementation(async (content: string) => {
     // Return a consistent mock embedding for any content
     return [0.1, 0.2, 0.3, content.length * 0.01]; // Simple deterministic embedding
   });
-  evaluateAccuracy = vi.fn().mockResolvedValue({ overall: 0.9, perType: {}, confusionMatrix: [] });
+  evaluateAccuracy = vi.fn().mockImplementation(async (_testSamples: LabeledSample[]) => ({
+    overall: 0.9,
+    perType: { episodic: 0.9, semantic: 0.9, procedural: 0.9 },
+    confusionMatrix: [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+  }));
   getClassificationStats = vi.fn().mockResolvedValue({ totalClassified: 100, userOverrideRate: 0.1, averageConfidence: 0.85, lowConfidenceCount: 5 });
 }

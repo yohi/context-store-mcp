@@ -561,8 +561,8 @@ export class MemoryManager implements MemoryManagerService {
     }
 
     try {
-      const embedding = await this.classifier.generateEmbedding(content);
-      const results = await this.vectorStore.searchSimilar(embedding, limit);
+      // const embedding = await this.classifier.generateEmbedding(content); // Now handled by vectorStore
+      const results = await this.vectorStore.searchSimilar(content, limit);
       const memories: Memory[] = [];
 
         for (const r of results) {

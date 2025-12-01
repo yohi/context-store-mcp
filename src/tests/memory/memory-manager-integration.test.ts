@@ -22,7 +22,7 @@ describe('MemoryManager Integration', () => {
     mockVectorStore = new MockVectorStoreAdapter();
     mockTransactionCoordinator = new MockTransactionCoordinator(mockStorage);
     mockClassifier = new MockMemoryClassifierService();
-    
+
     // Mock GraphStoreAdapter for consistency, even if not fully used in all tests here
     mockGraphStore = {
       createNode: vi.fn(),
@@ -60,16 +60,14 @@ describe('MemoryManager Integration', () => {
 
   it('should use VectorStoreAdapter for finding similar memories', async () => {
     const content = 'search query';
-    const dummyEmbedding = [0.1, 0.2, 0.3];
-    mockClassifier.generateEmbedding.mockResolvedValue(dummyEmbedding);
     mockVectorStore.searchSimilar.mockResolvedValue([
       { id: 'mem-1', content: 'result 1', similarity: 0.9, metadata: {} }
     ]);
 
     await memoryManager.findSimilarMemories(content);
 
-    expect(mockClassifier.generateEmbedding).toHaveBeenCalledWith(content);
-    expect(mockVectorStore.searchSimilar).toHaveBeenCalledWith(dummyEmbedding, 5);
+    // VectorStoreAdapter handles embedding generation internally
+    expect(mockVectorStore.searchSimilar).toHaveBeenCalledWith(content, 5);
   });
 
   it('should use TransactionCoordinator for deleting memory', async () => {
@@ -88,18 +86,18 @@ describe('MemoryManager Integration', () => {
 
     // Manually seed the storage so getMemory finds it
     mockStorage.memories.set(memoryId, {
-        id: memoryId,
-        content: 'to delete',
-        metadata: {},
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        lastAccessedAt: new Date(),
-        accessCount: 0,
-        importanceScore: 0,
-        isProtected: false,
-        version: 1,
-        isDeleted: false,
-        memoryType: 'semantic'
+      id: memoryId,
+      content: 'to delete',
+      metadata: {},
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      lastAccessedAt: new Date(),
+      accessCount: 0,
+      importanceScore: 0,
+      isProtected: false,
+      version: 1,
+      isDeleted: false,
+      memoryType: 'semantic'
     });
 
     // Setup for deleteMemory
