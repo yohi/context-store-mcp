@@ -30,14 +30,12 @@ describe('Similarity and Merge', () => {
         const mockResults = [
             { id: '1', content: 'test', metadata: {}, similarity: 0.9 },
         ];
-        // Mock the classifier to return a dummy embedding
-        mockClassifier.generateEmbedding.mockResolvedValue([0.1, 0.2, 0.3, 0.4]);
         mockVectorStore.searchSimilar.mockResolvedValue(mockResults);
 
         const results = await memoryManager.findSimilarMemories('query');
 
-        expect(mockClassifier.generateEmbedding).toHaveBeenCalledWith('query');
-        expect(mockVectorStore.searchSimilar).toHaveBeenCalledWith([0.1, 0.2, 0.3, 0.4], 5);
+        // VectorStoreAdapter handles embedding generation internally
+        expect(mockVectorStore.searchSimilar).toHaveBeenCalledWith('query', 5);
         expect(results).toHaveLength(1);
         expect(results[0].id).toBe('1');
     });
@@ -73,8 +71,8 @@ describe('Similarity and Merge', () => {
         (mockVectorStore.searchSimilar as any).mockResolvedValue(mockResults);
 
         // Mock mem-2 as existing and not deleted
-        mockStorage.memories.set('mem-2', { 
-            id: 'mem-2', 
+        mockStorage.memories.set('mem-2', {
+            id: 'mem-2',
             content: 'similar content',
             metadata: { tags: ['tag1'] },
             createdAt: now,
@@ -88,8 +86,8 @@ describe('Similarity and Merge', () => {
             memoryType: 'semantic',
         });
         // Mock mem-3 as deleted
-        mockStorage.memories.set('mem-3', { 
-            id: 'mem-3', 
+        mockStorage.memories.set('mem-3', {
+            id: 'mem-3',
             content: 'deleted content',
             metadata: {},
             createdAt: now,
