@@ -31,7 +31,7 @@ describe('Memory Persistence Integration Tests', () => {
         // MemoryManagerを作成（TransactionCoordinatorなし）
         memoryManager = await createTestMemoryManager(pool, driver || undefined, {
             includeVectorStore: false,
-            includeTransactionCoordinator: false,
+            includeTransactionCoordinator: true,
         });
     });
 
