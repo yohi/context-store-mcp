@@ -35,7 +35,7 @@ export interface MemoryManagerConfig {
   storage?: StorageAdapter;
   vectorStore?: VectorStoreAdapter;
   graphStore?: GraphStoreAdapter;
-  transactionCoordinator?: TransactionCoordinator;
+  transactionCoordinator?: TransactionCoordinator | Partial<TransactionCoordinator>;
   classifier?: MemoryClassifierService;
 }
 
@@ -72,7 +72,7 @@ export class MemoryManager implements MemoryManagerService {
     if (config) {
       if (config.vectorStore) this.vectorStore = config.vectorStore;
       if (config.graphStore) this.graphStore = config.graphStore;
-      if (config.transactionCoordinator) this.transactionCoordinator = config.transactionCoordinator;
+      if (config.transactionCoordinator) this.transactionCoordinator = config.transactionCoordinator as TransactionCoordinator;
       if (config.classifier) this.classifier = config.classifier;
     }
   }
@@ -223,8 +223,8 @@ export class MemoryManager implements MemoryManagerService {
       return {
         success: false,
         error: {
-          type: 'INVALID_OPERATION',
-          message: `Cannot update a deleted memory: ${id}`,
+          type: 'MEMORY_NOT_FOUND',
+          message: `Memory with ID ${id} not found`,
         },
       };
     }

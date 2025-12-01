@@ -136,7 +136,7 @@ describe('Issues Verification', () => {
                   lastAccessedAt: new Date(now.getTime() - 30 * 60 * 1000), // Add lastAccessedAt
                 }
               ]);  
-        // Base 0.7 + Time Boost 0.15 = 0.85 > 0.8
+        // Base 0.7 + Time Boost 0.10 = 0.80 >= 0.8
         const results = await memoryManager.findSimilarMemoriesById(targetId, 0.8);
   
         expect(results).toHaveLength(1);

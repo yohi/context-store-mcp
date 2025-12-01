@@ -46,6 +46,10 @@ describe('Similarity and Merge', () => {
         // Setup target memory
         const id = 'mem-1';
         const now = new Date();
+
+        // Mock embedding generation for similarity search
+        mockClassifier.generateEmbedding.mockResolvedValue([0.1, 0.2, 0.3, 0.4]);
+
         mockStorage.memories.set(id, {
             id,
             content: 'original content',

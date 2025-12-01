@@ -20,7 +20,7 @@ describe('MemoryManager - History Management (Task 3.2)', () => {
     
     memoryManager = new MemoryManager({
         storage: mockStorage,
-        transactionCoordinator: mockTransactionCoordinator as unknown as TransactionCoordinator
+        transactionCoordinator: mockTransactionCoordinator
     });
 
     // Create a base memory

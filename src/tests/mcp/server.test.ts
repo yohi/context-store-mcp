@@ -47,7 +47,73 @@ describe('MCP Server Core Features', () => {
     mockVectorStore = new MockVectorStoreAdapter() as VectorStoreAdapter;
 
     mockStorage = new MockStorageAdapter(); // Initialized
-    mockTransactionCoordinator = new MockTransactionCoordinator(mockStorage); // Initialized
+    mockTransactionCoordinator = {
+      storedVersions: new Map<string, any[]>(), // For saveMemoryVersion mock
+      storeMemoryWithSaga: vi.fn().mockImplementation(async (entity) => {
+        const memory = {
+            id: entity.id,
+            content: entity.content,
+            memoryType: entity.memoryType,
+            metadata: entity.metadata,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            lastAccessedAt: new Date(),
+            accessCount: 0,
+            importanceScore: 0,
+            isDeleted: false,
+            isProtected: false,
+            version: 1,
+            deletedAt: null
+        };
+        mockStorage.memories.set(entity.id, memory);
+        return { status: 'ok', memoryId: entity.id };
+      }),
+      updateMemoryWithSaga: vi.fn().mockImplementation(async (entity) => {
+        const existing = mockStorage.memories.get(entity.id);
+        if (existing) {
+            mockStorage.memories.set(entity.id, {
+                ...existing,
+                ...entity, // Apply all properties from entity
+                version: (existing.version || 1) + 1,
+                updatedAt: new Date()
+            });
+        }
+        return { status: 'ok', memoryId: entity.id };
+      }),
+      deleteMemoryWithSaga: vi.fn().mockImplementation(async (id) => {
+          const existing = mockStorage.memories.get(id);
+          if (existing) {
+              mockStorage.memories.set(id, { ...existing, isDeleted: true, deletedAt: new Date() });
+          }
+          return { status: 'ok', memoryId: id };
+      }),
+      saveMemoryVersion: vi.fn().mockImplementation(async (memoryData, versionNumber) => {
+        const memoryId = memoryData.id;
+        const currentVersions = mockTransactionCoordinator.storedVersions.get(memoryId) || [];
+        currentVersions.push({
+            memoryId: memoryId,
+            version: versionNumber,
+            content: memoryData.content,
+            metadata: memoryData.metadata,
+            timestamp: new Date(),
+            id: `history-${memoryId}-v${versionNumber}`
+        });
+        mockTransactionCoordinator.storedVersions.set(memoryId, currentVersions);
+      }),
+      getMemory: vi.fn().mockImplementation(async (id: string) => mockStorage.getMemory(id)),
+      getMemoryVersions: vi.fn().mockImplementation(async (memoryId: string) => mockTransactionCoordinator.storedVersions.get(memoryId) || []),
+      getMemoryVersion: vi.fn().mockImplementation(async (memoryId: string, version: number) => {
+          const versions = mockTransactionCoordinator.storedVersions.get(memoryId);
+          if (!versions) {
+              return null;
+          }
+          return versions.find((entry: any) => entry.version === version) || null;
+      }),
+      findSoftDeletedMemories: vi.fn().mockResolvedValue([]),
+      hardDeleteMemory: vi.fn().mockResolvedValue({ status: 'ok' }),
+      deleteLowImportanceMemories: vi.fn().mockResolvedValue(0),
+      getDatabaseSize: vi.fn().mockResolvedValue(0),
+    } as any;
 
     // Inject mock VectorStore into MemoryManager, and inject manager into Server
     const memoryManager = new MemoryManager({

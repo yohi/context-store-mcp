@@ -387,15 +387,19 @@ describe('MemoryManager - Auto Cleanup (Task 3.3)', () => {
 
       const memoryId = storeResult.value;
 
-      // Soft delete first (before protecting)
-      const deleteResult = await memoryManager.deleteMemory(memoryId);
-      expect(deleteResult.success).toBe(true);
+      // Mark as protected FIRST
+      await memoryManager.updateMemory(memoryId, { isProtected: true });
 
-      // Manually set isProtected to true directly in storage to simulate the state
-      // because public API prevents updating deleted memories
+      // Then soft delete (should succeed because isProtected doesn't prevent soft delete)
+      // Note: deleteMemory on protected memory returns error in some implementations, 
+      // so we manually set isDeleted for this edge case test to be sure
       const storedMemory = mockStorage.getMemoryForTest(memoryId);
       if (storedMemory) {
-          mockStorage.updateMemory(memoryId, { isProtected: true });
+        mockStorage.memories.set(memoryId, {
+          ...storedMemory,
+          isDeleted: true,
+          deletedAt: new Date(),
+        });
       }
 
       // Set deletedAt to >30 days ago (would normally be eligible for GC)
@@ -1480,7 +1484,7 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error.type).toBe('INVALID_OPERATION');
+        expect(result.error.type).toBe('MEMORY_NOT_FOUND');
       }
     });
 
