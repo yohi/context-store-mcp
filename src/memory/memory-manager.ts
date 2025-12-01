@@ -43,6 +43,7 @@ export class MemoryManager implements MemoryManagerService {
   private storage: StorageAdapter;
 
   private vectorStore?: VectorStoreAdapter;
+  private graphStore?: GraphStoreAdapter;
   private transactionCoordinator?: TransactionCoordinator;
   private classifier?: MemoryClassifierService;
 
@@ -70,30 +71,13 @@ export class MemoryManager implements MemoryManagerService {
 
     if (config) {
       if (config.vectorStore) this.vectorStore = config.vectorStore;
+      if (config.graphStore) this.graphStore = config.graphStore;
       if (config.transactionCoordinator) this.transactionCoordinator = config.transactionCoordinator;
       if (config.classifier) this.classifier = config.classifier;
     }
   }
 
-  /**
-   * リソースをクリーンアップし、データベース接続を閉じる
-   */
-  async dispose(): Promise<void> {
-    if (this.isDisposed) {
-      return;
-    }
-    this.isDisposed = true;
 
-    // 自分で作成したPoolのみをクリーンアップ
-    if (this.ownsStorage) {
-      if (this.storage.close) {
-        await this.storage.close();
-      } else if (this.storage instanceof PostgresStorageAdapter) {
-        // StorageAdapterの型定義更新が反映されていない場合のフォールバック
-        await this.storage.close();
-      }
-    }
-  }
 
   /**
    * 自動ID生成とタイムスタンプ管理を行い、新しい記憶を保存する
@@ -437,59 +421,20 @@ export class MemoryManager implements MemoryManagerService {
    * @returns 成功した場合はtrue、失敗した場合はエラー
    */
   private async restoreMemory(id: MemoryId): Promise<Result<boolean, MemoryError>> {
-    // TransactionCoordinatorを使用して直接データベースを更新
-    if (this.transactionCoordinator) {
-      try {
-        // PostgreSQLで直接更新を実行
-        await (this.transactionCoordinator as any).postgresPool.query(
-          'UPDATE memories SET is_deleted = false, deleted_at = null WHERE id = $1',
-          [id]
-        );
-        return {
-          success: true,
-          value: true,
-        };
-      } catch (error) {
-        return {
-          success: false,
-          error: {
-            type: 'STORAGE_ERROR',
-            message: `Failed to restore memory ${id}: ${error instanceof Error ? error.message : String(error)}`,
-          },
-        };
-      }
-    } else {
-      // TransactionCoordinatorがない場合は、ストレージアダプターを直接使用
-      try {
-        // PostgresStorageAdapterのプールに直接アクセス
-        const pool = (this.storage as any).pool as Pool;
-        if (pool) {
-          await pool.query(
-            'UPDATE memories SET is_deleted = false, deleted_at = null WHERE id = $1',
-            [id]
-          );
-          return {
-            success: true,
-            value: true,
-          };
-        } else {
-          return {
-            success: false,
-            error: {
-              type: 'STORAGE_ERROR',
-              message: 'Cannot restore memory: no database connection available',
-            },
-          };
-        }
-      } catch (error) {
-        return {
-          success: false,
-          error: {
-            type: 'STORAGE_ERROR',
-            message: `Failed to restore memory ${id}: ${error instanceof Error ? error.message : String(error)}`,
-          },
-        };
-      }
+    try {
+      await this.storage.restoreMemory(id);
+      return {
+        success: true,
+        value: true,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          type: 'STORAGE_ERROR',
+          message: `Failed to restore memory ${id}: ${error instanceof Error ? error.message : String(error)}`,
+        },
+      };
     }
   }
 
@@ -876,7 +821,13 @@ export class MemoryManager implements MemoryManagerService {
           if (original) {
             // 復元ロジック（isDeleted=falseにして更新）
             // updateMemoryは保護フィールドをフィルタリングするため、専用のrestoreMemoryメソッドを使用
-            await this.restoreMemory(deletedId);
+            const restoreResult = await this.restoreMemory(deletedId);
+            if (!restoreResult.success) {
+              console.error(
+                `Failed to restore source memory ${deletedId} during merge rollback:`,
+                restoreResult.error
+              );
+            }
           }
         }
 
@@ -1123,13 +1074,34 @@ export class MemoryManager implements MemoryManagerService {
       };
     }
 
-    // TODO: GraphStoreAdapterを使用してリンクを保存
-    console.warn('Link creation not fully implemented without GraphStoreAdapter');
+    if (this.graphStore) {
+      try {
+        const linkId = await this.graphStore.createRelationship(from, to, _linkType, {
+          strength,
+          createdBy: _createdBy,
+          ...(_reasoning ? { reasoning: _reasoning } : {}),
+          createdAt: new Date(),
+        });
+        return {
+          success: true,
+          value: linkId,
+        };
+      } catch (error) {
+        return {
+          success: false,
+          error: {
+            type: 'STORAGE_ERROR',
+            message: `Failed to create link: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        };
+      }
+    }
+
     return {
       success: false,
       error: {
         type: 'STORAGE_ERROR',
-        message: 'Link creation requires GraphStoreAdapter (not yet implemented)',
+        message: 'GraphStoreAdapter is not available',
       },
     };
   }
@@ -1138,9 +1110,33 @@ export class MemoryManager implements MemoryManagerService {
    * 記憶のすべてのリンクを取得する（双方向）
    * 要件: 3.5 (相互参照の管理)
    */
-  async getLinks(_memoryId: MemoryId): Promise<MemoryLink[]> {
-    // TODO: GraphStoreAdapterを使用
-    console.warn('getLinks not fully implemented without GraphStoreAdapter');
+  async getLinks(memoryId: MemoryId): Promise<MemoryLink[]> {
+    if (this.graphStore) {
+      try {
+        const relationships = await this.graphStore.getNodeRelationships(memoryId, 'both');
+        return relationships.map((rel) => {
+          const metadata: MemoryLink['metadata'] = {
+            createdAt: (rel.properties.createdAt as Date) || new Date(),
+            createdBy: (rel.properties.createdBy as 'user' | 'system') || 'system',
+          };
+          if (rel.properties.reasoning) {
+            metadata.reasoning = rel.properties.reasoning as string;
+          }
+
+          return {
+            linkId: rel.id,
+            fromMemoryId: rel.fromNodeId,
+            toMemoryId: rel.toNodeId,
+            linkType: rel.type as MemoryLinkType,
+            strength: (rel.properties.strength as number) || 0.5,
+            metadata,
+          };
+        });
+      } catch (error) {
+        console.error(`Failed to get links for memory ${memoryId}:`, error);
+        return [];
+      }
+    }
     return [];
   }
 
@@ -1148,14 +1144,37 @@ export class MemoryManager implements MemoryManagerService {
    * リンクを削除する
    * 要件: 3.5 (リンク管理)
    */
-  async deleteLink(_linkId: string): Promise<Result<boolean, MemoryError>> {
-    // TODO: GraphStoreAdapterを使用
-    console.warn('deleteLink not fully implemented without GraphStoreAdapter');
+  async deleteLink(linkId: string): Promise<Result<boolean, MemoryError>> {
+    if (this.graphStore) {
+      try {
+        const success = await this.graphStore.deleteRelationship(linkId);
+        if (success) {
+          return { success: true, value: true };
+        } else {
+          return {
+            success: false,
+            error: {
+              type: 'STORAGE_ERROR',
+              message: `Link with ID ${linkId} not found or could not be deleted`,
+            },
+          };
+        }
+      } catch (error) {
+        return {
+          success: false,
+          error: {
+            type: 'STORAGE_ERROR',
+            message: `Failed to delete link ${linkId}: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        };
+      }
+    }
+
     return {
       success: false,
       error: {
         type: 'STORAGE_ERROR',
-        message: 'Link deletion requires GraphStoreAdapter (not yet implemented)',
+        message: 'GraphStoreAdapter is not available',
       },
     };
   }

@@ -33,7 +33,7 @@ describe('MemoryManager - Basic Functionality (Task 3.1)', () => {
     memoryManager = new MemoryManager({
       storage: mockStorage,
       vectorStore: mockVectorStore as any, // 型の互換性のためanyにキャスト
-      // transactionCoordinator: mockTransactionCoordinator as any,
+      transactionCoordinator: mockTransactionCoordinator as any,
     });
   });
 

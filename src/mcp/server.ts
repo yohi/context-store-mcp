@@ -104,7 +104,9 @@ export function createContextStoreServer(deps?: { memoryManager?: MemoryManager 
     gcJob.stop();
 
     // MemoryManagerのリソースをクリーンアップ
-    // MemoryManagerが自身でPoolを作成した場合、ここでクローズされる
+    // 注意: サーバがMemoryManagerにストレージを渡した場合 (ownsStorage = false)、
+    // dispose() は共有ストレージ/プールを閉じません。
+    // dispose() がストレージ/プールを閉じるのは、MemoryManagerが自身のストレージ/プールを作成した場合のみです。
     try {
       await memoryManager.dispose();
     } catch (error) {

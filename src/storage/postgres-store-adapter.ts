@@ -93,6 +93,11 @@ export class PostgresStorageAdapter implements StorageAdapter {
         return (result.rowCount ?? 0) > 0;
     }
 
+    async restoreMemory(id: MemoryId): Promise<void> {
+        const query = `UPDATE memories SET is_deleted = false, deleted_at = null WHERE id = $1`;
+        await this.pool.query(query, [id]);
+    }
+
     async searchMemories(params: SearchParams): Promise<Memory[]> {
         let query = `SELECT * FROM memories WHERE is_deleted = false`;
         const values: any[] = [];
