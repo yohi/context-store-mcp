@@ -5,7 +5,7 @@ import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import { createContextStoreServer } from '../../mcp/server.js';
 import { MemoryManager } from '../../memory/memory-manager.js';
 import type { VectorStoreAdapter } from '../../storage/vector-store-adapter.js';
-import { MockStorageAdapter, MockTransactionCoordinator } from '../mocks/index.js';
+import { MockStorageAdapter, MockTransactionCoordinator, MockVectorStoreAdapter } from '../mocks/index.js';
 
 // Mock Transport to capture messages
 class MockTransport implements Transport {
@@ -44,9 +44,7 @@ describe('MCP Server Core Features', () => {
   let mockTransactionCoordinator: MockTransactionCoordinator; // Declared globally
 
   beforeEach(async () => {
-    mockVectorStore = {
-      searchSimilar: vi.fn().mockResolvedValue([]), // Default empty
-    } as unknown as VectorStoreAdapter;
+    mockVectorStore = new MockVectorStoreAdapter() as VectorStoreAdapter;
 
     mockStorage = new MockStorageAdapter(); // Initialized
     mockTransactionCoordinator = new MockTransactionCoordinator(mockStorage); // Initialized

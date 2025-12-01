@@ -218,6 +218,28 @@ export class MemoryManager implements MemoryManagerService {
       };
     }
 
+    // 記憶が論理削除されているか確認
+    if (existing.isDeleted) {
+      return {
+        success: false,
+        error: {
+          type: 'INVALID_OPERATION',
+          message: `Cannot update a deleted memory: ${id}`,
+        },
+      };
+    }
+
+    // 記憶が保護されているか確認
+    if (existing.isProtected) {
+      return {
+        success: false,
+        error: {
+          type: 'STORAGE_ERROR',
+          message: `Cannot update protected memory: ${id}`,
+        },
+      };
+    }
+
     // 更新される場合はコンテンツを検証
     if (updates.content !== undefined) {
       const validationError = this.validateContent(updates.content);
@@ -283,6 +305,8 @@ export class MemoryManager implements MemoryManagerService {
         content: updatedMemory.content,
         memoryType: updatedMemory.memoryType,
         metadata: updatedMemory.metadata,
+        isProtected: updatedMemory.isProtected,
+        isDeleted: updatedMemory.isDeleted,
       };
 
       const result = await this.transactionCoordinator.updateMemoryWithSaga(entity);
@@ -527,10 +551,19 @@ export class MemoryManager implements MemoryManagerService {
    * 完全な実装にはVectorStoreAdapter (Task 5.1)とPostgreSQLが必要です。
    */
   async findSimilarMemories(content: string, limit: number = 5): Promise<Memory[]> {
-    if (this.vectorStore) {
-      try {
-        const results = await this.vectorStore.searchSimilar(content, limit);
-        const memories: Memory[] = [];
+    if (!this.vectorStore) {
+      console.warn('VectorStoreAdapter is not available. Cannot perform semantic search.');
+      return [];
+    }
+    if (!this.classifier) {
+      console.warn('MemoryClassifierService is not available. Cannot generate embeddings for semantic search.');
+      return [];
+    }
+
+    try {
+      const embedding = await this.classifier.generateEmbedding(content);
+      const results = await this.vectorStore.searchSimilar(embedding, limit);
+      const memories: Memory[] = [];
 
         for (const r of results) {
           try {
@@ -571,8 +604,6 @@ export class MemoryManager implements MemoryManagerService {
         console.error('Vector search failed:', error);
         return [];
       }
-    }
-    return [];
   }
 
   /**
@@ -605,9 +636,9 @@ export class MemoryManager implements MemoryManagerService {
             id: res.id,
             content: res.content,
             memoryType: (res.metadata?.memoryType as MemoryType) || 'semantic',
-            metadata: res.metadata as MemoryMetadata,
-            createdAt: res.createdAt,
-            updatedAt: res.updatedAt,
+            metadata: (res.metadata as MemoryMetadata) || {},
+            createdAt: res.createdAt || new Date(),
+            updatedAt: res.updatedAt || new Date(),
             lastAccessedAt: res.lastAccessedAt || new Date(),
             accessCount: res.accessCount || 0,
             importanceScore: res.importanceScore || 0,
@@ -647,15 +678,14 @@ export class MemoryManager implements MemoryManagerService {
     for (const [, item] of candidates) {
       let finalScore = item.score;
 
-      // タグ重複のブースト (+0.15)
-      if (this.calculateTagOverlap(target.metadata.tags, item.memory.metadata.tags)) {
-        finalScore += 0.15;
-      }
-
-      // 時間的近接性のブースト (+0.15)
-      if (this.checkTimeProximity(target.createdAt, item.memory.createdAt)) {
-        finalScore += 0.15;
-      }
+        // タグ重複のブースト (+0.15)
+        if (this.calculateTagOverlap(target.metadata.tags, item.memory.metadata.tags)) {
+          finalScore += 0.15;
+        }
+        // 時間的近接性のブースト (+0.10)
+        if (item.memory.lastAccessedAt && target.lastAccessedAt && this.checkTimeProximity(target.lastAccessedAt, item.memory.lastAccessedAt)) {
+          finalScore += 0.10;
+        }
 
       // 閾値を確認
       if (finalScore >= threshold) {

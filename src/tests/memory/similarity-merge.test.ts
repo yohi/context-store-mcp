@@ -1,22 +1,28 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryManager } from '../../memory/memory-manager.js';
 import { VectorStoreAdapter } from '../../storage/vector-store-adapter.js';
-import { MockStorageAdapter } from '../mocks/index.js';
+import { TransactionCoordinator } from '../../storage/transaction-coordinator.js';
+import { MemoryClassifierService } from '../../memory/types.js';
+import { MockStorageAdapter, MockVectorStoreAdapter, MockTransactionCoordinator, MockMemoryClassifierService } from '../mocks/index.js';
 
 describe('Similarity and Merge', () => {
     let memoryManager: MemoryManager;
     let mockStorage: MockStorageAdapter;
-    let vectorStore: VectorStoreAdapter;
+    let mockVectorStore: MockVectorStoreAdapter;
+    let mockTransactionCoordinator: MockTransactionCoordinator;
+    let mockClassifier: MockMemoryClassifierService;
 
     beforeEach(() => {
         mockStorage = new MockStorageAdapter();
-        vectorStore = {
-            searchSimilar: vi.fn(),
-        } as unknown as VectorStoreAdapter;
+        mockVectorStore = new MockVectorStoreAdapter();
+        mockTransactionCoordinator = new MockTransactionCoordinator(mockStorage);
+        mockClassifier = new MockMemoryClassifierService();
 
         memoryManager = new MemoryManager({
             storage: mockStorage,
-            vectorStore,
+            vectorStore: mockVectorStore as unknown as VectorStoreAdapter,
+            transactionCoordinator: mockTransactionCoordinator as unknown as TransactionCoordinator,
+            classifier: mockClassifier as unknown as MemoryClassifierService,
         });
     });
 
@@ -24,11 +30,14 @@ describe('Similarity and Merge', () => {
         const mockResults = [
             { id: '1', content: 'test', metadata: {}, similarity: 0.9 },
         ];
-        (vectorStore.searchSimilar as any).mockResolvedValue(mockResults);
+        // Mock the classifier to return a dummy embedding
+        mockClassifier.generateEmbedding.mockResolvedValue([0.1, 0.2, 0.3, 0.4]);
+        mockVectorStore.searchSimilar.mockResolvedValue(mockResults);
 
         const results = await memoryManager.findSimilarMemories('query');
 
-        expect(vectorStore.searchSimilar).toHaveBeenCalledWith('query', 5);
+        expect(mockClassifier.generateEmbedding).toHaveBeenCalledWith('query');
+        expect(mockVectorStore.searchSimilar).toHaveBeenCalledWith([0.1, 0.2, 0.3, 0.4], 5);
         expect(results).toHaveLength(1);
         expect(results[0].id).toBe('1');
     });
@@ -58,7 +67,7 @@ describe('Similarity and Merge', () => {
             { id: 'mem-2', content: 'similar content', metadata: {}, similarity: 0.9 }, // Candidate
             { id: 'mem-3', content: 'deleted content', metadata: {}, similarity: 0.85 }, // Deleted candidate
         ];
-        (vectorStore.searchSimilar as any).mockResolvedValue(mockResults);
+        (mockVectorStore.searchSimilar as any).mockResolvedValue(mockResults);
 
         // Mock mem-2 as existing and not deleted
         mockStorage.memories.set('mem-2', { 
@@ -93,7 +102,7 @@ describe('Similarity and Merge', () => {
 
         const suggestions = await memoryManager.suggestMerges(id);
 
-        expect(vectorStore.searchSimilar).toHaveBeenCalled();
+        expect(mockVectorStore.searchSimilar).toHaveBeenCalled();
         expect(suggestions).toHaveLength(1);
         expect(suggestions[0].id).toBe('mem-2');
     });

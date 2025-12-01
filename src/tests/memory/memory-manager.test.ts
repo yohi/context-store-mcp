@@ -16,6 +16,9 @@ import type {
   MemoryError,
   MemoryLinkType,
 } from '../../memory/types.js';
+import { TransactionCoordinator } from '../../storage/transaction-coordinator.js';
+import { VectorStoreAdapter } from '../../storage/vector-store-adapter.js';
+
 
 describe('MemoryManager - Basic Functionality (Task 3.1)', () => {
   let memoryManager: MemoryManager;
@@ -32,8 +35,8 @@ describe('MemoryManager - Basic Functionality (Task 3.1)', () => {
     // モックを注入してMemoryManagerを初期化
     memoryManager = new MemoryManager({
       storage: mockStorage,
-      vectorStore: mockVectorStore as any, // 型の互換性のためanyにキャスト
-      transactionCoordinator: mockTransactionCoordinator as any,
+      vectorStore: mockVectorStore as unknown as VectorStoreAdapter,
+      transactionCoordinator: mockTransactionCoordinator as unknown as TransactionCoordinator,
     });
   });
 
@@ -337,8 +340,8 @@ describe('MemoryManager - Auto Cleanup (Task 3.3)', () => {
     // モックを注入してMemoryManagerを初期化
     memoryManager = new MemoryManager({
       storage: mockStorage,
-      vectorStore: mockVectorStore as any,
-      // transactionCoordinator: mockTransactionCoordinator as any,
+      vectorStore: mockVectorStore as unknown as VectorStoreAdapter,
+      transactionCoordinator: mockTransactionCoordinator as unknown as TransactionCoordinator,
     });
   });
 
@@ -577,11 +580,9 @@ describe('MemoryManager - Update, Delete, Merge (Task 3.2)', () => {
     // モックを注入してMemoryManagerを初期化
     memoryManager = new MemoryManager({
       storage: mockStorage,
-      vectorStore: mockVectorStore as any,
-      transactionCoordinator: mockTransactionCoordinator as any,
+      vectorStore: mockVectorStore as unknown as VectorStoreAdapter,
+      transactionCoordinator: mockTransactionCoordinator as unknown as TransactionCoordinator,
     });
-
-    // Store a test memory for update/delete operations
     const storeResult = await memoryManager.storeMemory({
       content: 'Initial content for testing',
       memoryType: 'semantic',
@@ -1475,7 +1476,7 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error.type).toBe('MEMORY_NOT_FOUND');
+        expect(result.error.type).toBe('INVALID_OPERATION');
       }
     });
 

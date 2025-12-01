@@ -38,7 +38,7 @@ export class MockStorageAdapter implements StorageAdapter {
   }
 
   async searchMemories(params: SearchParams): Promise<Memory[]> {
-    return Array.from(this.memories.values()).filter(m => {
+    let filteredMemories = Array.from(this.memories.values()).filter(m => {
       if (params.tags && params.tags.length > 0) {
         if (!m.metadata.tags || !params.tags.some(t => m.metadata.tags!.includes(t))) return false;
       }
@@ -48,6 +48,12 @@ export class MockStorageAdapter implements StorageAdapter {
       if (m.isDeleted) return false;
       return true;
     });
+
+    if (params.limit !== undefined && params.limit > 0) {
+      filteredMemories = filteredMemories.slice(0, params.limit);
+    }
+
+    return filteredMemories;
   }
 
   async getAllMemoryIds(): Promise<MemoryId[]> {
@@ -72,8 +78,10 @@ export class MockStorageAdapter implements StorageAdapter {
 }
 
 export class MockVectorStoreAdapter implements Partial<VectorStoreAdapter> {
-  async addEmbeddingForMemory(id: string, content: string): Promise<void> {}
-  async searchSimilar(content: string, limit: number): Promise<any[]> { return []; }
+  addEmbeddingForMemory = vi.fn().mockImplementation(async (memoryId: string, embedding: number[], userId: string) => {
+    return { success: true, value: true };
+  });
+  searchSimilar = vi.fn().mockResolvedValue([]);
   async deleteVector(id: string): Promise<void> {}
 }
 
@@ -85,6 +93,13 @@ export class MockTransactionCoordinator implements Partial<TransactionCoordinato
   constructor(storage?: MockStorageAdapter) {
     this.storage = storage;
   }
+
+  getMemory = vi.fn().mockImplementation(async (id: MemoryId): Promise<Memory | null> => {
+    if (this.storage) {
+      return this.storage.getMemory(id);
+    }
+    return null;
+  });
 
   storeMemoryWithSaga = vi.fn().mockImplementation(async (entity) => {
     if (this.storage) {
@@ -114,9 +129,7 @@ export class MockTransactionCoordinator implements Partial<TransactionCoordinato
         if (existing) {
             this.storage.memories.set(entity.id, {
                 ...existing,
-                content: entity.content,
-                metadata: entity.metadata,
-                memoryType: entity.memoryType,
+                ...entity, // Apply all properties from entity
                 version: (existing.version || 1) + 1,
                 updatedAt: new Date()
             });
@@ -163,8 +176,45 @@ export class MockTransactionCoordinator implements Partial<TransactionCoordinato
       }
       return versions.find(entry => entry.version === version) || null;
   });
-  findSoftDeletedMemories = vi.fn().mockResolvedValue([]);
-  hardDeleteMemory = vi.fn().mockResolvedValue({ status: 'ok' });
-  deleteLowImportanceMemories = vi.fn().mockResolvedValue(0);
+  findSoftDeletedMemories = vi.fn().mockImplementation(async (threshold: Date) => {
+    if (!this.storage) return [];
+    const softDeleted = Array.from(this.storage.memories.values()).filter(m => 
+      m.isDeleted && m.deletedAt && m.deletedAt < threshold && !m.isProtected
+    );
+    return softDeleted.map(m => m.id);
+  });
+
+  hardDeleteMemory = vi.fn().mockImplementation(async (id: MemoryId) => {
+    if (this.storage) {
+      this.storage.memories.delete(id);
+    }
+    return { status: 'ok' };
+  });
+
+  deleteLowImportanceMemories = vi.fn().mockImplementation(async (importanceThreshold: number, olderThan: Date) => {
+    if (!this.storage) return 0;
+    let deletedCount = 0;
+    const memoriesToDelete = Array.from(this.storage.memories.values()).filter(m =>
+        !m.isProtected && m.importanceScore < importanceThreshold && m.updatedAt < olderThan
+    );
+    for (const memory of memoriesToDelete) {
+        this.storage.memories.delete(memory.id);
+        deletedCount++;
+    }
+    return deletedCount;
+  });
+
   getDatabaseSize = vi.fn().mockResolvedValue(0);
+}
+
+export class MockMemoryClassifierService implements MemoryClassifierService {
+  classifyContent = vi.fn().mockResolvedValue({ primaryType: 'semantic', confidence: 0.8 });
+  getConfidenceScore = vi.fn().mockResolvedValue(0.8);
+  trainClassifier = vi.fn().mockResolvedValue(undefined);
+  generateEmbedding = vi.fn().mockImplementation(async (content: string) => {
+    // Return a consistent mock embedding for any content
+    return [0.1, 0.2, 0.3, content.length * 0.01]; // Simple deterministic embedding
+  });
+  evaluateAccuracy = vi.fn().mockResolvedValue({ overall: 0.9, perType: {}, confusionMatrix: [] });
+  getClassificationStats = vi.fn().mockResolvedValue({ totalClassified: 100, userOverrideRate: 0.1, averageConfidence: 0.85, lowConfidenceCount: 5 });
 }
