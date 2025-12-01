@@ -11,6 +11,21 @@ import { resetNeo4jMockState } from '../mocks/neo4j-driver-mock.js';
 
 vi.mock('neo4j-driver', async () => await import('../mocks/neo4j-driver-mock.js'));
 
+describe('GraphStoreAdapter - getNodeRelationships Validation', () => {
+  let adapter: GraphStoreAdapter;
+
+  beforeAll(() => {
+    adapter = new GraphStoreAdapter({
+      uri: 'bolt://localhost:7687',
+      user: 'neo4j',
+      password: 'password',
+    });
+  });
+
+  afterAll(async () => {
+    await adapter.close();
+  });
+
   // Reset the mock state before each test
   beforeEach(() => {
     resetNeo4jMockState();

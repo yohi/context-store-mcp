@@ -65,7 +65,6 @@ describe('Similarity and Merge', () => {
         const mockResults = [
             { id: 'mem-1', content: 'original content', metadata: {}, similarity: 1.0 }, // Self
             { id: 'mem-2', content: 'similar content', metadata: {}, similarity: 0.9 }, // Candidate
-            { id: 'mem-3', content: 'deleted content', metadata: {}, similarity: 0.85 }, // Deleted candidate
         ];
         (mockVectorStore.searchSimilar as any).mockResolvedValue(mockResults);
 

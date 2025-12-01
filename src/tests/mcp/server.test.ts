@@ -51,8 +51,9 @@ describe('MCP Server Core Features', () => {
 
     // Inject mock VectorStore into MemoryManager, and inject manager into Server
     const memoryManager = new MemoryManager({
+      storage: mockStorage,
       vectorStore: mockVectorStore,
-      transactionCoordinator: mockTransactionCoordinator as any // Pass the initialized mock
+      transactionCoordinator: mockTransactionCoordinator as unknown as any // Pass the initialized mock
     });
     const context = createContextStoreServer({ memoryManager });
     server = context.server;

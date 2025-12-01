@@ -391,8 +391,12 @@ describe('MemoryManager - Auto Cleanup (Task 3.3)', () => {
       const deleteResult = await memoryManager.deleteMemory(memoryId);
       expect(deleteResult.success).toBe(true);
 
-      // Mark as protected AFTER deletion (simulating edge case)
-      await memoryManager.updateMemory(memoryId, { isProtected: true });
+      // Manually set isProtected to true directly in storage to simulate the state
+      // because public API prevents updating deleted memories
+      const storedMemory = mockStorage.getMemoryForTest(memoryId);
+      if (storedMemory) {
+          mockStorage.updateMemory(memoryId, { isProtected: true });
+      }
 
       // Set deletedAt to >30 days ago (would normally be eligible for GC)
       const oldDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000); // 31 days ago

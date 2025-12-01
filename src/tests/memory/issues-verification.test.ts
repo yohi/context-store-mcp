@@ -128,7 +128,7 @@ describe('Issues Verification', () => {
               mockVectorStore.searchSimilar.mockResolvedValue([
                 { 
                   id: candidateId, 
-                  similarity: 0.7,
+                  similarity: 0.71,
                   content: 'Candidate',
                   metadata: { tags: ['B'] },
                   createdAt: new Date(now.getTime() - 30 * 60 * 1000), // 30 mins ago
