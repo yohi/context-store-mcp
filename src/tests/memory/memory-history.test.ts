@@ -16,45 +16,8 @@ describe('MemoryManager - History Management (Task 3.2)', () => {
 
   beforeEach(async () => {
     mockStorage = new MockStorageAdapter();
-    mockTransactionCoordinator = new MockTransactionCoordinator();
+    mockTransactionCoordinator = new MockTransactionCoordinator(mockStorage);
     
-    // Link TC to Storage for updates
-    mockTransactionCoordinator.storeMemoryWithSaga = vi.fn().mockImplementation(async (entity) => {
-        // Mocking the effect of storage
-        const memory = {
-            id: entity.id,
-            content: entity.content,
-            memoryType: entity.memoryType,
-            metadata: entity.metadata,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-            lastAccessedAt: new Date(),
-            accessCount: 0,
-            importanceScore: 0,
-            isDeleted: false,
-            isProtected: false,
-            version: entity.version || 1, // Handle version
-            deletedAt: null
-        };
-        mockStorage.memories.set(entity.id, memory);
-        return { status: 'ok', memoryId: entity.id };
-    });
-
-    mockTransactionCoordinator.updateMemoryWithSaga = vi.fn().mockImplementation(async (entity) => {
-        const existing = mockStorage.memories.get(entity.id);
-        if (existing) {
-            mockStorage.memories.set(entity.id, {
-                ...existing,
-                content: entity.content,
-                metadata: entity.metadata,
-                memoryType: entity.memoryType,
-                version: entity.version || existing.version + 1, // Handle version if passed
-                updatedAt: new Date()
-            });
-        }
-        return { status: 'ok', memoryId: entity.id };
-    });
-
     memoryManager = new MemoryManager({
         storage: mockStorage,
         transactionCoordinator: mockTransactionCoordinator as any

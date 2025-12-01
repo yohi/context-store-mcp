@@ -7,49 +7,13 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { GraphStoreAdapter } from '../../storage/graph-store-adapter';
 import { randomUUID } from 'crypto';
+import { resetNeo4jMockState } from '../mocks/neo4j-driver-mock.js';
 
-// Mock neo4j-driver
-vi.mock('neo4j-driver', () => {
-  const mockSession = {
-    run: vi.fn().mockImplementation((query) => {
-      if (query.includes('RETURN r, type(r) AS relType')) {
-         // Return mock relationships if needed, or empty list
-         return Promise.resolve({
-             records: []
-         });
-      }
-      return Promise.resolve({ records: [] });
-    }),
-    close: vi.fn().mockResolvedValue(undefined),
-    executeWrite: vi.fn().mockImplementation((cb) => cb(mockSession)),
-  };
-  const mockDriver = {
-    session: vi.fn().mockReturnValue(mockSession),
-    close: vi.fn().mockResolvedValue(undefined),
-  };
-  return {
-    default: {
-      driver: vi.fn().mockReturnValue(mockDriver),
-      auth: { basic: vi.fn() },
-    },
-  };
-});
+vi.mock('neo4j-driver', async () => await import('../mocks/neo4j-driver-mock.js'));
 
-describe('getNodeRelationships Type Validation', () => {
-  let adapter: GraphStoreAdapter;
-  const testDbName = process.env.NEO4J_DATABASE || 'neo4j';
-
-  beforeAll(async () => {
-    adapter = new GraphStoreAdapter({
-      uri: process.env.NEO4J_URI || 'bolt://localhost:7687',
-      username: process.env.NEO4J_USER || 'neo4j',
-      password: process.env.NEO4J_PASSWORD || 'password',
-      database: testDbName,
-    });
-  });
-
-  afterAll(async () => {
-    await adapter.close();
+  // Reset the mock state before each test
+  beforeEach(() => {
+    resetNeo4jMockState();
   });
 
   describe('Type parameter validation', () => {
@@ -58,12 +22,15 @@ describe('getNodeRelationships Type Validation', () => {
     beforeEach(async () => {
       // テスト用ノードを作成
       nodeId = randomUUID();
+      console.log('Test beforeEach: creating nodeId', nodeId); // Added log
       await adapter.createNode('Memory', { id: nodeId, name: 'Test Node' });
     });
 
     it('有効なタイプでリレーションシップを取得できる', async () => {
       const targetId = randomUUID();
+      console.log('Test it block: creating targetId', targetId); // Added log
       await adapter.createNode('Memory', { id: targetId, name: 'Target' });
+      console.log('Test it block: creating relationship from', nodeId, 'to', targetId); // Added log
       await adapter.createRelationship(nodeId, targetId, 'REFERENCES');
 
       // タイプ指定あり

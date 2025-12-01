@@ -79,6 +79,7 @@ export class MockVectorStoreAdapter implements Partial<VectorStoreAdapter> {
 
 export class MockTransactionCoordinator implements Partial<TransactionCoordinator> {
   public versions: any[] = [];
+  public storedVersions: Map<string, any[]> = new Map();
   private storage?: MockStorageAdapter;
 
   constructor(storage?: MockStorageAdapter) {
@@ -125,9 +126,6 @@ export class MockTransactionCoordinator implements Partial<TransactionCoordinato
   });
 
   deleteMemoryWithSaga = vi.fn().mockImplementation(async (id) => {
-      // We don't delete from storage here because deleteMemoryWithSaga is called *after* 
-      // logic might check things?
-      // Actually deleteMemoryWithSaga in real TC does soft delete.
       if (this.storage) {
           const existing = this.storage.memories.get(id);
           if (existing) {
@@ -137,9 +135,34 @@ export class MockTransactionCoordinator implements Partial<TransactionCoordinato
       return { status: 'ok', memoryId: id };
   });
   
-  saveMemoryVersion = vi.fn().mockResolvedValue(undefined);
-  getMemoryVersions = vi.fn().mockResolvedValue([]);
-  getMemoryVersion = vi.fn().mockResolvedValue(null);
+  saveMemoryVersion = vi.fn().mockImplementation(async (memoryData, versionNumber) => {
+      const memoryId = memoryData.id;
+      const currentVersions = this.storedVersions.get(memoryId) || [];
+      // Assuming memoryData contains content, metadata, etc.
+      currentVersions.push({
+          memoryId: memoryId,
+          version: versionNumber,
+          content: memoryData.content,
+          metadata: memoryData.metadata,
+          timestamp: new Date(), // Capture current time as history timestamp
+          // The 'id' in MemoryHistoryEntry refers to the history entry's ID, not memoryId.
+          // For mock, we can just use a placeholder or generate one.
+          id: `history-${memoryId}-v${versionNumber}` 
+      });
+      this.storedVersions.set(memoryId, currentVersions);
+  });
+
+  getMemoryVersions = vi.fn().mockImplementation(async (memoryId) => {
+      return this.storedVersions.get(memoryId) || [];
+  });
+
+  getMemoryVersion = vi.fn().mockImplementation(async (memoryId: MemoryId, version: number) => {
+      const versions = this.storedVersions.get(memoryId);
+      if (!versions) {
+          return null;
+      }
+      return versions.find(entry => entry.version === version) || null;
+  });
   findSoftDeletedMemories = vi.fn().mockResolvedValue([]);
   hardDeleteMemory = vi.fn().mockResolvedValue({ status: 'ok' });
   deleteLowImportanceMemories = vi.fn().mockResolvedValue(0);

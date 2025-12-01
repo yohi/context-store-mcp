@@ -891,6 +891,8 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
         const fromExists = record.get('fromExists');
         const toExists = record.get('toExists');
 
+
+
         if (!fromExists && !toExists) {
           throw new Error(`Both nodes not found: from="${from}", to="${to}"`);
         }

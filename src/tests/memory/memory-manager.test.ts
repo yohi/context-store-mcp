@@ -578,7 +578,7 @@ describe('MemoryManager - Update, Delete, Merge (Task 3.2)', () => {
     memoryManager = new MemoryManager({
       storage: mockStorage,
       vectorStore: mockVectorStore as any,
-      // transactionCoordinator: mockTransactionCoordinator as any,
+      transactionCoordinator: mockTransactionCoordinator as any,
     });
 
     // Store a test memory for update/delete operations
@@ -920,7 +920,7 @@ describe('MemoryManager - Memory Links and Type Management (Task 4.3)', () => {
     memoryManager = new MemoryManager({
       storage: mockStorage,
       vectorStore: mockVectorStore as any,
-      // transactionCoordinator: mockTransactionCoordinator as any,
+      transactionCoordinator: mockTransactionCoordinator as any,
     });
 
     // Create test memories with different types

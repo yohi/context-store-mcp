@@ -105,8 +105,9 @@ export class PostgresStorageAdapter implements StorageAdapter {
 
         if (params.query) {
             // Basic text search if query is provided (though vector search is preferred)
-            query += ` AND content ILIKE $${paramIndex}`;
-            values.push(`%${params.query}%`);
+            const escapedQuery = params.query.replace(/[\\%_]/g, '\\$&');
+            query += ` AND content ILIKE $${paramIndex} ESCAPE '\\'`;
+            values.push(`%${escapedQuery}%`);
             paramIndex++;
         }
 
