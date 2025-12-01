@@ -2,36 +2,30 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MemoryManager } from '../../memory/memory-manager.js';
 import { TransactionCoordinator } from '../../storage/transaction-coordinator.js';
 import { VectorStoreAdapter } from '../../storage/vector-store-adapter.js';
-
-// Mock dependencies
-vi.mock('../../storage/transaction-coordinator.js');
-vi.mock('../../storage/vector-store-adapter.js');
+import { MemoryClassifierService } from '../../memory/types.js'; // Import MemoryClassifierService
+import { MockStorageAdapter, MockVectorStoreAdapter, MockTransactionCoordinator, MockMemoryClassifierService } from '../mocks/index.js';
 
 describe('Issues Verification', () => {
   let memoryManager: MemoryManager;
-  let mockTxCoordinator: any;
-  let mockVectorStore: any;
+  let mockStorage: MockStorageAdapter;
+  let mockTxCoordinator: MockTransactionCoordinator;
+  let mockVectorStore: MockVectorStoreAdapter;
+  let mockClassifier: MockMemoryClassifierService; // Declare mockClassifier
 
   beforeEach(() => {
-    mockTxCoordinator = {
-      getDatabaseSize: vi.fn(),
-      deleteLowImportanceMemories: vi.fn(),
-      findSoftDeletedMemories: vi.fn().mockResolvedValue([]),
-      hardDeleteMemory: vi.fn().mockResolvedValue({ status: 'ok' }),
-      storeMemoryWithSaga: vi.fn().mockResolvedValue({ status: 'ok' }),
-      updateMemoryWithSaga: vi.fn().mockResolvedValue({ status: 'ok' }),
-      deleteMemoryWithSaga: vi.fn().mockResolvedValue({ status: 'ok' }),
-      saveMemoryVersion: vi.fn(),
-      getMemoryVersions: vi.fn(),
-    };
+    mockStorage = new MockStorageAdapter();
+    mockTxCoordinator = new MockTransactionCoordinator(mockStorage);
+    mockVectorStore = new MockVectorStoreAdapter();
+    mockClassifier = new MockMemoryClassifierService(); // Initialize mockClassifier
 
-    mockVectorStore = {
-      searchSimilar: vi.fn().mockResolvedValue([]),
-    };
+    // Default mock for generateEmbedding for findSimilarMemoriesById
+    mockClassifier.generateEmbedding.mockResolvedValue([0.1, 0.2, 0.3]);
 
     memoryManager = new MemoryManager({
+      storage: mockStorage,
       transactionCoordinator: mockTxCoordinator as unknown as TransactionCoordinator,
       vectorStore: mockVectorStore as unknown as VectorStoreAdapter,
+      classifier: mockClassifier as unknown as MemoryClassifierService, // Pass mockClassifier
     });
   });
 
@@ -42,32 +36,47 @@ describe('Issues Verification', () => {
       const now = new Date();
 
       // Setup Target Memory
-      // @ts-ignore - accessing private map for setup
-      memoryManager.memories.set(targetId, {
+      mockStorage.memories.set(targetId, {
         id: targetId,
         content: 'Target Content',
         metadata: { tags: ['AI', 'Coding'] },
         createdAt: now,
         updatedAt: now,
+        lastAccessedAt: now,
+        accessCount: 0,
+        importanceScore: 0,
+        isProtected: false,
+        version: 1,
         memoryType: 'semantic',
         isDeleted: false
-      } as any);
+      });
 
       // Setup Candidate Memory (Tag Match)
-      // @ts-ignore
-      memoryManager.memories.set(candidateId, {
+      mockStorage.memories.set(candidateId, {
         id: candidateId,
         content: 'Candidate Content',
         metadata: { tags: ['Coding', 'Testing'] }, // Overlap: Coding
         createdAt: new Date(now.getTime() - 24 * 60 * 60 * 1000), // Different time
         updatedAt: now,
+        lastAccessedAt: now,
+        accessCount: 0,
+        importanceScore: 0,
+        isProtected: false,
+        version: 1,
         memoryType: 'semantic',
         isDeleted: false
-      } as any);
+      });
 
-      // Mock vector search to return candidate with low score
+      // Mock vector search to return candidate with low score, but with metadata
       mockVectorStore.searchSimilar.mockResolvedValue([
-        { id: candidateId, similarity: 0.7 } // Below default 0.8 threshold
+        { 
+          id: candidateId, 
+          similarity: 0.7, 
+          content: 'Candidate Content', 
+          metadata: { tags: ['Coding', 'Testing'] },
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        } // Below default 0.8 threshold
       ]);
 
       // Execute findSimilarMemoriesById with default threshold 0.8
@@ -84,33 +93,50 @@ describe('Issues Verification', () => {
         const now = new Date();
   
         // Setup Target
-        // @ts-ignore
-        memoryManager.memories.set(targetId, {
+        mockStorage.memories.set(targetId, {
           id: targetId,
           content: 'Target',
           metadata: { tags: ['A'] },
           createdAt: now,
           updatedAt: now,
+          lastAccessedAt: now,
+          accessCount: 0,
+          importanceScore: 0,
+          isProtected: false,
+          version: 1,
+          memoryType: 'semantic',
           isDeleted: false
-        } as any);
+        });
   
         // Setup Candidate (Time Match < 1h)
-        // @ts-ignore
-        memoryManager.memories.set(candidateId, {
+        mockStorage.memories.set(candidateId, {
           id: candidateId,
           content: 'Candidate',
           metadata: { tags: ['B'] },
           createdAt: new Date(now.getTime() - 30 * 60 * 1000), // 30 mins ago
           updatedAt: now,
+          lastAccessedAt: now,
+          accessCount: 0,
+          importanceScore: 0,
+          isProtected: false,
+          version: 1,
+          memoryType: 'semantic',
           isDeleted: false
-        } as any);
+        });
   
-        // Mock vector search (low score)
-        mockVectorStore.searchSimilar.mockResolvedValue([
-          { id: candidateId, similarity: 0.7 }
-        ]);
-  
-        // Base 0.7 + Time Boost 0.15 = 0.85 > 0.8
+              // Mock vector search (low score)
+              mockVectorStore.searchSimilar.mockResolvedValue([
+                { 
+                  id: candidateId, 
+                  similarity: 0.71,
+                  content: 'Candidate',
+                  metadata: { tags: ['B'] },
+                  createdAt: new Date(now.getTime() - 30 * 60 * 1000), // 30 mins ago
+                  updatedAt: new Date(now.getTime() - 30 * 60 * 1000),
+                  lastAccessedAt: new Date(now.getTime() - 30 * 60 * 1000), // Add lastAccessedAt
+                }
+              ]);  
+        // Base 0.7 + Time Boost 0.10 = 0.80 >= 0.8
         const results = await memoryManager.findSimilarMemoriesById(targetId, 0.8);
   
         expect(results).toHaveLength(1);

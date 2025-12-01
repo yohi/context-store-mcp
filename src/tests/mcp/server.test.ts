@@ -5,6 +5,7 @@ import { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import { createContextStoreServer } from '../../mcp/server.js';
 import { MemoryManager } from '../../memory/memory-manager.js';
 import type { VectorStoreAdapter } from '../../storage/vector-store-adapter.js';
+import { MockStorageAdapter, MockTransactionCoordinator, MockVectorStoreAdapter } from '../mocks/index.js';
 
 // Mock Transport to capture messages
 class MockTransport implements Transport {
@@ -36,24 +37,100 @@ class MockTransport implements Transport {
 
 describe('MCP Server Core Features', () => {
   let server: Server;
+  let cleanup: () => Promise<void>;
   let transport: MockTransport;
   let mockVectorStore: VectorStoreAdapter;
+  let mockStorage: MockStorageAdapter; // Declared globally
+  let mockTransactionCoordinator: MockTransactionCoordinator; // Declared globally
 
   beforeEach(async () => {
-    mockVectorStore = {
-      searchSimilar: vi.fn().mockResolvedValue([]), // Default empty
-    } as unknown as VectorStoreAdapter;
+    mockVectorStore = new MockVectorStoreAdapter() as VectorStoreAdapter;
+
+    mockStorage = new MockStorageAdapter(); // Initialized
+    mockTransactionCoordinator = {
+      storedVersions: new Map<string, any[]>(), // For saveMemoryVersion mock
+      storeMemoryWithSaga: vi.fn().mockImplementation(async (entity) => {
+        const memory = {
+            id: entity.id,
+            content: entity.content,
+            memoryType: entity.memoryType,
+            metadata: entity.metadata,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            lastAccessedAt: new Date(),
+            accessCount: 0,
+            importanceScore: 0,
+            isDeleted: false,
+            isProtected: false,
+            version: 1,
+            deletedAt: null
+        };
+        mockStorage.memories.set(entity.id, memory);
+        return { status: 'ok', memoryId: entity.id };
+      }),
+      updateMemoryWithSaga: vi.fn().mockImplementation(async (entity) => {
+        const existing = mockStorage.memories.get(entity.id);
+        if (existing) {
+            mockStorage.memories.set(entity.id, {
+                ...existing,
+                ...entity, // Apply all properties from entity
+                version: (existing.version || 1) + 1,
+                updatedAt: new Date()
+            });
+        }
+        return { status: 'ok', memoryId: entity.id };
+      }),
+      deleteMemoryWithSaga: vi.fn().mockImplementation(async (id) => {
+          const existing = mockStorage.memories.get(id);
+          if (existing) {
+              mockStorage.memories.set(id, { ...existing, isDeleted: true, deletedAt: new Date() });
+          }
+          return { status: 'ok', memoryId: id };
+      }),
+      saveMemoryVersion: vi.fn().mockImplementation(async (memoryData, versionNumber) => {
+        const memoryId = memoryData.id;
+        const currentVersions = mockTransactionCoordinator.storedVersions.get(memoryId) || [];
+        currentVersions.push({
+            memoryId: memoryId,
+            version: versionNumber,
+            content: memoryData.content,
+            metadata: memoryData.metadata,
+            timestamp: new Date(),
+            id: `history-${memoryId}-v${versionNumber}`
+        });
+        mockTransactionCoordinator.storedVersions.set(memoryId, currentVersions);
+      }),
+      getMemory: vi.fn().mockImplementation(async (id: string) => mockStorage.getMemory(id)),
+      getMemoryVersions: vi.fn().mockImplementation(async (memoryId: string) => mockTransactionCoordinator.storedVersions.get(memoryId) || []),
+      getMemoryVersion: vi.fn().mockImplementation(async (memoryId: string, version: number) => {
+          const versions = mockTransactionCoordinator.storedVersions.get(memoryId);
+          if (!versions) {
+              return null;
+          }
+          return versions.find((entry: any) => entry.version === version) || null;
+      }),
+      findSoftDeletedMemories: vi.fn().mockResolvedValue([]),
+      hardDeleteMemory: vi.fn().mockResolvedValue({ status: 'ok' }),
+      deleteLowImportanceMemories: vi.fn().mockResolvedValue(0),
+      getDatabaseSize: vi.fn().mockResolvedValue(0),
+    } as any;
 
     // Inject mock VectorStore into MemoryManager, and inject manager into Server
-    const memoryManager = new MemoryManager({ vectorStore: mockVectorStore });
-    server = createContextStoreServer({ memoryManager });
+    const memoryManager = new MemoryManager({
+      storage: mockStorage,
+      vectorStore: mockVectorStore,
+      transactionCoordinator: mockTransactionCoordinator as unknown as any // Pass the initialized mock
+    });
+    const context = createContextStoreServer({ memoryManager });
+    server = context.server;
+    cleanup = context.cleanup;
     
     transport = new MockTransport();
     await server.connect(transport);
   });
 
   afterEach(async () => {
-    await server.close();
+    await cleanup();
   });
 
   it('should handle initialization handshake', async () => {

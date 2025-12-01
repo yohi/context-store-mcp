@@ -277,7 +277,7 @@ describe('ScheduledReconciliationJob', () => {
           },
         });
 
-      await scheduledJob.runOnce();
+      await expect(scheduledJob.runOnce()).rejects.toThrow('Connection failed');
       await scheduledJob.runOnce();
 
       const stats = scheduledJob.getStatistics();

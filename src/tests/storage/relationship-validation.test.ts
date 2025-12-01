@@ -4,9 +4,43 @@
  * リレーションシップ作成時のバリデーションとセキュリティテスト
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { GraphStoreAdapter } from '../../storage/graph-store-adapter';
 import { randomUUID } from 'crypto';
+
+// Mock neo4j-driver
+vi.mock('neo4j-driver', () => {
+  const mockSession = {
+    run: vi.fn().mockImplementation((query) => {
+      // Handle node existence check
+      if (query.includes('OPTIONAL MATCH') && query.includes('fromExists')) {
+        return Promise.resolve({
+          records: [{
+            get: (key: string) => true // fromExists and toExists always true
+          }]
+        });
+      }
+      // Handle constraint creation
+      if (query.includes('CREATE CONSTRAINT')) {
+        return Promise.resolve({ records: [] });
+      }
+      // Default empty
+      return Promise.resolve({ records: [] });
+    }),
+    close: vi.fn().mockResolvedValue(undefined),
+    executeWrite: vi.fn().mockImplementation((cb) => cb(mockSession)),
+  };
+  const mockDriver = {
+    session: vi.fn().mockReturnValue(mockSession),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+  return {
+    default: {
+      driver: vi.fn().mockReturnValue(mockDriver),
+      auth: { basic: vi.fn() },
+    },
+  };
+});
 
 describe('Relationship Validation and Security', () => {
   let adapter: GraphStoreAdapter;

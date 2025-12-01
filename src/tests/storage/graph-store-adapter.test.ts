@@ -18,7 +18,6 @@ import {
   CypherPatternBuilder,
   type GraphStoreConfig,
   type NodeId,
-  type NodeProperties,
 } from '../../storage/graph-store-adapter';
 
 describe('GraphStoreAdapter', () => {

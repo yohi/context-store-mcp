@@ -2,20 +2,25 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryManager } from '../../memory/memory-manager.js';
 import { TransactionCoordinator } from '../../storage/transaction-coordinator.js';
 import { GarbageCollectionJob } from '../../monitoring/garbage-collection-job.js';
+import { MockStorageAdapter, MockVectorStoreAdapter, MockTransactionCoordinator } from '../mocks/index.js';
+import { VectorStoreAdapter } from '../../storage/vector-store-adapter.js';
 
 describe('Garbage Collection', () => {
     let memoryManager: MemoryManager;
-    let transactionCoordinator: TransactionCoordinator;
+    let mockStorage: MockStorageAdapter;
+    let mockVectorStore: MockVectorStoreAdapter;
+    let mockTransactionCoordinator: MockTransactionCoordinator;
     let gcJob: GarbageCollectionJob;
 
     beforeEach(() => {
-        transactionCoordinator = {
-            findSoftDeletedMemories: vi.fn(),
-            hardDeleteMemory: vi.fn(),
-        } as unknown as TransactionCoordinator;
+        mockStorage = new MockStorageAdapter();
+        mockVectorStore = new MockVectorStoreAdapter();
+        mockTransactionCoordinator = new MockTransactionCoordinator(mockStorage);
 
         memoryManager = new MemoryManager({
-            transactionCoordinator,
+            storage: mockStorage,
+            vectorStore: mockVectorStore as unknown as VectorStoreAdapter,
+            transactionCoordinator: mockTransactionCoordinator as unknown as TransactionCoordinator,
         });
 
         gcJob = new GarbageCollectionJob(memoryManager, {
@@ -26,15 +31,15 @@ describe('Garbage Collection', () => {
 
     it('should perform garbage collection via TransactionCoordinator', async () => {
         const mockDeletedIds = ['id1', 'id2'];
-        (transactionCoordinator.findSoftDeletedMemories as any).mockResolvedValue(mockDeletedIds);
-        (transactionCoordinator.hardDeleteMemory as any).mockResolvedValue({ status: 'ok' });
+        mockTransactionCoordinator.findSoftDeletedMemories.mockResolvedValue(mockDeletedIds);
+        mockTransactionCoordinator.hardDeleteMemory.mockResolvedValue({ status: 'ok' });
 
         await memoryManager.performGarbageCollection();
 
-        expect(transactionCoordinator.findSoftDeletedMemories).toHaveBeenCalled();
-        expect(transactionCoordinator.hardDeleteMemory).toHaveBeenCalledTimes(2);
-        expect(transactionCoordinator.hardDeleteMemory).toHaveBeenCalledWith('id1');
-        expect(transactionCoordinator.hardDeleteMemory).toHaveBeenCalledWith('id2');
+        expect(mockTransactionCoordinator.findSoftDeletedMemories).toHaveBeenCalled();
+        expect(mockTransactionCoordinator.hardDeleteMemory).toHaveBeenCalledTimes(2);
+        expect(mockTransactionCoordinator.hardDeleteMemory).toHaveBeenCalledWith('id1');
+        expect(mockTransactionCoordinator.hardDeleteMemory).toHaveBeenCalledWith('id2');
     });
 
     it('should handle GC job execution', async () => {
