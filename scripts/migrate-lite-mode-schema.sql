@@ -52,7 +52,7 @@ CREATE INDEX IF NOT EXISTS idx_memories_lite_tags
 CREATE INDEX IF NOT EXISTS idx_memories_lite_source_type 
   ON memories ((lite_mode_metadata->>'sourceType'));
 
-RAISE NOTICE 'Created Lite mode indexes';
+DO $$ BEGIN RAISE NOTICE 'Created Lite mode indexes'; END $$;
 
 -- ========================================
 -- コレクター状態管理テーブル
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS collector_state (
 CREATE INDEX IF NOT EXISTS idx_collector_state_updated 
   ON collector_state(last_updated);
 
-RAISE NOTICE 'Created collector_state table';
+DO $$ BEGIN RAISE NOTICE 'Created collector_state table'; END $$;
 
 -- ========================================
 -- コメント追加
