@@ -296,9 +296,13 @@ export class MemoryClassifier implements MemoryClassifierService {
 
           // DBに保存
           await this.pool.query(
-            `UPDATE classifier_centroids
-             SET centroid = $1::vector, sample_count = $2, last_updated = NOW()
-             WHERE memory_type = $3`,
+            `INSERT INTO classifier_centroids (memory_type, centroid, sample_count, last_updated)
+           VALUES ($3, $1::vector, $2, NOW())
+           ON CONFLICT (memory_type) DO UPDATE SET
+             centroid = EXCLUDED.centroid,
+             sample_count = EXCLUDED.sample_count,
+             last_updated = NOW();
+           `,
             [this.toPgvector(centroid), result.rows.length, type]
           );
         }
@@ -639,6 +643,12 @@ export class MemoryClassifier implements MemoryClassifierService {
     }
 
     const dimension = embeddings[0]!.length;
+    // 次元の一致を検証
+    for (const embedding of embeddings) {
+      if (embedding.length !== dimension) {
+        throw new Error(`Dimension mismatch in embeddings: expected ${dimension}, got ${embedding.length}`);
+      }
+    }
     const centroid = new Array(dimension).fill(0);
 
     for (const embedding of embeddings) {
@@ -701,7 +711,9 @@ export class MemoryClassifier implements MemoryClassifierService {
           ? trimmed.slice(1, -1)
           : trimmed;
 
-      if (!body) return [];
+      if (!body) {
+        throw new Error(`Empty pgvector string found, cannot parse embedding. Raw value: "${value}"`);
+      }
 
       return body.split(',').map((x) => {
         const num = Number(x.trim());
