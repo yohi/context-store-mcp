@@ -162,10 +162,14 @@ export class InMemoryCacheAdapter implements CacheAdapter {
     const keysToDelete: string[] = [];
 
     // Collect keys of expired entries
+    // Iterate over the internal cache map directly to avoid updating LRU access order
     for (const key of this.cache.keys()) {
-      const entry = this.cache.get(key);
-      if (entry && entry.expiresAt !== null && now > entry.expiresAt) {
-        keysToDelete.push(key);
+      const entryNode = this.cache['cache'].get(key); // Get the ListNode
+      if (entryNode) {
+        const entry = entryNode.value; // Access the actual CacheEntry value
+        if (entry.expiresAt !== null && now > entry.expiresAt) {
+          keysToDelete.push(key);
+        }
       }
     }
 
@@ -184,11 +188,15 @@ export class InMemoryCacheAdapter implements CacheAdapter {
    * @returns true if the key exists and is not expired
    */
   async has(key: string): Promise<boolean> {
-    const entry = this.cache.get(key);
+    // Directly access the internal map to check for existence without updating LRU order
+    const entryNode = this.cache['cache'].get(key);
     
-    if (!entry) {
+    if (!entryNode) {
       return false;
     }
+
+    // Access the actual CacheEntry value from the node
+    const entry = entryNode.value;
 
     // Check expiration
     if (entry.expiresAt !== null && Date.now() > entry.expiresAt) {
