@@ -1,7 +1,7 @@
 # 実装計画
 
-- [ ] 1. 設定管理とLiteモード基盤の実装
-- [ ] 1.1 ConfigManagerクラスの実装
+- [-] 1. 設定管理とLiteモード基盤の実装
+- [x] 1.1 ConfigManagerクラスの実装
   - 環境変数の読み取りと解析機能を実装
   - `LITE_MODE`, `ENABLE_GRAPH_STORE`, `ENABLE_REDIS_CACHE`のサポート
   - `EMBEDDING_PROVIDER`, `EMBEDDING_CLI_COMMAND`, `EMBEDDING_API_ENDPOINT`のサポート
