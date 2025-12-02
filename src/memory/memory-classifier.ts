@@ -285,7 +285,10 @@ export class MemoryClassifier implements MemoryClassifierService {
           const embeddings: number[][] = [];
           for (const row of result.rows) {
             const embedding = await this.generateEmbedding(row.content);
-            embeddings.push(embedding);
+            // Skip samples where embedding generation failed
+            if (embedding !== null) {
+              embeddings.push(embedding);
+            }
           }
 
           // centroidを計算（平均ベクトル）
@@ -312,11 +315,13 @@ export class MemoryClassifier implements MemoryClassifierService {
   /**
    * コンテンツの埋め込みを生成
    * 要件: 3.4 (埋め込みベースの分類)
+   * 
+   * @returns 埋め込みベクトル、または生成に失敗した場合はnull
    */
-  async generateEmbedding(content: string): Promise<number[]> {
+  async generateEmbedding(content: string): Promise<number[] | null> {
     if (!this.openaiClient) {
-      // OpenAI client not available, return zero vector
-      return new Array(1536).fill(0);
+      // OpenAI client not available, return null to trigger rule-based fallback
+      return null;
     }
 
     try {
@@ -326,10 +331,17 @@ export class MemoryClassifier implements MemoryClassifierService {
         encoding_format: 'float',
       });
 
-      return response.data[0]?.embedding ?? new Array(1536).fill(0);
+      const embedding = response.data[0]?.embedding;
+      if (!embedding) {
+        console.error('No embedding returned from OpenAI');
+        return null;
+      }
+
+      return embedding;
     } catch (error) {
       console.error('Failed to generate embedding:', error);
-      return new Array(1536).fill(0);
+      // Return null instead of zero vector to allow callers to detect failure
+      return null;
     }
   }
 
@@ -585,6 +597,11 @@ export class MemoryClassifier implements MemoryClassifierService {
     try {
       // コンテンツの埋め込みを生成
       const contentEmbedding = await this.generateEmbedding(content);
+
+      // Embedding generation failed, fallback to rule-based only
+      if (contentEmbedding === null) {
+        return null;
+      }
 
       // DBからcentroidを取得
       const result = await this.pool.query(
