@@ -17,7 +17,7 @@ import type { MemoryType } from '../memory/types.js';
 import { GarbageCollectionJob } from '../monitoring/garbage-collection-job.js';
 
 import { Pool } from 'pg';
-import neo4j from 'neo4j-driver';
+import neo4j, { Driver } from 'neo4j-driver';
 import { PostgresStorageAdapter } from '../storage/postgres-store-adapter.js';
 import { VectorStoreAdapter } from '../storage/vector-store-adapter.js';
 import { TransactionCoordinator } from '../storage/transaction-coordinator.js';
@@ -35,7 +35,7 @@ export function createContextStoreServer(deps?: { memoryManager?: MemoryManager 
 
   // リソースのクリーンアップ用に外側のスコープで宣言
   let pool: Pool | undefined;
-  let neo4jDriver: any;
+  let neo4jDriver: Driver | undefined;
 
   if (!memoryManager) {
     // DB接続プールの作成
@@ -85,7 +85,11 @@ export function createContextStoreServer(deps?: { memoryManager?: MemoryManager 
     }
 
     // MemoryManager設定オブジェクトを構築（undefinedプロパティを除外）
-    const config: any = { storage };
+    const config: {
+      storage: PostgresStorageAdapter;
+      vectorStore?: VectorStoreAdapter;
+      transactionCoordinator?: TransactionCoordinator;
+    } = { storage };
     if (vectorStore) config.vectorStore = vectorStore;
     if (transactionCoordinator) config.transactionCoordinator = transactionCoordinator;
 
@@ -303,14 +307,14 @@ export function createContextStoreServer(deps?: { memoryManager?: MemoryManager 
           const content = args['content'] as string;
           if (!content) throw new Error('Missing required parameter: content');
 
-          const metadata = (args['metadata'] as any) || {};
+          const metadata = (args['metadata'] as Record<string, unknown>) || {};
 
           // memoryTypeの処理
           let memoryType: MemoryType | undefined;
-          if (metadata.memoryType) {
-            memoryType = metadata.memoryType as MemoryType;
+          if (metadata['memoryType']) {
+            memoryType = metadata['memoryType'] as MemoryType;
             // metadataからは削除しておく（MemoryManagerが一元管理するため）
-            delete metadata.memoryType;
+            delete metadata['memoryType'];
           }
 
           const result = await memoryManager.storeMemory({
@@ -339,13 +343,14 @@ export function createContextStoreServer(deps?: { memoryManager?: MemoryManager 
 
           // eslint-disable-next-line @typescript-eslint/no-unused-vars
           // const query = args['query'] as string;
-          const filters = (args['filters'] as any) || {};
+          const filters = (args['filters'] as Record<string, unknown>) || {};
 
-          const results = await memoryManager.searchMemories({
-            tags: filters.tags,
-            memoryTypes: filters.memoryTypes,
-            limit: filters.limit,
-          });
+          const searchParams: any = {};
+          if (filters['tags']) searchParams.tags = filters['tags'] as string[];
+          if (filters['memoryTypes']) searchParams.memoryTypes = filters['memoryTypes'] as MemoryType[];
+          if (filters['limit']) searchParams.limit = filters['limit'] as number;
+
+          const results = await memoryManager.searchMemories(searchParams);
 
           return {
             content: [{ type: 'text', text: JSON.stringify(results, null, 2) }],

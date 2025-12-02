@@ -265,4 +265,18 @@ describe('MemoryClassifier', () => {
       expect(stats.lowConfidenceCount).toBeGreaterThan(0);
     });
   });
+
+  describe('Pgvector Parsing', () => {
+    it('should throw error for empty pgvector string', () => {
+      const classifierAny = classifier as any;
+
+      expect(() => {
+        classifierAny.parsePgvector('[]');
+      }).toThrow(/Empty pgvector string found/);
+
+      expect(() => {
+        classifierAny.parsePgvector('');
+      }).toThrow(/Empty pgvector string found/);
+    });
+  });
 });

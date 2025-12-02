@@ -5,7 +5,7 @@
  *
  * アプローチ: ルールベース + 埋め込みベース のハイブリッド方式
  * - ルールベーススコア (0-1): 各タイプの特徴量マッチ度
- * - 埋め込みスコア (0-1): 類似記憶タイプとのコサイン類似度 (Phase 5で実装)
+ * - 埋め込みスコア (0-1): 類似記憶タイプとのコサイン類似度
  * - 最終スコア: 0.6 * ルールベース + 0.4 * 埋め込み
  *
  * 閾値設定:
@@ -14,6 +14,8 @@
  * - 低信頼度: スコア < 0.6 → デフォルト (semantic) + 警告
  */
 
+import type { Pool } from 'pg';
+import OpenAI from 'openai';
 import type {
   MemoryClassification,
   MemoryClassifierService,
@@ -90,19 +92,28 @@ interface ClassificationRecord {
 
 export class MemoryClassifier implements MemoryClassifierService {
   private classificationHistory: ClassificationRecord[] = [];
+  private pool: Pool | null = null;
+  private openaiClient: OpenAI | null = null;
+  private embeddingModel: string = 'text-embedding-3-small';
 
   // インスタンスプロパティとしてキーワードを保持（学習により拡張可能）
   private episodicKeywords: Set<string>;
   private semanticKeywords: Set<string>;
   private proceduralKeywords: Set<string>;
 
-  constructor() {
+  constructor(config?: { pool?: Pool; openaiApiKey?: string }) {
     // 初期キーワードのロード
     this.episodicKeywords = new Set(EPISODIC_KEYWORDS);
-
     this.semanticKeywords = new Set(SEMANTIC_KEYWORDS);
-
     this.proceduralKeywords = new Set(PROCEDURAL_KEYWORDS);
+
+    // Optional dependencies for embedding-based classification
+    if (config?.pool) {
+      this.pool = config.pool;
+    }
+    if (config?.openaiApiKey) {
+      this.openaiClient = new OpenAI({ apiKey: config.openaiApiKey });
+    }
   }
 
   /**
@@ -118,10 +129,10 @@ export class MemoryClassifier implements MemoryClassifierService {
     // 特徴量抽出
     const features = this.extractFeatures(content);
 
-    // 各タイプのスコア計算
-    const episodicScore = this.calculateEpisodicScore(features);
-    const semanticScore = this.calculateSemanticScore(features);
-    const proceduralScore = this.calculateProceduralScore(features);
+    // 各タイプのスコア計算（ハイブリッド方式）
+    const episodicScore = await this.calculateEpisodicScore(features, content);
+    const semanticScore = await this.calculateSemanticScore(features, content);
+    const proceduralScore = await this.calculateProceduralScore(features, content);
 
     // 最も高いスコアのタイプを選択
     const scores: Array<{ type: MemoryType; score: number }> = [
@@ -132,13 +143,15 @@ export class MemoryClassifier implements MemoryClassifierService {
 
     scores.sort((a, b) => b.score - a.score);
 
-    // scores[0] は常に存在する（3つの要素を持つ配列）
     const { type: primaryType, score: confidence } = scores[0]!;
+
+    // primaryTypeに対応する埋め込みスコアをfeaturesに反映
+    const primaryEmbeddingScore = await this.calculateEmbeddingScore(content, primaryType);
+    features.embeddingScore = primaryEmbeddingScore ?? 0;
 
     // 低信頼度(<0.6)は仕様通り semantic へフォールバック
     if (confidence < 0.6) {
       const fallback = this.createLowConfidenceClassification();
-      // 透過性のため検出情報を引き継ぐ
       fallback.features = {
         ruleBasedScore: features.ruleBasedScore,
         embeddingScore: features.embeddingScore,
@@ -169,7 +182,6 @@ export class MemoryClassifier implements MemoryClassifierService {
       },
     };
 
-    // 統計情報のために記録
     this.classificationHistory.push({
       content,
       classification,
@@ -188,11 +200,11 @@ export class MemoryClassifier implements MemoryClassifierService {
 
     switch (type) {
       case 'episodic':
-        return this.calculateEpisodicScore(features);
+        return this.calculateEpisodicScore(features, content);
       case 'semantic':
-        return this.calculateSemanticScore(features);
+        return this.calculateSemanticScore(features, content);
       case 'procedural':
-        return this.calculateProceduralScore(features);
+        return this.calculateProceduralScore(features, content);
       default:
         return 0;
     }
@@ -202,8 +214,8 @@ export class MemoryClassifier implements MemoryClassifierService {
    * 分類器の学習
    * 要件: 3.4
    *
-   * 学習データから新しいキーワードを抽出し、分類精度を向上させる。
-   * Intl.Segmenterを使用して形態素解析を行い、頻出語を学習する。
+   * 学習データから新しいキーワードを抽出し、データベースに永続化する。
+   * また、各タイプのcentroidを再計算してDBに保存する。
    */
   async trainClassifier(samples: TrainingSample[]): Promise<void> {
     if (samples.length === 0) return;
@@ -221,12 +233,8 @@ export class MemoryClassifier implements MemoryClassifierService {
     for (const sample of samples) {
       const segments = segmenter.segment(sample.content);
       for (const segment of segments) {
-        // 単語らしいもののみ抽出（記号やスペースを除外）
         if (segment.isWordLike) {
           const word = segment.segment;
-          // 1文字以下の単語（助詞など）はノイズになりやすいため除外
-          // ただし、漢字1文字は重要な場合があるが、安全側に倒して除外するか、
-          // ひらがなのみ1文字を除外するなど洗練可能。ここでは単純に length > 1 とする
           if (word.length > 1) {
             const counts = wordCounts[sample.trueType];
             counts.set(word, (counts.get(word) || 0) + 1);
@@ -236,7 +244,6 @@ export class MemoryClassifier implements MemoryClassifierService {
     }
 
     // 頻出語をキーワードとして登録
-    // 閾値: サンプル内で2回以上出現した場合
     const THRESHOLD = 2;
 
     for (const type of ['episodic', 'semantic', 'procedural'] as MemoryType[]) {
@@ -244,8 +251,6 @@ export class MemoryClassifier implements MemoryClassifierService {
       const targetSet = this.getKeywordSet(type);
 
       for (const [word, count] of counts.entries()) {
-        // 学習データ数が少ない場合（< THRESHOLD）は、1回でも出現すれば登録するロジックも考慮
-        // ここではテストケースに合わせて、サンプル数が少ない場合もカバーできるように調整
         const adaptiveThreshold = Math.min(THRESHOLD, Math.ceil(samples.length / 2));
 
         if (count >= adaptiveThreshold) {
@@ -254,18 +259,94 @@ export class MemoryClassifier implements MemoryClassifierService {
       }
     }
 
-    console.log(`学習完了。更新されたキーワード数: エピソード=${this.episodicKeywords.size}, 意味=${this.semanticKeywords.size}, 手続き=${this.proceduralKeywords.size}`);
+    // データベースに学習データを保存し、centroidを再計算
+    if (this.pool && this.openaiClient) {
+      try {
+        // 1. 学習データを保存
+        for (const sample of samples) {
+          await this.pool.query(
+            `INSERT INTO classifier_training_data (content, true_type, metadata)
+             VALUES ($1, $2, $3)`,
+            [sample.content, sample.trueType, JSON.stringify(sample.metadata || {})]
+          );
+        }
+
+        // 2. 各タイプのcentroidを再計算
+        for (const type of ['episodic', 'semantic', 'procedural'] as MemoryType[]) {
+          // タイプごとの全サンプルを取得
+          const result = await this.pool.query(
+            `SELECT content FROM classifier_training_data WHERE true_type = $1`,
+            [type]
+          );
+
+          if (result.rows.length === 0) continue;
+
+          // 各サンプルの埋め込みを生成
+          const embeddings: number[][] = [];
+          for (const row of result.rows) {
+            const embedding = await this.generateEmbedding(row.content);
+            // Skip samples where embedding generation failed
+            if (embedding !== null) {
+              embeddings.push(embedding);
+            }
+          }
+
+          // centroidを計算（平均ベクトル）
+          const centroid = this.calculateCentroid(embeddings);
+
+          // DBに保存
+          await this.pool.query(
+            `INSERT INTO classifier_centroids (memory_type, centroid, sample_count, last_updated)
+           VALUES ($3, $1::vector, $2, NOW())
+           ON CONFLICT (memory_type) DO UPDATE SET
+             centroid = EXCLUDED.centroid,
+             sample_count = EXCLUDED.sample_count,
+             last_updated = NOW();
+           `,
+            [this.toPgvector(centroid), embeddings.length, type]
+          );
+        }
+
+        console.log(`学習完了。更新されたキーワード数: エピソード=${this.episodicKeywords.size}, 意味=${this.semanticKeywords.size}, 手続き=${this.proceduralKeywords.size}`);
+      } catch (error) {
+        console.error('Failed to persist training data:', error);
+      }
+    } else {
+      console.log(`学習完了（メモリのみ）。更新されたキーワード数: エピソード=${this.episodicKeywords.size}, 意味=${this.semanticKeywords.size}, 手続き=${this.proceduralKeywords.size}`);
+    }
   }
 
   /**
    * コンテンツの埋め込みを生成
-   * 要件: 3.4 (埋め込みベースの分類) - Phase 5 で実装予定
+   * 要件: 3.4 (埋め込みベースの分類)
+   * 
+   * @returns 埋め込みベクトル、または生成に失敗した場合はnull
    */
-  async generateEmbedding(content: string): Promise<number[]> {
-    // Phase 5 で実際の埋め込み生成ロジックを実装
-    // 現在はダミーの埋め込みを返す
-    // 例: contentの長さに応じたシンプルなベクトル
-    return [0.1, 0.2, 0.3, content.length * 0.01, 0.05];
+  async generateEmbedding(content: string): Promise<number[] | null> {
+    if (!this.openaiClient) {
+      // OpenAI client not available, return null to trigger rule-based fallback
+      return null;
+    }
+
+    try {
+      const response = await this.openaiClient.embeddings.create({
+        model: this.embeddingModel,
+        input: content,
+        encoding_format: 'float',
+      });
+
+      const embedding = response.data[0]?.embedding;
+      if (!embedding) {
+        console.error('No embedding returned from OpenAI');
+        return null;
+      }
+
+      return embedding;
+    } catch (error) {
+      console.error('Failed to generate embedding:', error);
+      // Return null instead of zero vector to allow callers to detect failure
+      return null;
+    }
   }
 
   private getKeywordSet(type: MemoryType): Set<string> {
@@ -419,7 +500,7 @@ export class MemoryClassifier implements MemoryClassifierService {
     return {
       detectedKeywords,
       ruleBasedScore,
-      embeddingScore: 0.0, // Phase 5 で埋め込みベース実装予定
+      embeddingScore: 0.0, // Will be calculated per type
       episodicMatches,
       semanticMatches,
       proceduralMatches,
@@ -427,67 +508,230 @@ export class MemoryClassifier implements MemoryClassifierService {
   }
 
   /**
-   * エピソード記憶のスコア計算
-   * スコア計算を調整して70%以上の精度目標を達成
-   *
-   * 注: design.md では「最終スコア = 0.6 * ルールベース + 0.4 * 埋め込み」とあるが、
-   * Phase 5 で埋め込みベースを実装するまでは、ルールベーススコアのみを使用する。
-   * これにより、1個マッチで0.6、2個で0.8、3個以上で1.0のスコアを直接返す。
+   * エピソード記憶のスコア計算（ハイブリッド方式）
+   * 最終スコア = 0.6 * ルールベース + 0.4 * 埋め込みベース
+   * 埋め込みが利用できない場合はルールベースのみを使用
    */
-  private calculateEpisodicScore(features: ReturnType<typeof this.extractFeatures>): number {
+  private async calculateEpisodicScore(features: ReturnType<typeof this.extractFeatures>, content: string): Promise<number> {
     const matchCount = features.episodicMatches.length;
 
-    if (matchCount === 0) {
-      return 0.0;
+    // ルールベーススコア
+    let ruleScore = 0.0;
+    if (matchCount >= 3) {
+      ruleScore = 1.0;
+    } else if (matchCount >= 2) {
+      ruleScore = 0.8;
+    } else if (matchCount >= 1) {
+      ruleScore = 0.6;
     }
 
-    // キーワードマッチ数に応じてスコアを段階的に設定
-    // Phase 5 で埋め込みベースを実装するまでは、ルールベーススコアを直接返す
-    if (matchCount >= 3) {
-      return 1.0;
-    } else if (matchCount >= 2) {
-      return 0.8;
-    } else {
-      return 0.6;
+    // 埋め込みベーススコア
+    const embeddingScore = await this.calculateEmbeddingScore(content, 'episodic');
+
+    // 埋め込みが利用できない場合(embeddingScore === null)はルールベースのみを使用
+    if (embeddingScore === null) {
+      return ruleScore;
     }
+
+    // ハイブリッドスコア
+    return 0.6 * ruleScore + 0.4 * embeddingScore;
   }
 
   /**
-   * 意味記憶のスコア計算
+   * 意味記憶のスコア計算（ハイブリッド方式）
+   * 埋め込みが利用できない場合はルールベースのみを使用
    */
-  private calculateSemanticScore(features: ReturnType<typeof this.extractFeatures>): number {
+  private async calculateSemanticScore(features: ReturnType<typeof this.extractFeatures>, content: string): Promise<number> {
     const matchCount = features.semanticMatches.length;
 
-    if (matchCount === 0) {
-      return 0.0;
+    let ruleScore = 0.0;
+    if (matchCount >= 3) {
+      ruleScore = 1.0;
+    } else if (matchCount >= 2) {
+      ruleScore = 0.8;
+    } else if (matchCount >= 1) {
+      ruleScore = 0.6;
     }
 
+    const embeddingScore = await this.calculateEmbeddingScore(content, 'semantic');
+
+    // 埋め込みが利用できない場合はルールベースのみを使用
+    if (embeddingScore === null) {
+      return ruleScore;
+    }
+
+    return 0.6 * ruleScore + 0.4 * embeddingScore;
+  }
+
+  /**
+   * 手続き記憶のスコア計算（ハイブリッド方式）
+   * 埋め込みが利用できない場合はルールベースのみを使用
+   */
+  private async calculateProceduralScore(features: ReturnType<typeof this.extractFeatures>, content: string): Promise<number> {
+    const matchCount = features.proceduralMatches.length;
+
+    let ruleScore = 0.0;
     if (matchCount >= 3) {
-      return 1.0;
+      ruleScore = 1.0;
     } else if (matchCount >= 2) {
-      return 0.8;
-    } else {
-      return 0.6;
+      ruleScore = 0.8;
+    } else if (matchCount >= 1) {
+      ruleScore = 0.6;
+    }
+
+    const embeddingScore = await this.calculateEmbeddingScore(content, 'procedural');
+
+    // 埋め込みが利用できない場合はルールベースのみを使用
+    if (embeddingScore === null) {
+      return ruleScore;
+    }
+
+    return 0.6 * ruleScore + 0.4 * embeddingScore;
+  }
+
+  /**
+   * 埋め込みベースのスコア計算（centroidとのコサイン類似度）
+   * 失敗時はnullを返し、呼び出し側でrule-basedスコアのみを使用する
+   */
+  private async calculateEmbeddingScore(content: string, type: MemoryType): Promise<number | null> {
+    if (!this.pool || !this.openaiClient) {
+      return null; // Fallback to rule-based only
+    }
+
+    try {
+      // コンテンツの埋め込みを生成
+      const contentEmbedding = await this.generateEmbedding(content);
+
+      // Embedding generation failed, fallback to rule-based only
+      if (contentEmbedding === null) {
+        return null;
+      }
+
+      // DBからcentroidを取得
+      const result = await this.pool.query(
+        `SELECT centroid FROM classifier_centroids WHERE memory_type = $1`,
+        [type]
+      );
+
+      if (result.rows.length === 0) {
+        return null;
+      }
+
+      const centroidData = result.rows[0]?.centroid;
+      if (!centroidData) return null;
+
+      // pgvectorの文字列または配列をパース
+      const centroid = this.parsePgvector(centroidData);
+
+      // コサイン類似度を計算
+      const similarity = this.calculateCosineSimilarity(contentEmbedding, centroid);
+
+      // 0-1の範囲に正規化（コサイン類似度は-1~1なので、0~1にマップ）
+      return Math.max(0, Math.min(1, (similarity + 1) / 2));
+    } catch (error) {
+      console.error(`Failed to calculate embedding score for ${type}:`, error);
+      return null;
     }
   }
 
   /**
-   * 手続き記憶のスコア計算
+   * centroidを計算（平均ベクトル）
    */
-  private calculateProceduralScore(features: ReturnType<typeof this.extractFeatures>): number {
-    const matchCount = features.proceduralMatches.length;
-
-    if (matchCount === 0) {
-      return 0.0;
+  private calculateCentroid(embeddings: number[][]): number[] {
+    if (embeddings.length === 0) {
+      return new Array(1536).fill(0);
     }
 
-    if (matchCount >= 3) {
-      return 1.0;
-    } else if (matchCount >= 2) {
-      return 0.8;
-    } else {
-      return 0.6;
+    const dimension = embeddings[0]!.length;
+    // 次元の一致を検証
+    for (const embedding of embeddings) {
+      if (embedding.length !== dimension) {
+        throw new Error(`Dimension mismatch in embeddings: expected ${dimension}, got ${embedding.length}`);
+      }
     }
+    const centroid = new Array(dimension).fill(0);
+
+    for (const embedding of embeddings) {
+      for (let i = 0; i < dimension; i++) {
+        centroid[i] += embedding[i]!;
+      }
+    }
+
+    for (let i = 0; i < dimension; i++) {
+      centroid[i] /= embeddings.length;
+    }
+
+    return centroid;
+  }
+
+  /**
+   * コサイン類似度を計算
+   */
+  private calculateCosineSimilarity(vec1: number[], vec2: number[]): number {
+    if (vec1.length !== vec2.length) {
+      throw new Error(`Vector dimensions mismatch: ${vec1.length} vs ${vec2.length}`);
+    }
+
+    let dotProduct = 0;
+    let norm1 = 0;
+    let norm2 = 0;
+
+    for (let i = 0; i < vec1.length; i++) {
+      dotProduct += vec1[i]! * vec2[i]!;
+      norm1 += vec1[i]! * vec1[i]!;
+      norm2 += vec2[i]! * vec2[i]!;
+    }
+
+    const denominator = Math.sqrt(norm1) * Math.sqrt(norm2);
+    if (denominator === 0) {
+      return 0;
+    }
+
+    return dotProduct / denominator;
+  }
+
+  /**
+   * pgvectorをパース
+   */
+  private parsePgvector(value: unknown): number[] {
+    if (Array.isArray(value)) {
+      return value.map((n) => {
+        const num = Number(n);
+        if (!Number.isFinite(num)) {
+          throw new Error(`Invalid number in pgvector array: ${n}`);
+        }
+        return num;
+      });
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      const body =
+        trimmed.startsWith('[') && trimmed.endsWith(']')
+          ? trimmed.slice(1, -1)
+          : trimmed;
+
+      if (!body) {
+        throw new Error(`Empty pgvector string found, cannot parse embedding. Raw value: "${value}"`);
+      }
+
+      return body.split(',').map((x) => {
+        const num = Number(x.trim());
+        if (!Number.isFinite(num)) {
+          throw new Error(`Invalid number in pgvector string: ${x}`);
+        }
+        return num;
+      });
+    }
+
+    throw new Error(`Invalid embedding type from database: ${typeof value}`);
+  }
+
+  /**
+   * ベクトルをpgvector形式の文字列に変換
+   */
+  private toPgvector(vector: number[]): string {
+    return `[${vector.join(',')}]`;
   }
 
   /**
