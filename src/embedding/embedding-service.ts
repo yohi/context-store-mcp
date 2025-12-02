@@ -57,16 +57,17 @@ export class EmbeddingService {
           return new CustomAPIEmbeddingProvider(config.apiEndpoint, config.dimensions);
 
         default:
-          console.warn(`Unknown embedding provider: ${config.provider}. Using OpenAI as default.`);
-          if (!config.openaiApiKey) {
-            console.warn('OpenAI API key not provided. Embedding generation will be disabled.');
+          if (config.openaiApiKey) {
+            console.warn(`Unknown embedding provider: ${config.provider}. Using OpenAI as default.`);
+            return new OpenAIEmbeddingProvider(
+              config.openaiApiKey,
+              config.embeddingModel,
+              config.dimensions
+            );
+          } else {
+            console.warn('Unknown provider and no OpenAI API key provided; embedding generation disabled.');
             return null;
           }
-          return new OpenAIEmbeddingProvider(
-            config.openaiApiKey,
-            config.embeddingModel,
-            config.dimensions
-          );
       }
     } catch (error) {
       console.error('Failed to create embedding provider:', error);
