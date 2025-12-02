@@ -6,11 +6,8 @@
  * Requirements: 10.2
  */
 
-import { exec } from 'child_process';
-import { promisify } from 'util';
+import { spawn } from 'child_process';
 import type { EmbeddingProvider } from './types.js';
-
-const execAsync = promisify(exec);
 
 /**
  * Local CLI embedding provider implementation
@@ -38,57 +35,86 @@ export class LocalCLIEmbeddingProvider implements EmbeddingProvider {
       throw new Error('Text cannot be empty');
     }
 
-    try {
-      // Escape text for shell command
-      const escapedText = text.replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`');
-      
-      // Execute CLI command with text as argument
-      const fullCommand = `${this.command} "${escapedText}"`;
-      
-      const { stdout, stderr } = await execAsync(fullCommand, {
-        maxBuffer: 10 * 1024 * 1024, // 10MB buffer for large outputs
-        timeout: 30000, // 30 second timeout
+    return new Promise((resolve, reject) => {
+      // Split the command into executable and initial arguments
+      const commandParts = this.command.split(' ');
+      const executable = commandParts[0];
+      const args = [...commandParts.slice(1), text]; // Pass user text as a distinct argument
+
+      const child = spawn(executable, args);
+
+      let stdout = '';
+      let stderr = '';
+      let timeoutId: NodeJS.Timeout;
+      const timeout = 30000; // 30 second timeout, consistent with previous exec options
+
+      if (timeout > 0) {
+        timeoutId = setTimeout(() => {
+          child.kill(); // Kill the child process if timeout occurs
+          reject(new Error(`CLI embedding command timed out after ${timeout / 1000} seconds`));
+        }, timeout);
+      }
+
+      child.stdout.on('data', (data) => {
+        stdout += data.toString();
       });
 
-      // Log stderr if present (may contain warnings)
-      if (stderr && stderr.trim().length > 0) {
-        console.warn('CLI embedding command stderr:', stderr);
-      }
+      child.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
 
-      // Parse JSON output from stdout
-      let result: unknown;
-      try {
-        result = JSON.parse(stdout);
-      } catch (parseError) {
-        throw new Error(
-          `Failed to parse CLI output as JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}\nOutput: ${stdout.substring(0, 200)}`
-        );
-      }
-
-      // Extract embedding array from result
-      const embedding = this.extractEmbedding(result);
-
-      // Validate dimensions
-      if (embedding.length !== this.dimensions) {
-        throw new Error(
-          `Unexpected embedding dimensions: expected ${this.dimensions}, got ${embedding.length}`
-        );
-      }
-
-      // Validate all values are finite numbers
-      for (let i = 0; i < embedding.length; i++) {
-        if (!Number.isFinite(embedding[i])) {
-          throw new Error(`Invalid embedding value at index ${i}: ${embedding[i]}`);
+      child.on('close', (code) => {
+        clearTimeout(timeoutId); // Clear timeout if process finishes
+        if (code !== 0) {
+          reject(new Error(`CLI embedding command exited with code ${code}\nStderr: ${stderr}`));
+          return;
         }
-      }
 
-      return embedding;
-    } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(`CLI embedding generation failed: ${error.message}`);
-      }
-      throw new Error(`CLI embedding generation failed: ${String(error)}`);
-    }
+        if (stderr && stderr.trim().length > 0) {
+          console.warn('CLI embedding command stderr:', stderr);
+        }
+
+        let result: unknown;
+        try {
+          result = JSON.parse(stdout);
+        } catch (parseError) {
+          reject(
+            new Error(
+              `Failed to parse CLI output as JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}\nOutput: ${stdout.substring(0, 200)}`
+            )
+          );
+          return;
+        }
+
+        try {
+          const embedding = this.extractEmbedding(result);
+
+          if (embedding.length !== this.dimensions) {
+            reject(
+              new Error(
+                `Unexpected embedding dimensions: expected ${this.dimensions}, got ${embedding.length}`
+              )
+            );
+            return;
+          }
+
+          for (let i = 0; i < embedding.length; i++) {
+            if (!Number.isFinite(embedding[i])) {
+              reject(new Error(`Invalid embedding value at index ${i}: ${embedding[i]}`));
+              return;
+            }
+          }
+          resolve(embedding);
+        } catch (extractError) {
+          reject(extractError);
+        }
+      });
+
+      child.on('error', (err) => {
+        clearTimeout(timeoutId); // Clear timeout if process errors out
+        reject(new Error(`Failed to start CLI embedding command: ${err.message}`));
+      });
+    });
   }
 
   /**
