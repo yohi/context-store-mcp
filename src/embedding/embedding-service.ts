@@ -10,6 +10,7 @@ import type { EmbeddingProvider, EmbeddingProviderConfig } from './types.js';
 import { OpenAIEmbeddingProvider } from './openai-embedding-provider.js';
 import { LocalCLIEmbeddingProvider } from './local-cli-embedding-provider.js';
 import { CustomAPIEmbeddingProvider } from './custom-api-embedding-provider.js';
+import { parse } from 'shell-quote';
 
 /**
  * Embedding service class
@@ -41,18 +42,31 @@ export class EmbeddingService {
             config.embeddingModel,
             config.dimensions
           );
-
-import { parse } from 'shell-quote';
-// ... existing imports ...
-        case 'local-cli':
+        case 'local-cli': {
           if (!config.cliCommand) {
             console.warn('CLI command not provided. Embedding generation will be disabled.');
             return null;
           }
-          const commandParts = parse(config.cliCommand) as string[];
+
+          const parsedCommand = parse(config.cliCommand);
+
+          // Handle shell operators or other non-array results from shell-quote
+          if (!Array.isArray(parsedCommand)) {
+            console.warn(`CLI command contains shell operators or is unparseable: "${config.cliCommand}". Embedding generation will be disabled.`);
+            return null;
+          }
+
+          const commandParts = parsedCommand as (string | undefined)[]; // Cast for type safety with filter
+
           const executable = commandParts[0];
-          const initialArgs = commandParts.slice(1);
+          const initialArgs = commandParts.slice(1).filter((arg): arg is string => typeof arg === 'string');
+
+          if (typeof executable !== 'string') {
+            console.error('Failed to parse CLI command: executable is not a string after parsing.');
+            return null;
+          }
           return new LocalCLIEmbeddingProvider(executable, initialArgs, config.dimensions);
+        }
 
         case 'custom-api':
           if (!config.apiEndpoint) {
