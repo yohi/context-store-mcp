@@ -29,6 +29,11 @@ export interface MemoryMetadata {
   tags?: string[];
   userId?: string;
   projectId?: string;
+  // Lite mode specific fields
+  sourceType?: string; // 'desktop-app' | 'ide' | 'cli-agent'
+  project?: string;
+  contentHash?: string; // For duplicate detection
+  [key: string]: unknown; // Allow additional metadata fields
 }
 
 // 完全な記憶エンティティ
