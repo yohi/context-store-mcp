@@ -145,6 +145,10 @@ export class MemoryClassifier implements MemoryClassifierService {
 
     const { type: primaryType, score: confidence } = scores[0]!;
 
+    // primaryTypeに対応する埋め込みスコアをfeaturesに反映
+    const primaryEmbeddingScore = await this.calculateEmbeddingScore(content, primaryType);
+    features.embeddingScore = primaryEmbeddingScore;
+
     // 低信頼度(<0.6)は仕様通り semantic へフォールバック
     if (confidence < 0.6) {
       const fallback = this.createLowConfidenceClassification();
