@@ -14,14 +14,16 @@ import type { EmbeddingProvider } from './types.js';
  * Executes a CLI command and parses JSON output from stdout
  */
 export class LocalCLIEmbeddingProvider implements EmbeddingProvider {
-  private command: string;
+  private executable: string;
+  private initialArgs: string[];
   private dimensions: number;
 
-  constructor(command: string, dimensions: number = 1536) {
-    if (!command || command.trim().length === 0) {
-      throw new Error('CLI command cannot be empty');
+  constructor(executable: string, initialArgs: string[] = [], dimensions: number = 1536) {
+    if (!executable || executable.trim().length === 0) {
+      throw new Error('Executable cannot be empty');
     }
-    this.command = command;
+    this.executable = executable;
+    this.initialArgs = initialArgs;
     this.dimensions = dimensions;
   }
 
@@ -36,12 +38,10 @@ export class LocalCLIEmbeddingProvider implements EmbeddingProvider {
     }
 
     return new Promise((resolve, reject) => {
-      // Split the command into executable and initial arguments
-      const commandParts = this.command.split(' ');
-      const executable = commandParts[0];
-      const args = [...commandParts.slice(1), text]; // Pass user text as a distinct argument
+      // Combine initial arguments with the user text
+      const args = [...this.initialArgs, text];
 
-      const child = spawn(executable, args);
+      const child = spawn(this.executable, args);
 
       let stdout = '';
       let stderr = '';

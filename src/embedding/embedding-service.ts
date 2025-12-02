@@ -42,12 +42,17 @@ export class EmbeddingService {
             config.dimensions
           );
 
+import { parse } from 'shell-quote';
+// ... existing imports ...
         case 'local-cli':
           if (!config.cliCommand) {
             console.warn('CLI command not provided. Embedding generation will be disabled.');
             return null;
           }
-          return new LocalCLIEmbeddingProvider(config.cliCommand, config.dimensions);
+          const commandParts = parse(config.cliCommand) as string[];
+          const executable = commandParts[0];
+          const initialArgs = commandParts.slice(1);
+          return new LocalCLIEmbeddingProvider(executable, initialArgs, config.dimensions);
 
         case 'custom-api':
           if (!config.apiEndpoint) {
