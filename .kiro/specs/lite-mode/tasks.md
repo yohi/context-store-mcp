@@ -15,12 +15,12 @@
   - **プロパティ4: 無効な設定のハンドリング**
   - **検証: 要件 2.5**
 
-- [ ] 2. ストレージアダプターの拡張と優雅な劣化の実装
-- [ ] 2.1 OptionalStorageAdapterインターフェースの定義
+- [x] 2. ストレージアダプターの拡張と優雅な劣化の実装
+- [x] 2.1 OptionalStorageAdapterインターフェースの定義
   - `isAvailable()`, `initialize()`, `gracefulShutdown()`メソッドを定義
   - _要件: 1.2, 1.3, 11.1, 11.2_
 
-- [ ] 2.2 GraphStoreAdapterの拡張
+- [x] 2.2 GraphStoreAdapterの拡張
   - Liteモード対応の初期化ロジックを実装
   - Neo4j不在時の優雅な劣化を実装
   - _要件: 1.2, 2.2, 11.1_
@@ -29,7 +29,7 @@
   - **プロパティ33: Neo4j不在時の起動継続**
   - **検証: 要件 11.1, 1.2**
 
-- [ ] 2.4 PostgreSQLスキーマの拡張
+- [x] 2.4 PostgreSQLスキーマの拡張
   - `lite_mode_metadata` JSONBカラムを追加
   - Liteモード用のインデックスを作成
   - `collector_state`テーブルを作成
