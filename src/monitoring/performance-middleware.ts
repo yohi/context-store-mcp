@@ -35,28 +35,28 @@ export function withPerformanceTracking<T, A extends any[]>(
 ): (...args: A) => Promise<T> {
   return async (...args: A): Promise<T> => {
     const start = Date.now();
-    
+
     // オペレーション名の決定
-    const name = typeof operationName === 'function' 
-      ? operationName(...args) 
+    const name = typeof operationName === 'function'
+      ? operationName(...args)
       : operationName;
 
     try {
       // ハンドラーの実行
       const result = await handler(...args);
-      
+
       // 成功計測
       const duration = Date.now() - start;
       metrics.recordLatency(name, duration);
       metrics.recordSuccess(name);
-      
+
       return result;
     } catch (error) {
       // エラー計測
       const duration = Date.now() - start;
       metrics.recordLatency(name, duration);
       metrics.recordError(name, error instanceof Error ? error : new Error(String(error)));
-      
+
       throw error;
     }
   };
@@ -70,26 +70,26 @@ export function withPerformanceTracking<T, A extends any[]>(
  */
 export const createPerformanceMiddleware = (
   metrics: PerformanceMetrics,
-  getOperationName: (request: any) => string
+  getOperationName: (request: unknown) => string
 ) => {
-  return (next: (request: any) => Promise<any>) => {
-    return async (request: any) => {
+  return (next: (request: unknown) => Promise<unknown>) => {
+    return async (request: unknown) => {
       const name = getOperationName(request);
       const start = Date.now();
 
       try {
         const result = await next(request);
-        
+
         const duration = Date.now() - start;
         metrics.recordLatency(name, duration);
         metrics.recordSuccess(name);
-        
+
         return result;
       } catch (error) {
         const duration = Date.now() - start;
         metrics.recordLatency(name, duration);
         metrics.recordError(name, error instanceof Error ? error : new Error(String(error)));
-        
+
         throw error;
       }
     };

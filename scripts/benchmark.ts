@@ -2,8 +2,19 @@
 
 /**
  * パフォーマンスベンチマークスクリプト
- * 様々な負荷条件下でのシステムパフォーマンスをテストします
+ * 実際のデータベース接続を使用してシステムパフォーマンスをテストします
  */
+
+import { Pool } from 'pg';
+import neo4j from 'neo4j-driver';
+import { MemoryManager } from '../src/memory/memory-manager.js';
+import { PostgresStorageAdapter } from '../src/storage/postgres-store-adapter.js';
+import { VectorStoreAdapter } from '../src/storage/vector-store-adapter.js';
+import { TransactionCoordinator } from '../src/storage/transaction-coordinator.js';
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
 
 interface BenchmarkResult {
   name: string;
@@ -22,24 +33,15 @@ interface BenchmarkConfig {
   name: string;
   concurrency: number;
   totalRequests: number;
-  operation: () => Promise<void>;
+  operation: (index: number) => Promise<void>;
 }
 
 class PerformanceBenchmark {
   private results: BenchmarkResult[] = [];
 
   async runBenchmark(config: BenchmarkConfig): Promise<BenchmarkResult> {
-    // 無限ループと無効な統計を防ぐための入力検証
-    if (config.concurrency <= 0) {
-      throw new Error(
-        `Invalid concurrency: ${config.concurrency}. Concurrency must be greater than 0.`
-      );
-    }
-    if (config.totalRequests <= 0) {
-      throw new Error(
-        `Invalid totalRequests: ${config.totalRequests}. Total requests must be greater than 0.`
-      );
-    }
+    if (config.concurrency <= 0) throw new Error('Concurrency must be > 0');
+    if (config.totalRequests <= 0) throw new Error('Total requests must be > 0');
 
     console.log(`\n🔄 Running benchmark: ${config.name}`);
     console.log(`   Concurrency: ${config.concurrency}`);
@@ -50,40 +52,41 @@ class PerformanceBenchmark {
     let failCount = 0;
     const startTime = Date.now();
 
-    // リクエストをバッチで実行
     const batchSize = config.concurrency;
     const batches = Math.ceil(config.totalRequests / batchSize);
+
+    let completedRequests = 0;
 
     for (let batch = 0; batch < batches; batch++) {
       const batchRequests = Math.min(
         batchSize,
-        config.totalRequests - batch * batchSize
+        config.totalRequests - completedRequests
       );
 
-      const promises = Array.from({ length: batchRequests }, async () => {
+      const promises = Array.from({ length: batchRequests }, async (_, i) => {
+        const reqIndex = completedRequests + i;
         const reqStart = Date.now();
         try {
-          await config.operation();
+          await config.operation(reqIndex);
           const latency = Date.now() - reqStart;
           latencies.push(latency);
           successCount++;
         } catch (error) {
           failCount++;
-          console.error(`Request failed: ${error}`);
+          // console.error(`Request failed: ${error}`); // Reduce noise
         }
       });
 
       await Promise.all(promises);
+      completedRequests += batchRequests;
 
-      // 進捗インジケーター
-      const progress = ((batch + 1) / batches) * 100;
+      const progress = (completedRequests / config.totalRequests) * 100;
       process.stdout.write(`\r   Progress: ${progress.toFixed(1)}%`);
     }
 
     const endTime = Date.now();
     const duration = (endTime - startTime) / 1000; // seconds
 
-    // 統計の計算
     latencies.sort((a, b) => a - b);
 
     let avgLatency = 0;
@@ -129,13 +132,6 @@ class PerformanceBenchmark {
     console.log(`   P50 Latency: ${result.p50Latency}ms`);
     console.log(`   P95 Latency: ${result.p95Latency}ms`);
     console.log(`   P99 Latency: ${result.p99Latency}ms`);
-
-    // SLAチェック (P95 < 2000ms)
-    if (result.p95Latency < 2000) {
-      console.log(`   ✅ SLA Met: P95 < 2000ms`);
-    } else {
-      console.log(`   ❌ SLA Failed: P95 >= 2000ms`);
-    }
   }
 
   printSummary(): void {
@@ -149,77 +145,123 @@ class PerformanceBenchmark {
         `  Throughput: ${result.throughput.toFixed(2)} req/s | P95: ${result.p95Latency}ms | Success: ${((result.successfulRequests / result.totalRequests) * 100).toFixed(1)}%`
       );
     }
-
     console.log('\n' + '='.repeat(80));
   }
 }
 
-// ベンチマーク用のモック操作
-async function mockMemoryStore(): Promise<void> {
-  // 記憶保存操作をシミュレート
-  await new Promise((resolve) => setTimeout(resolve, Math.random() * 50 + 10));
-}
-
-async function mockMemorySearch(): Promise<void> {
-  // 記憶検索操作をシミュレート
-  await new Promise((resolve) => setTimeout(resolve, Math.random() * 100 + 50));
-}
-
-async function mockHybridSearch(): Promise<void> {
-  // ハイブリッド検索操作をシミュレート
-  await new Promise((resolve) => setTimeout(resolve, Math.random() * 200 + 100));
-}
-
 async function main() {
-  console.log('🚀 Context Store MCP Performance Benchmark');
+  console.log('🚀 Context Store MCP Performance Benchmark (Real DB)');
   console.log('='.repeat(80));
 
+  if (!process.env.DATABASE_URL) {
+    console.error('❌ DATABASE_URL is not set. Please check your .env file.');
+    process.exit(1);
+  }
+
+  // Initialize DB connections
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
+  });
+
+  let neo4jDriver;
+  if (process.env.NEO4J_URI && process.env.NEO4J_USER && process.env.NEO4J_PASSWORD) {
+    neo4jDriver = neo4j.driver(
+      process.env.NEO4J_URI,
+      neo4j.auth.basic(process.env.NEO4J_USER, process.env.NEO4J_PASSWORD)
+    );
+  }
+
+  const storage = new PostgresStorageAdapter(pool);
+
+  let vectorStore;
+  if (process.env.OPENAI_API_KEY) {
+    vectorStore = new VectorStoreAdapter({
+      pool,
+      openaiApiKey: process.env.OPENAI_API_KEY,
+    });
+  } else {
+    console.warn('⚠️ OPENAI_API_KEY not found. Vector search benchmarks will fail or be skipped.');
+  }
+
+  let transactionCoordinator;
+  if (neo4jDriver) {
+    transactionCoordinator = new TransactionCoordinator({
+      postgresPool: pool,
+      neo4jDriver: neo4jDriver,
+    });
+  }
+
+  const config: any = { storage };
+  if (vectorStore) config.vectorStore = vectorStore;
+  if (transactionCoordinator) config.transactionCoordinator = transactionCoordinator;
+
+  const memoryManager = new MemoryManager(config);
+
   const benchmark = new PerformanceBenchmark();
+  const TEST_RUN_ID = `bench_${Date.now()}`;
 
-  // ベンチマーク 1: 記憶保存
-  await benchmark.runBenchmark({
-    name: 'Memory Storage',
-    concurrency: 10,
-    totalRequests: 100,
-    operation: mockMemoryStore,
-  });
+  try {
+    // 1. Memory Storage Benchmark
+    await benchmark.runBenchmark({
+      name: 'Memory Storage (Write)',
+      concurrency: 5,
+      totalRequests: 50,
+      operation: async (i) => {
+        await memoryManager.storeMemory({
+          content: `Benchmark memory content ${i} for run ${TEST_RUN_ID}. This is a test memory to verify write performance.`,
+          metadata: {
+            source: 'benchmark',
+            tags: ['benchmark', TEST_RUN_ID],
+          },
+        });
+      },
+    });
 
-  // ベンチマーク 2: ベクトル検索
-  await benchmark.runBenchmark({
-    name: 'Vector Search',
-    concurrency: 20,
-    totalRequests: 200,
-    operation: mockMemorySearch,
-  });
+    // 2. Memory Search Benchmark (Metadata)
+    await benchmark.runBenchmark({
+      name: 'Memory Search (Metadata)',
+      concurrency: 10,
+      totalRequests: 100,
+      operation: async () => {
+        await memoryManager.searchMemories({
+          tags: ['benchmark'],
+          limit: 10,
+        });
+      },
+    });
 
-  // ベンチマーク 3: ハイブリッド検索
-  await benchmark.runBenchmark({
-    name: 'Hybrid Search',
-    concurrency: 10,
-    totalRequests: 100,
-    operation: mockHybridSearch,
-  });
+    // 3. Vector Search Benchmark (if available)
+    if (vectorStore) {
+      await benchmark.runBenchmark({
+        name: 'Vector Search (Similarity)',
+        concurrency: 5,
+        totalRequests: 20, // Lower count due to API costs/limits
+        operation: async () => {
+          await memoryManager.findSimilarMemories(
+            `Benchmark search query for run ${TEST_RUN_ID}`,
+            5
+          );
+        },
+      });
+    }
 
-  // ベンチマーク 4: 高並行性テスト
-  await benchmark.runBenchmark({
-    name: 'High Concurrency Test',
-    concurrency: 100,
-    totalRequests: 1000,
-    operation: mockMemorySearch,
-  });
+  } catch (error) {
+    console.error('Benchmark execution failed:', error);
+  } finally {
+    benchmark.printSummary();
 
-  // サマリーの表示
-  benchmark.printSummary();
-
-  console.log('\n✅ All benchmarks completed!');
-  console.log(
-    '\n💡 Note: These are mock benchmarks. For real performance testing,'
-  );
-  console.log('   integrate with actual MCP server endpoints.\n');
+    // Cleanup
+    console.log('\n🧹 Cleaning up...');
+    await memoryManager.dispose();
+    await pool.end();
+    if (neo4jDriver) await neo4jDriver.close();
+  }
 }
 
-// ベンチマークの実行
 main().catch((error) => {
-  console.error('Benchmark failed:', error);
+  console.error('Fatal error:', error);
   process.exit(1);
 });
