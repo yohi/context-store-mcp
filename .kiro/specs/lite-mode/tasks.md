@@ -59,16 +59,16 @@
   - **プロパティ34: Redis不在時のフォールバック**
   - **検証: 要件 11.2, 1.3**
 
-- [ ] 4. 埋め込みサービスとプロバイダーの実装
-- [ ] 4.1 EmbeddingProviderインターフェースの定義
+- [x] 4. 埋め込みサービスとプロバイダーの実装
+- [x] 4.1 EmbeddingProviderインターフェースの定義
   - `generateEmbedding()`, `isAvailable()`メソッドを定義
   - _要件: 10.1, 10.2, 10.3, 10.4_
 
-- [ ] 4.2 OpenAIEmbeddingProviderの実装
+- [x] 4.2 OpenAIEmbeddingProviderの実装
   - 既存のOpenAI API呼び出しロジックをラップ
   - _要件: 10.4_
 
-- [ ] 4.3 LocalCLIEmbeddingProviderの実装
+- [x] 4.3 LocalCLIEmbeddingProviderの実装
   - CLIコマンド実行機能を実装
   - 標準出力からJSONを解析
   - _要件: 10.2_
@@ -77,7 +77,7 @@
   - **プロパティ29: CLI埋め込み生成**
   - **検証: 要件 10.2**
 
-- [ ] 4.5 CustomAPIEmbeddingProviderの実装
+- [x] 4.5 CustomAPIEmbeddingProviderの実装
   - カスタムAPIエンドポイントへのHTTPリクエスト
   - _要件: 10.3_
 
@@ -85,7 +85,7 @@
   - **プロパティ30: カスタムAPI埋め込み生成**
   - **検証: 要件 10.3**
 
-- [ ] 4.7 EmbeddingServiceの実装
+- [x] 4.7 EmbeddingServiceの実装
   - プロバイダー選択ロジック
   - エラーハンドリングとフォールバック
   - _要件: 10.1, 10.4, 10.5, 11.3_
