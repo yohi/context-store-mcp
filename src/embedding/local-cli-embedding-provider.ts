@@ -45,7 +45,7 @@ export class LocalCLIEmbeddingProvider implements EmbeddingProvider {
 
       let stdout = '';
       let stderr = '';
-      let timeoutId: NodeJS.Timeout;
+      let timeoutId: NodeJS.Timeout | undefined = undefined;
       const timeout = 30000; // 30 second timeout, consistent with previous exec options
 
       if (timeout > 0) {
@@ -64,7 +64,7 @@ export class LocalCLIEmbeddingProvider implements EmbeddingProvider {
       });
 
       child.on('close', (code) => {
-        clearTimeout(timeoutId); // Clear timeout if process finishes
+        if (timeoutId) clearTimeout(timeoutId); // Clear timeout if process finishes
         if (code !== 0) {
           reject(new Error(`CLI embedding command exited with code ${code}\nStderr: ${stderr}`));
           return;
@@ -111,7 +111,7 @@ export class LocalCLIEmbeddingProvider implements EmbeddingProvider {
       });
 
       child.on('error', (err) => {
-        clearTimeout(timeoutId); // Clear timeout if process errors out
+        if (timeoutId) clearTimeout(timeoutId); // Clear timeout if process errors out
         reject(new Error(`Failed to start CLI embedding command: ${err.message}`));
       });
     });
