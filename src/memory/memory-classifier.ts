@@ -490,6 +490,7 @@ export class MemoryClassifier implements MemoryClassifierService {
   /**
    * エピソード記憶のスコア計算（ハイブリッド方式）
    * 最終スコア = 0.6 * ルールベース + 0.4 * 埋め込みベース
+   * 埋め込みが利用できない場合はルールベースのみを使用
    */
   private async calculateEpisodicScore(features: ReturnType<typeof this.extractFeatures>, content: string): Promise<number> {
     const matchCount = features.episodicMatches.length;
@@ -507,12 +508,18 @@ export class MemoryClassifier implements MemoryClassifierService {
     // 埋め込みベーススコア
     const embeddingScore = await this.calculateEmbeddingScore(content, 'episodic');
 
+    // 埋め込みが利用できない場合(embeddingScore === 0)はルールベースのみを使用
+    if (embeddingScore === 0.0 && !this.openaiClient) {
+      return ruleScore;
+    }
+
     // ハイブリッドスコア
     return 0.6 * ruleScore + 0.4 * embeddingScore;
   }
 
   /**
    * 意味記憶のスコア計算（ハイブリッド方式）
+   * 埋め込みが利用できない場合はルールベースのみを使用
    */
   private async calculateSemanticScore(features: ReturnType<typeof this.extractFeatures>, content: string): Promise<number> {
     const matchCount = features.semanticMatches.length;
@@ -527,11 +534,18 @@ export class MemoryClassifier implements MemoryClassifierService {
     }
 
     const embeddingScore = await this.calculateEmbeddingScore(content, 'semantic');
+
+    // 埋め込みが利用できない場合はルールベースのみを使用
+    if (embeddingScore === 0.0 && !this.openaiClient) {
+      return ruleScore;
+    }
+
     return 0.6 * ruleScore + 0.4 * embeddingScore;
   }
 
   /**
    * 手続き記憶のスコア計算（ハイブリッド方式）
+   * 埋め込みが利用できない場合はルールベースのみを使用
    */
   private async calculateProceduralScore(features: ReturnType<typeof this.extractFeatures>, content: string): Promise<number> {
     const matchCount = features.proceduralMatches.length;
@@ -546,6 +560,12 @@ export class MemoryClassifier implements MemoryClassifierService {
     }
 
     const embeddingScore = await this.calculateEmbeddingScore(content, 'procedural');
+
+    // 埋め込みが利用できない場合はルールベースのみを使用
+    if (embeddingScore === 0.0 && !this.openaiClient) {
+      return ruleScore;
+    }
+
     return 0.6 * ruleScore + 0.4 * embeddingScore;
   }
 

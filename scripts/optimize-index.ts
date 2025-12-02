@@ -53,11 +53,15 @@ async function main() {
     });
 
     try {
-        console.log('\nOptimizing index "memories_embedding_hnsw_idx"...');
+        const tableName = 'memory_vectors';
+        const columnName = 'embedding';
+        const indexName = `${tableName}_${columnName}_hnsw_idx`;
+
+        console.log(`\nOptimizing index "${indexName}"...`);
 
         // Note: Table name and column name are hardcoded based on schema
         // Table: memory_vectors, Column: embedding
-        await optimizer.optimizeHNSWIndex('memory_vectors', 'embedding', {
+        await optimizer.optimizeHNSWIndex(tableName, columnName, {
             m: config.m,
             efConstruction: config.ef,
         });
