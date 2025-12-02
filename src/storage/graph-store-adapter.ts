@@ -8,11 +8,18 @@
  * - トランザクション処理
  * - エラーハンドリングとリトライ
  *
+ * タスク2.2: Liteモード対応の拡張
+ * - OptionalStorageAdapterインターフェースの実装
+ * - Neo4j不在時の優雅な劣化
+ * - Liteモード対応の初期化ロジック
+ *
  * design.md の GraphStoreAdapter インターフェースに準拠
+ * 要件: 1.2, 2.2, 11.1
  */
 
 import neo4j, { Driver, ManagedTransaction } from 'neo4j-driver';
 import { randomUUID } from 'crypto';
+import type { OptionalStorageAdapter } from './optional-storage-adapter.js';
 
 /**
  * ノードID (通常はUUID)
@@ -312,6 +319,10 @@ export interface GraphStoreConfig {
   maxConnectionPoolSize?: number;
   /** 接続タイムアウト (ミリ秒, デフォルト: 30000) */
   connectionTimeout?: number;
+  /** Liteモードが有効かどうか (デフォルト: false) */
+  liteMode?: boolean;
+  /** グラフストアが有効かどうか (デフォルト: true) */
+  enabled?: boolean;
 }
 
 /**
@@ -482,10 +493,12 @@ export interface IGraphStoreAdapter {
 /**
  * グラフストアアダプター実装
  */
-export class GraphStoreAdapter implements IGraphStoreAdapter {
-  private driver: Driver;
+export class GraphStoreAdapter implements IGraphStoreAdapter, OptionalStorageAdapter {
+  private driver: Driver | null = null;
   private database: string;
   private closed: boolean = false;
+  private enabled: boolean = true;
+  private liteMode: boolean = false;
 
   // リトライポリシー設定
   private static readonly MAX_RETRIES = 3;
@@ -495,10 +508,69 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
 
   constructor(config: GraphStoreConfig) {
     this.database = config.database || 'neo4j';
-    this.driver = neo4j.driver(config.uri, neo4j.auth.basic(config.username, config.password), {
-      maxConnectionPoolSize: config.maxConnectionPoolSize || 50,
-      connectionTimeout: config.connectionTimeout || 30000,
-    });
+    this.liteMode = config.liteMode ?? false;
+    this.enabled = config.enabled ?? true;
+
+    // Liteモードまたは無効化されている場合は、ドライバーを初期化しない
+    if (!this.liteMode && this.enabled) {
+      try {
+        this.driver = neo4j.driver(config.uri, neo4j.auth.basic(config.username, config.password), {
+          maxConnectionPoolSize: config.maxConnectionPoolSize || 50,
+          connectionTimeout: config.connectionTimeout || 30000,
+        });
+      } catch (error) {
+        console.warn('Failed to initialize Neo4j driver:', error);
+        this.enabled = false;
+      }
+    } else {
+      console.info('GraphStoreAdapter: Running in Lite mode or disabled, Neo4j connection skipped');
+      this.enabled = false;
+    }
+  }
+
+  /**
+   * OptionalStorageAdapter: ストレージが利用可能かどうかを確認
+   * 
+   * @returns Neo4j接続が利用可能な場合true
+   */
+  isAvailable(): boolean {
+    return this.enabled && this.driver !== null && !this.closed;
+  }
+
+  /**
+   * OptionalStorageAdapter: ストレージを初期化
+   * 
+   * Liteモードまたは無効化されている場合は、警告をログに記録して正常に完了します。
+   */
+  async initialize(): Promise<void> {
+    if (!this.isAvailable()) {
+      if (this.liteMode) {
+        console.warn('GraphStoreAdapter: Lite mode enabled, graph store functionality disabled');
+      } else {
+        console.warn('GraphStoreAdapter: Neo4j not available, graph store functionality disabled');
+      }
+      return;
+    }
+
+    // 接続テストを実行
+    try {
+      await this.initializeConstraints();
+      console.info('GraphStoreAdapter: Successfully initialized');
+    } catch (error) {
+      console.error('GraphStoreAdapter: Failed to initialize:', error);
+      this.enabled = false;
+      throw error;
+    }
+  }
+
+  /**
+   * OptionalStorageAdapter: ストレージを優雅にシャットダウン
+   */
+  async gracefulShutdown(): Promise<void> {
+    if (this.driver && !this.closed) {
+      await this.close();
+      console.info('GraphStoreAdapter: Gracefully shut down');
+    }
   }
 
   /**
@@ -513,7 +585,7 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
     this.checkConnection();
 
     await this.executeWithRetry(async () => {
-      const session = this.driver.session({ database: this.database });
+      const session = this.driver!.session({ database: this.database });
       try {
         // edgeIdプロパティのユニーク制約を作成
         // Neo4j 4.4+ では FOR ()-[r]-() 構文を使用
@@ -691,6 +763,12 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
     if (this.closed) {
       throw new Error('GraphStoreAdapter has been closed');
     }
+    if (!this.isAvailable()) {
+      throw new Error('GraphStoreAdapter is not available (Lite mode or Neo4j not connected)');
+    }
+    if (!this.driver) {
+      throw new Error('Neo4j driver is not initialized');
+    }
   }
 
   /**
@@ -722,7 +800,7 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
     const nodeId = properties.id;
 
     await this.executeWithRetry(async () => {
-      const session = this.driver.session({ database: this.database });
+      const session = this.driver!.session({ database: this.database });
       try {
         const labelStr = this.formatLabels(label);
         // プロパティをサニタイズしてから formatProperties に渡す
@@ -742,7 +820,7 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
     this.checkConnection();
 
     return await this.executeWithRetry(async () => {
-      const session = this.driver.session({ database: this.database });
+      const session = this.driver!.session({ database: this.database });
       try {
         const result = await session.run('MATCH (n {id: $id}) RETURN n, labels(n) AS labels', {
           id,
@@ -780,7 +858,7 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
     }
 
     return await this.executeWithRetry(async () => {
-      const session = this.driver.session({ database: this.database });
+      const session = this.driver!.session({ database: this.database });
       try {
         // プロパティをサニタイズしてから Neo4j に渡す
         const sanitizedProps = this.sanitizeProperties(properties);
@@ -802,7 +880,7 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
     this.checkConnection();
 
     return await this.executeWithRetry(async () => {
-      const session = this.driver.session({ database: this.database });
+      const session = this.driver!.session({ database: this.database });
       try {
         // DETACH DELETE でノードとその関連するエッジを削除
         // 削除前にカウントを取得してから削除を実行
@@ -825,7 +903,7 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
     this.checkConnection();
 
     return await this.executeWithRetry(async () => {
-      const session = this.driver.session({ database: this.database });
+      const session = this.driver!.session({ database: this.database });
       try {
         return await session.executeWrite(work);
       } finally {
@@ -837,7 +915,9 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
   async close(): Promise<void> {
     if (!this.closed) {
       this.closed = true;
-      await this.driver.close();
+      if (this.driver) {
+        await this.driver.close();
+      }
     }
   }
 
@@ -871,7 +951,7 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
     const edgeId = this.generateEdgeId();
 
     await this.executeWithRetry(async () => {
-      const session = this.driver.session({ database: this.database });
+      const session = this.driver!.session({ database: this.database });
       try {
         // 4. 両ノードの存在確認
         const checkResult = await session.run(
@@ -930,7 +1010,7 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
     this.checkConnection();
 
     return await this.executeWithRetry(async () => {
-      const session = this.driver.session({ database: this.database });
+      const session = this.driver!.session({ database: this.database });
       try {
         const result = await session.run(
           `
@@ -983,7 +1063,7 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
     }
 
     return await this.executeWithRetry(async () => {
-      const session = this.driver.session({ database: this.database });
+      const session = this.driver!.session({ database: this.database });
       try {
         let query = '';
         if (direction === 'outgoing') {
@@ -1048,7 +1128,7 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
     this.checkConnection();
 
     return await this.executeWithRetry(async () => {
-      const session = this.driver.session({ database: this.database });
+      const session = this.driver!.session({ database: this.database });
       try {
         // 削除前にマッチ数をカウントし、その後削除する
         // edgeIdプロパティが存在する場合はそれでマッチング
@@ -1085,7 +1165,7 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
     this.checkConnection();
 
     return await this.executeWithRetry(async () => {
-      const session = this.driver.session({ database: this.database });
+      const session = this.driver!.session({ database: this.database });
       try {
         // ValidatedCypherPatternからパターン文字列とパラメータを取得
         const { pattern: patternStr, parameters: patternParams } = pattern;
@@ -1178,7 +1258,7 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
     const depth = Number.isInteger(maxDepth) && maxDepth > 0 && maxDepth <= 100 ? maxDepth : 5;
 
     return await this.executeWithRetry(async () => {
-      const session = this.driver.session({ database: this.database });
+      const session = this.driver!.session({ database: this.database });
       try {
         const result = await session.run(
           `
@@ -1247,7 +1327,7 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
     this.checkConnection();
 
     return await this.executeWithRetry(async () => {
-      const session = this.driver.session({ database: this.database });
+      const session = this.driver!.session({ database: this.database });
       try {
         // 次数中心性 (Degree Centrality) を計算
         // ノードの次数 (接続されているエッジ数) を全ノードの最大次数で正規化
@@ -1295,7 +1375,7 @@ export class GraphStoreAdapter implements IGraphStoreAdapter {
     this.checkConnection();
 
     return await this.executeWithRetry(async () => {
-      const session = this.driver.session({ database: this.database });
+      const session = this.driver!.session({ database: this.database });
       try {
         // 簡易的なコミュニティ検出: 連結成分を検出
         // 本格的な実装には Neo4j Graph Data Science ライブラリが必要だが、
