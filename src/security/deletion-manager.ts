@@ -515,7 +515,7 @@ export class DeletionManager {
    * 孤立した削除レコードを検出する（監査メカニズム）
    */
   async detectOrphanedDeletions(ageThresholdHours: number = 1): Promise<MemoryId[]> {
-    const threshold = new Date(Date.now() - ageThresholdHours * 60 * 60 * 1000);
+    const threshold = new Date(this.timeProvider.now().getTime() - ageThresholdHours * 60 * 60 * 1000);
     const orphans: MemoryId[] = [];
 
     for (const log of this.auditLogs.values()) {
