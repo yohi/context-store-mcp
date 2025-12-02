@@ -37,7 +37,7 @@ export class ConfigManager {
     // Parse PostgreSQL configuration (required)
     const postgres = {
       host: process.env['POSTGRES_HOST'] || 'localhost',
-      port: parseInt(process.env['POSTGRES_PORT'] || '5432', 10),
+      port: this.parseIntEnv('POSTGRES_PORT', 5432),
       database: process.env['POSTGRES_DB'] || 'context_store',
       user: process.env['POSTGRES_USER'] || 'context_store_user',
       password: process.env['POSTGRES_PASSWORD'] || '',
@@ -54,7 +54,7 @@ export class ConfigManager {
     // Parse Redis configuration (optional in Lite mode)
     const redis = enableRedisCache ? {
       host: process.env['REDIS_HOST'] || 'localhost',
-      port: parseInt(process.env['REDIS_PORT'] || '6379', 10),
+      port: this.parseIntEnv('REDIS_PORT', 6379),
       ...(process.env['REDIS_PASSWORD'] && { password: process.env['REDIS_PASSWORD'] }),
     } : undefined;
 
@@ -207,6 +207,31 @@ export class ConfigManager {
     }
 
     return normalized === 'true' || normalized === '1' || normalized === 'yes';
+  }
+
+  /**
+   * Parse integer environment variable
+   * @param key Environment variable key
+   * @param defaultValue Default value if not set or invalid
+   * @returns Parsed integer value
+   */
+  private parseIntEnv(key: string, defaultValue: number): number {
+    const value = process.env[key];
+    
+    if (value === undefined) {
+      return defaultValue;
+    }
+    
+    const parsed = parseInt(value, 10);
+    
+    if (isNaN(parsed)) {
+      console.warn(
+        `Invalid integer value for ${key}: "${value}". Using default: ${defaultValue}`
+      );
+      return defaultValue;
+    }
+    
+    return parsed;
   }
 
   /**

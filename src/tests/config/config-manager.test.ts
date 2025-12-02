@@ -115,6 +115,28 @@ describe('ConfigManager', () => {
     });
   });
 
+  describe('Integer Environment Variable Parsing', () => {
+    it('should parse valid integer', () => {
+      process.env['POSTGRES_PORT'] = '9999';
+      const config = new ConfigManager();
+      expect(config.getConfig().postgres.port).toBe(9999);
+    });
+
+    it('should use default value for invalid integer', () => {
+      process.env['POSTGRES_PORT'] = 'invalid-port';
+      const config = new ConfigManager();
+      // Default is 5432
+      expect(config.getConfig().postgres.port).toBe(5432);
+    });
+
+    it('should use default value for undefined integer', () => {
+      delete process.env['POSTGRES_PORT'];
+      const config = new ConfigManager();
+      // Default is 5432
+      expect(config.getConfig().postgres.port).toBe(5432);
+    });
+  });
+
   describe('Embedding Provider Configuration', () => {
     it('should default to OpenAI provider', () => {
       delete process.env['EMBEDDING_PROVIDER'];
@@ -163,6 +185,13 @@ describe('ConfigManager', () => {
 
   describe('PostgreSQL Configuration', () => {
     it('should use default PostgreSQL values', () => {
+      // Ensure environment variables don't interfere with default values
+      delete process.env['POSTGRES_HOST'];
+      delete process.env['POSTGRES_PORT'];
+      delete process.env['POSTGRES_DB'];
+      delete process.env['POSTGRES_USER'];
+      delete process.env['POSTGRES_PASSWORD'];
+
       const config = new ConfigManager();
       const systemConfig = config.getConfig();
       
