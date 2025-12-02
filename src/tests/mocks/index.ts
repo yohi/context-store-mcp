@@ -218,8 +218,9 @@ export class MockMemoryClassifierService implements MemoryClassifierService {
   });
   getConfidenceScore = vi.fn().mockImplementation(async (_content: string, _type: MemoryType) => 0.8);
   trainClassifier = vi.fn().mockImplementation(async (_samples: TrainingSample[]) => undefined);
-  generateEmbedding = vi.fn().mockImplementation(async (content: string) => {
+  generateEmbedding = vi.fn().mockImplementation(async (content: string): Promise<number[] | null> => {
     // Return a consistent mock embedding for any content
+    // Tests can override this to return null if needed
     return [0.1, 0.2, 0.3, content.length * 0.01]; // Simple deterministic embedding
   });
   evaluateAccuracy = vi.fn().mockImplementation(async (_testSamples: LabeledSample[]) => ({

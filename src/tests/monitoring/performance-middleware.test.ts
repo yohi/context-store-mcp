@@ -53,7 +53,7 @@ describe('PerformanceMiddleware', () => {
 
   describe('createPerformanceMiddleware', () => {
     it('ミドルウェアとして機能する', async () => {
-      const middleware = createPerformanceMiddleware(metrics, (req) => req.method);
+      const middleware = createPerformanceMiddleware(metrics, (req) => (req as any).method);
       const next = vi.fn().mockResolvedValue('response');
       const wrappedNext = middleware(next);
 

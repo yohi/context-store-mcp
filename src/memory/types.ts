@@ -169,7 +169,7 @@ export interface MemoryClassifierService {
   classifyContent(content: string): Promise<MemoryClassification>;
   getConfidenceScore(content: string, type: MemoryType): Promise<number>;
   trainClassifier(samples: TrainingSample[]): Promise<void>;
-  generateEmbedding(content: string): Promise<number[]>; // 新しく追加
+  generateEmbedding(content: string): Promise<number[] | null>; // 埋め込み生成、失敗時はnull
 
   // 精度測定
   evaluateAccuracy(testSamples: LabeledSample[]): Promise<AccuracyMetrics>;
