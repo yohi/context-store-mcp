@@ -22,7 +22,7 @@ import type {
 } from './types.js';
 
 import { Pool } from 'pg';
-import type { VectorStoreAdapter } from '../storage/vector-store-adapter.js';
+import type { VectorStoreAdapter, SearchOptions, EnhancedSearchResult } from '../storage/vector-store-adapter.js';
 import type { GraphStoreAdapter } from '../storage/graph-store-adapter.js';
 import type { TransactionCoordinator } from '../storage/transaction-coordinator.js';
 import type { StorageAdapter } from '../storage/storage-adapter.js';
@@ -435,6 +435,19 @@ export class MemoryManager implements MemoryManagerService {
   }
 
   /**
+   * IDで記憶を取得する
+   * 要件: 1.2 (検索と取得)
+   */
+  async getMemory(id: MemoryId): Promise<Memory | null> {
+    try {
+      return await this.storage.getMemory(id);
+    } catch (error) {
+      console.error(`Failed to get memory ${id}:`, error);
+      return null;
+    }
+  }
+
+  /**
    * 論理削除された記憶を復元する（内部使用のみ）
    * 
    * このメソッドは、updateMemoryの保護フィールドフィルタリングをバイパスして、
@@ -565,45 +578,45 @@ export class MemoryManager implements MemoryManagerService {
       const results = await this.vectorStore.searchSimilar(content, limit);
       const memories: Memory[] = [];
 
-        for (const r of results) {
-          try {
-            // storeMemoryと同じ検証/正規化パイプラインを通してメタデータを処理
-            const processedMetadata = this.processMetadata(r.metadata as MemoryMetadata);
+      for (const r of results) {
+        try {
+          // storeMemoryと同じ検証/正規化パイプラインを通してメタデータを処理
+          const processedMetadata = this.processMetadata(r.metadata as MemoryMetadata);
 
-            // 単一の信頼できる情報源を維持するためにメタデータからmemoryTypeを抽出して削除
-            const { memoryType: metadataType, ...metadataWithoutType } =
-              processedMetadata as MemoryMetadata & { memoryType?: MemoryType };
+          // 単一の信頼できる情報源を維持するためにメタデータからmemoryTypeを抽出して削除
+          const { memoryType: metadataType, ...metadataWithoutType } =
+            processedMetadata as MemoryMetadata & { memoryType?: MemoryType };
 
-            // 記憶タイプの決定: metadata.memoryTypeを優先、'semantic'にフォールバック
-            const memoryType = metadataType || (r.metadata?.memoryType as MemoryType) || 'semantic';
+          // 記憶タイプの決定: metadata.memoryTypeを優先、'semantic'にフォールバック
+          const memoryType = metadataType || (r.metadata?.memoryType as MemoryType) || 'semantic';
 
-            memories.push({
-              id: r.id,
-              content: r.content,
-              memoryType,
-              metadata: metadataWithoutType,
-              createdAt: r.createdAt,
-              updatedAt: r.updatedAt,
-              lastAccessedAt: r.lastAccessedAt || new Date(),
-              accessCount: r.accessCount || 0,
-              importanceScore: r.importanceScore || 0,
-              isDeleted: false,
-              isProtected: false,
-              version: r.version || 1,
-              deletedAt: null,
-            });
-          } catch (error) {
-            // 無効な結果をスキップし、エラーをログに記録
-            console.warn(`Skipping invalid search result for memory ${r.id}:`, error);
-            continue;
-          }
+          memories.push({
+            id: r.id,
+            content: r.content,
+            memoryType,
+            metadata: metadataWithoutType,
+            createdAt: r.createdAt,
+            updatedAt: r.updatedAt,
+            lastAccessedAt: r.lastAccessedAt || new Date(),
+            accessCount: r.accessCount || 0,
+            importanceScore: r.importanceScore || 0,
+            isDeleted: false,
+            isProtected: false,
+            version: r.version || 1,
+            deletedAt: null,
+          });
+        } catch (error) {
+          // 無効な結果をスキップし、エラーをログに記録
+          console.warn(`Skipping invalid search result for memory ${r.id}:`, error);
+          continue;
         }
-
-        return memories;
-      } catch (error) {
-        console.error('Vector search failed:', error);
-        return [];
       }
+
+      return memories;
+    } catch (error) {
+      console.error('Vector search failed:', error);
+      return [];
+    }
   }
 
   /**
@@ -678,14 +691,14 @@ export class MemoryManager implements MemoryManagerService {
     for (const [, item] of candidates) {
       let finalScore = item.score;
 
-        // タグ重複のブースト (+0.15)
-        if (this.calculateTagOverlap(target.metadata.tags, item.memory.metadata.tags)) {
-          finalScore += 0.15;
-        }
-        // 時間的近接性のブースト (+0.10)
-        if (item.memory.lastAccessedAt && target.lastAccessedAt && this.checkTimeProximity(target.lastAccessedAt, item.memory.lastAccessedAt)) {
-          finalScore += 0.10;
-        }
+      // タグ重複のブースト (+0.15)
+      if (this.calculateTagOverlap(target.metadata.tags, item.memory.metadata.tags)) {
+        finalScore += 0.15;
+      }
+      // 時間的近接性のブースト (+0.10)
+      if (item.memory.lastAccessedAt && target.lastAccessedAt && this.checkTimeProximity(target.lastAccessedAt, item.memory.lastAccessedAt)) {
+        finalScore += 0.10;
+      }
 
       // 閾値を確認
       if (finalScore >= threshold) {
@@ -1214,6 +1227,55 @@ export class MemoryManager implements MemoryManagerService {
    * 要件: 3.6 (タイプフィルタリング機能)
    */
   async searchMemories(params: SearchParams): Promise<Memory[]> {
+    // クエリがあり、VectorStoreが利用可能な場合はベクトル検索を使用
+    if (params.query && this.vectorStore) {
+      try {
+        const filter: any = {};
+        if (params.tags) {
+          filter.tags = params.tags;
+        }
+        if (params.memoryTypes && params.memoryTypes.length > 0) {
+          filter.memoryType = params.memoryTypes[0];
+        }
+
+        const options: SearchOptions = {
+          limit: params.limit ?? 10, // デフォルト値を設定
+          filter,
+          minSimilarity: 0.6, // デフォルトの閾値
+        };
+
+        const results: EnhancedSearchResult[] = await this.vectorStore.searchSimilarAdvanced(params.query, options);
+
+        return results.map(r => {
+          // メタデータを処理
+          const processedMetadata = this.processMetadata(r.metadata as MemoryMetadata);
+          const { memoryType: metadataType, ...metadataWithoutType } =
+            processedMetadata as MemoryMetadata & { memoryType?: MemoryType };
+
+          const memoryType = metadataType || (r.metadata?.memoryType as MemoryType) || 'semantic';
+
+          return {
+            id: r.id,
+            content: r.content,
+            memoryType,
+            metadata: metadataWithoutType,
+            createdAt: r.createdAt,
+            updatedAt: r.updatedAt,
+            lastAccessedAt: r.lastAccessedAt || new Date(),
+            accessCount: r.accessCount || 0,
+            importanceScore: r.importanceScore || 0,
+            isDeleted: false,
+            isProtected: false,
+            version: r.version || 1,
+            deletedAt: null,
+          };
+        });
+      } catch (error) {
+        console.error('Vector search failed, falling back to basic search:', error);
+        // フォールバックして下の基本検索を実行
+      }
+    }
+
     try {
       return await this.storage.searchMemories(params);
     } catch (error) {

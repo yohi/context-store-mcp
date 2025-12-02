@@ -28,10 +28,10 @@ describe('Memory Persistence Integration Tests', () => {
         // データベースをクリーンアップ
         await cleanupDatabase(pool, driver || undefined);
 
-        // MemoryManagerを作成（TransactionCoordinatorなし）
+        // MemoryManagerを作成（TransactionCoordinatorあり）
         memoryManager = await createTestMemoryManager(pool, driver || undefined, {
             includeVectorStore: false,
-            includeTransactionCoordinator: false,
+            includeTransactionCoordinator: true,
         });
     });
 

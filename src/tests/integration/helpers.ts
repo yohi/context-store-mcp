@@ -83,6 +83,9 @@ export async function createTestMemoryManager(
 
     // TransactionCoordinatorの作成（オプション）
     let transactionCoordinator: TransactionCoordinator | undefined;
+    if (includeTransactionCoordinator && !driver) {
+        throw new Error('TransactionCoordinator requested but Neo4j driver is not available.');
+    }
     if (includeTransactionCoordinator && driver) {
         transactionCoordinator = new TransactionCoordinator({
             postgresPool: pool,
