@@ -147,7 +147,7 @@ export class MemoryClassifier implements MemoryClassifierService {
 
     // primaryTypeに対応する埋め込みスコアをfeaturesに反映
     const primaryEmbeddingScore = await this.calculateEmbeddingScore(content, primaryType);
-    features.embeddingScore = primaryEmbeddingScore;
+    features.embeddingScore = primaryEmbeddingScore ?? 0;
 
     // 低信頼度(<0.6)は仕様通り semantic へフォールバック
     if (confidence < 0.6) {
@@ -512,8 +512,8 @@ export class MemoryClassifier implements MemoryClassifierService {
     // 埋め込みベーススコア
     const embeddingScore = await this.calculateEmbeddingScore(content, 'episodic');
 
-    // 埋め込みが利用できない場合(embeddingScore === 0)はルールベースのみを使用
-    if (embeddingScore === 0.0 && !this.openaiClient) {
+    // 埋め込みが利用できない場合(embeddingScore === null)はルールベースのみを使用
+    if (embeddingScore === null) {
       return ruleScore;
     }
 
@@ -540,7 +540,7 @@ export class MemoryClassifier implements MemoryClassifierService {
     const embeddingScore = await this.calculateEmbeddingScore(content, 'semantic');
 
     // 埋め込みが利用できない場合はルールベースのみを使用
-    if (embeddingScore === 0.0 && !this.openaiClient) {
+    if (embeddingScore === null) {
       return ruleScore;
     }
 
@@ -566,7 +566,7 @@ export class MemoryClassifier implements MemoryClassifierService {
     const embeddingScore = await this.calculateEmbeddingScore(content, 'procedural');
 
     // 埋め込みが利用できない場合はルールベースのみを使用
-    if (embeddingScore === 0.0 && !this.openaiClient) {
+    if (embeddingScore === null) {
       return ruleScore;
     }
 
@@ -575,10 +575,11 @@ export class MemoryClassifier implements MemoryClassifierService {
 
   /**
    * 埋め込みベースのスコア計算（centroidとのコサイン類似度）
+   * 失敗時はnullを返し、呼び出し側でrule-basedスコアのみを使用する
    */
-  private async calculateEmbeddingScore(content: string, type: MemoryType): Promise<number> {
+  private async calculateEmbeddingScore(content: string, type: MemoryType): Promise<number | null> {
     if (!this.pool || !this.openaiClient) {
-      return 0.0; // Fallback to rule-based only
+      return null; // Fallback to rule-based only
     }
 
     try {
@@ -592,11 +593,11 @@ export class MemoryClassifier implements MemoryClassifierService {
       );
 
       if (result.rows.length === 0) {
-        return 0.0;
+        return null;
       }
 
       const centroidData = result.rows[0]?.centroid;
-      if (!centroidData) return 0.0;
+      if (!centroidData) return null;
 
       // pgvectorの文字列または配列をパース
       const centroid = this.parsePgvector(centroidData);
@@ -608,7 +609,7 @@ export class MemoryClassifier implements MemoryClassifierService {
       return Math.max(0, Math.min(1, (similarity + 1) / 2));
     } catch (error) {
       console.error(`Failed to calculate embedding score for ${type}:`, error);
-      return 0.0;
+      return null;
     }
   }
 
