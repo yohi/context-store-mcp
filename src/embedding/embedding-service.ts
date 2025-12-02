@@ -122,8 +122,15 @@ export class EmbeddingService {
   /**
    * Get the current provider type
    */
-  getProviderType(): string {
-    return this.config.provider;
+  getProviderType(): string | null {
+    if (this.provider) {
+      // If a provider instance exists, return the configured provider type.
+      // This implicitly tells us which provider type was successfully initialized.
+      return this.config.provider;
+    }
+    // If no provider instance was successfully created, return null.
+    // Callers should check isConfigured() or handle this null value.
+    return null;
   }
 
   /**
