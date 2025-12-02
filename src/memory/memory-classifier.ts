@@ -303,7 +303,7 @@ export class MemoryClassifier implements MemoryClassifierService {
              sample_count = EXCLUDED.sample_count,
              last_updated = NOW();
            `,
-            [this.toPgvector(centroid), result.rows.length, type]
+            [this.toPgvector(centroid), embeddings.length, type]
           );
         }
 
