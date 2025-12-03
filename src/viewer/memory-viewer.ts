@@ -57,6 +57,12 @@ export class MemoryViewer {
    * 要件9.5: WHEN ビューアがアクセスされる THEN システムはユーザーデータを保護するために認証を要求しなければならない
    */
   private setupAuth(): void {
+    if (!this.config.authToken || this.config.authToken.trim() === '') {
+      throw new Error('Authentication is enabled but authToken is missing or empty');
+    }
+
+    const expectedToken = this.config.authToken;
+
     this.app.use((req: Request, res: Response, next: NextFunction) => {
       // ヘルスチェックエンドポイントは認証不要
       if (req.path === '/health') {
@@ -69,11 +75,16 @@ export class MemoryViewer {
       }
 
       const token = authHeader.split(' ')[1];
-      const expectedToken = this.config.authToken || '';
 
-      if (!token ||
-        token.length !== expectedToken.length ||
-        !timingSafeEqual(Buffer.from(token), Buffer.from(expectedToken))) {
+      if (!token) {
+        return res.status(401).json({ error: 'Unauthorized: Invalid token' });
+      }
+
+      const tokenBuf = Buffer.from(token);
+      const expectedBuf = Buffer.from(expectedToken);
+
+      if (tokenBuf.length !== expectedBuf.length ||
+        !timingSafeEqual(tokenBuf, expectedBuf)) {
         return res.status(401).json({ error: 'Unauthorized: Invalid token' });
       }
 
@@ -189,13 +200,7 @@ export class MemoryViewer {
       [limit, offset]
     );
 
-    const memories: MemoryDisplay[] = result.rows.map((row) => ({
-      id: row.id,
-      content: row.content,
-      metadata: typeof row.metadata === 'string' ? this.safeJsonParse(row.metadata) : row.metadata,
-      createdAt: new Date(row.created_at),
-      updatedAt: new Date(row.updated_at),
-    }));
+    const memories: MemoryDisplay[] = result.rows.map((row) => this.mapRowToMemoryDisplay(row));
 
     return {
       memories,
@@ -262,14 +267,7 @@ export class MemoryViewer {
       [query, limit, offset]
     );
 
-    const results = result.rows.map((row) => ({
-      id: row.id,
-      content: row.content,
-      metadata: typeof row.metadata === 'string' ? this.safeJsonParse(row.metadata) : row.metadata,
-      createdAt: new Date(row.created_at),
-      updatedAt: new Date(row.updated_at),
-      similarity: parseFloat(row.rank),
-    }));
+    const results = result.rows.map((row) => this.mapRowToMemoryDisplay(row));
 
     return { results, total };
   }
@@ -317,6 +315,36 @@ export class MemoryViewer {
   }
 
   /**
+   * DBの行をMemoryDisplay形式に変換するヘルパーメソッド
+   */
+  private mapRowToMemoryDisplay(row: any): MemoryDisplay {
+    let metadata = row.metadata;
+
+    if (typeof metadata === 'string') {
+      metadata = this.safeJsonParse(metadata);
+    }
+
+    // nullまたはundefinedの場合は空オブジェクトにする
+    if (metadata === null || metadata === undefined) {
+      metadata = {};
+    }
+
+    const display: MemoryDisplay = {
+      id: row.id,
+      content: row.content,
+      metadata: metadata,
+      createdAt: new Date(row.created_at),
+      updatedAt: new Date(row.updated_at),
+    };
+
+    if (row.rank !== undefined && row.rank !== null) {
+      display.similarity = parseFloat(row.rank);
+    }
+
+    return display;
+  }
+
+  /**
    * JSONを安全にパースするヘルパーメソッド
    */
   private safeJsonParse(value: string): any {
@@ -324,7 +352,7 @@ export class MemoryViewer {
       return JSON.parse(value);
     } catch (e) {
       console.warn('Failed to parse JSON metadata:', e);
-      return null;
+      return {};
     }
   }
 }
