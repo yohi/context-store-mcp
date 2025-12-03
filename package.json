@@ -65,6 +65,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.6",
+    "@types/express": "^5.0.6",
+    "express": "^5.2.1",
     "neo4j-driver": "^5.27.1",
     "openai": "^6.5.0",
     "pg": "^8.14.0",
