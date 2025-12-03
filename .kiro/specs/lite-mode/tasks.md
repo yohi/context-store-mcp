@@ -144,8 +144,8 @@
   - **プロパティ16: 重複防止**
   - **検証: 要件 5.5**
 
-- [ ] 7. Desktop App、AI IDE、CLIエージェントコレクターの実装
-- [ ] 7.1 DesktopAppCollectorクラスの実装
+- [x] 7. Desktop App、AI IDE、CLIエージェントコレクターの実装
+- [x] 7.1 DesktopAppCollectorクラスの実装
   - AI Desktop App（Claude Desktop、ChatGPT Desktopなど）のログフォーマット解析
   - JSON形式のログエントリ処理
   - _要件: 3.1, 3.4, 4.1_
@@ -158,7 +158,7 @@
   - **プロパティ7: 解析エラーの継続動作**
   - **検証: 要件 3.6**
 
-- [ ] 7.4 AIIDECollectorクラスの実装
+- [x] 7.4 AIIDECollectorクラスの実装
   - AI IDE（Cursor、Windsurf、Copilot、Clineなど）のログフォーマット解析
   - JSON形式とプレーンテキスト形式の両方をサポート
   - _要件: 3.2, 3.4, 4.2_
@@ -167,7 +167,7 @@
   - AI IDE固有のログフォーマット解析の確認
   - _要件: 3.2_
 
-- [ ] 7.6 CLIAgentCollectorクラスの実装
+- [x] 7.6 CLIAgentCollectorクラスの実装
   - CLIエージェント（ClaudeCode、GeminiCLI、CodexCLI、CursorCLIなど）のログフォーマット解析
   - JSON形式とプレーンテキスト形式の両方をサポート
   - _要件: 3.3, 3.4, 4.3_
@@ -176,7 +176,7 @@
   - CLIエージェント固有のログフォーマット解析の確認
   - _要件: 3.3_
 
-- [ ] 7.8 自動タグ付けロジックの実装
+- [x] 7.8 自動タグ付けロジックの実装
   - ソースタグ（source:claude-desktop, source:chatgpt-desktop, source:cursor, source:windsurf, source:claude-code, source:gemini-cliなど）
   - プロジェクトタグ（project:{project_name}）
   - エピソード記憶タイプの分類
