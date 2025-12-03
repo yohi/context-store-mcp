@@ -31,6 +31,7 @@
     "benchmark": "tsx scripts/benchmark.ts",
     "health-check": "tsx scripts/health-check.ts",
     "validate-config": "tsx scripts/validate-configuration.ts",
+    "generate-config": "tsx scripts/generate-mcp-config.ts",
     "security-audit": "npm audit --production --audit-level=high"
   },
   "keywords": [
