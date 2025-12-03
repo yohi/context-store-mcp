@@ -180,7 +180,7 @@ export class DesktopAppCollector extends BaseCollector {
 
     for (const field of timestampFields) {
       const value = log[field];
-      if (value) {
+      if (value != null) {
         // Try to parse as date
         if (typeof value === 'string' || typeof value === 'number') {
           const date = new Date(value);

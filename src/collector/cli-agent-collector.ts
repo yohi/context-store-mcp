@@ -317,7 +317,7 @@ export class CLIAgentCollector extends BaseCollector {
 
     for (const field of timestampFields) {
       const value = log[field];
-      if (value) {
+      if (value != null) {
         if (typeof value === 'string' || typeof value === 'number') {
           const date = new Date(value);
           if (!isNaN(date.getTime())) {
