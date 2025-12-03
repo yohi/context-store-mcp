@@ -37,10 +37,32 @@ interface CollectorInstance {
 async function main() {
   logger.info('Starting Desktop App Collectors...');
 
+  // Validate required environment variables
+  if (!process.env.POSTGRES_PASSWORD) {
+    logger.error('POSTGRES_PASSWORD environment variable is required');
+    process.exit(1);
+  }
+
+  // Parse and validate POSTGRES_PORT
+  const portStr = (process.env.POSTGRES_PORT || '5432').trim();
+  const port = parseInt(portStr, 10);
+  if (isNaN(port) || port < 1 || port > 65535) {
+    logger.error(`Invalid POSTGRES_PORT: ${portStr}. Using default port 5432.`);
+  }
+  const validPort = isNaN(port) || port < 1 || port > 65535 ? 5432 : port;
+
+  // Parse and validate COLLECTOR_POLL_INTERVAL
+  const pollIntervalStr = (process.env.COLLECTOR_POLL_INTERVAL || '1000').trim();
+  const parsedPollInterval = parseInt(pollIntervalStr, 10);
+  const pollInterval = isNaN(parsedPollInterval) || parsedPollInterval <= 0 ? 1000 : parsedPollInterval;
+  if (isNaN(parsedPollInterval) || parsedPollInterval <= 0) {
+    logger.warn(`Invalid COLLECTOR_POLL_INTERVAL: ${pollIntervalStr}. Using default 1000ms.`);
+  }
+
   // Initialize database connection
   const pool = new Pool({
     host: process.env.POSTGRES_HOST || 'localhost',
-    port: parseInt(process.env.POSTGRES_PORT || '5432'),
+    port: validPort,
     database: process.env.POSTGRES_DB || 'context_store',
     user: process.env.POSTGRES_USER || 'context_store_user',
     password: process.env.POSTGRES_PASSWORD,
@@ -50,7 +72,6 @@ async function main() {
   const memoryManager = new MemoryManager({ storage });
 
   const collectors: CollectorInstance[] = [];
-  const pollInterval = parseInt(process.env.COLLECTOR_POLL_INTERVAL || '1000');
 
   // Claude Desktop Collector
   const claudeDesktopLogPath = process.env.COLLECTOR_CLAUDE_DESKTOP_LOG_PATH;
