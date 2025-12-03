@@ -98,6 +98,9 @@ class MCPConfigGenerator {
       env.ENABLE_REDIS_CACHE = 'false';
     }
 
+    // Conditional network host argument (only for Linux)
+    const networkArgs = os.platform() === 'linux' ? ['--network', 'host'] : [];
+
     return {
       mcpServers: {
         'context-store': {
@@ -106,7 +109,7 @@ class MCPConfigGenerator {
             'run',
             '--rm',
             '-i',
-            '--network', 'host',
+            ...networkArgs,
             '-e', 'POSTGRES_HOST',
             '-e', 'POSTGRES_PORT',
             '-e', 'POSTGRES_USER',
@@ -283,6 +286,10 @@ function main() {
     const arg = args[i];
     
     if (arg === '--mode' || arg === '-m') {
+      if (i + 1 >= args.length || args[i + 1].startsWith('-')) {
+        console.error('Error: --mode requires a value (docker or local)');
+        process.exit(1);
+      }
       const value = args[++i];
       if (value !== 'docker' && value !== 'local') {
         console.error('Error: --mode must be either "docker" or "local"');
@@ -290,8 +297,16 @@ function main() {
       }
       mode = value;
     } else if (arg === '--output' || arg === '-o') {
+      if (i + 1 >= args.length || args[i + 1].startsWith('-')) {
+        console.error('Error: --output requires a file path');
+        process.exit(1);
+      }
       outputPath = args[++i];
     } else if (arg === '--client' || arg === '-c') {
+      if (i + 1 >= args.length || args[i + 1].startsWith('-')) {
+        console.error('Error: --client requires a value (claude-desktop, cursor, generic)');
+        process.exit(1);
+      }
       const value = args[++i];
       if (value !== 'claude-desktop' && value !== 'cursor' && value !== 'generic') {
         console.error('Error: --client must be one of: claude-desktop, cursor, generic');

@@ -496,7 +496,7 @@ npm run dev  # tsx watchでデバッグ情報を表示
 
 問題が解決しない場合：
 
-1. **GitHubでIssueを作成**: [Issues](https://github.com/your-org/context-store-mcp/issues)
+1. **GitHubでIssueを作成**: [Issues](https://github.com/yohi/context-store-mcp/issues)
 2. **ログファイルを添付**: `logs/error.log`の関連部分
 3. **環境情報を提供**:
    ```bash
@@ -516,6 +516,6 @@ npm run dev  # tsx watchでデバッグ情報を表示
 ## 関連ドキュメント
 
 - [README.md](../README.md) - 基本的なセットアップ
-- [Lite Mode要件](.kiro/specs/lite-mode/requirements.md) - 要件定義
-- [Lite Mode設計](.kiro/specs/lite-mode/design.md) - 技術設計
+- [Lite Mode要件](../.kiro/specs/lite-mode/requirements.md) - 要件定義
+- [Lite Mode設計](../.kiro/specs/lite-mode/design.md) - 技術設計
 - [マイグレーションガイド](../scripts/LITE_MODE_MIGRATION.md) - 移行手順

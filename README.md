@@ -46,7 +46,7 @@ npm run generate-config -- --lite-mode --client claude-desktop
 npm run dev
 ```
 
-詳細は [Lite Mode セクション](#lite-mode-軽量モード) を参照してください。
+詳細は [Lite Mode セクション](#lite-mode) を参照してください。
 
 ### 開発環境（フルモード）
 
@@ -100,7 +100,7 @@ cp .env.production.example .env.production
 
 詳細は [QUICK_START.md](./QUICK_START.md) を参照してください。
 
-## 💡 Lite Mode（軽量モード）
+## 💡 Lite Mode
 
 Lite Modeは、個人用PCで効率的に実行できる軽量動作モードです。PostgreSQLのみを使用し、Neo4jとRedisへの依存を排除します。
 
@@ -245,7 +245,7 @@ ENABLE_REDIS_CACHE=true
 docker-compose --profile full up -d
 
 # 3. サーバーを再起動
-npm restart
+npm run start
 ```
 
 既存のPostgreSQLデータはそのまま使用できます。
