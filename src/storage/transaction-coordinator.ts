@@ -24,6 +24,14 @@ export interface MemoryEntity {
   content: string;
   memoryType: MemoryType;
   metadata: MemoryMetadata;
+  // Lite mode metadata for duplicate detection and filtering
+  lite_mode_metadata?: {
+    contentHash?: string;
+    source?: string;
+    sourceType?: string;
+    project?: string;
+    [key: string]: unknown;
+  };
 }
 
 /**
@@ -392,10 +400,16 @@ export class TransactionCoordinator {
    */
   private async insertIntoPostgreSQLOrThrow(memory: MemoryEntity): Promise<number> {
     const result = await this.config.postgresPool.query(
-      `INSERT INTO memories (id, content, memory_type, metadata, created_at, updated_at, sync_status)
-       VALUES ($1, $2, $3, $4, NOW(), NOW(), 'synced')
+      `INSERT INTO memories (id, content, memory_type, metadata, lite_mode_metadata, created_at, updated_at, sync_status)
+       VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), 'synced')
        ON CONFLICT (id) DO NOTHING`, // べき等性: 既存の場合は何もしない
-      [memory.id, memory.content, memory.memoryType, JSON.stringify(memory.metadata)]
+      [
+        memory.id,
+        memory.content,
+        memory.memoryType,
+        JSON.stringify(memory.metadata),
+        memory.lite_mode_metadata ? JSON.stringify(memory.lite_mode_metadata) : '{}',
+      ]
     );
     return result.rowCount ?? 0;
   }
@@ -408,9 +422,15 @@ export class TransactionCoordinator {
   private async updateIntoPostgreSQLOrThrow(memory: MemoryEntity): Promise<number> {
     const result = await this.config.postgresPool.query(
       `UPDATE memories 
-       SET content = $2, memory_type = $3, metadata = $4, updated_at = NOW(), sync_status = 'synced'
+       SET content = $2, memory_type = $3, metadata = $4, lite_mode_metadata = $5, updated_at = NOW(), sync_status = 'synced'
        WHERE id = $1`,
-      [memory.id, memory.content, memory.memoryType, JSON.stringify(memory.metadata)]
+      [
+        memory.id,
+        memory.content,
+        memory.memoryType,
+        JSON.stringify(memory.metadata),
+        memory.lite_mode_metadata ? JSON.stringify(memory.lite_mode_metadata) : '{}',
+      ]
     );
     return result.rowCount ?? 0;
   }

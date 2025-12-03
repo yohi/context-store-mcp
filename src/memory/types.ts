@@ -68,6 +68,15 @@ export interface StoreMemoryParams {
   content: string;
   memoryType?: MemoryType; // オプション、デフォルトは 'semantic'
   metadata?: MemoryMetadata;
+  // Lite mode metadata for duplicate detection and filtering
+  // This is stored in a separate DB column (lite_mode_metadata) for efficient querying
+  lite_mode_metadata?: {
+    contentHash?: string;
+    source?: string;
+    sourceType?: string;
+    project?: string;
+    [key: string]: unknown;
+  };
 }
 
 // 既存の記憶を更新するためのパラメータ

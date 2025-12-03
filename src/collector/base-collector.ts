@@ -309,6 +309,13 @@ export abstract class BaseCollector {
         sourceType: this.config.sourceType,
         ...(entry.projectContext ? { project: entry.projectContext } : {}),
       },
+      // Explicit lite_mode_metadata for DB column storage (used by duplicate-prevention queries)
+      lite_mode_metadata: {
+        contentHash: hashMetadata.contentHash,
+        source: this.config.source,
+        sourceType: this.config.sourceType,
+        ...(entry.projectContext ? { project: entry.projectContext } : {}),
+      },
     };
 
     try {
