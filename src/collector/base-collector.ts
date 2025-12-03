@@ -191,6 +191,17 @@ export abstract class BaseCollector {
       // Read file content
       const content = await readFile(this.config.logPath, 'utf-8');
 
+      // Detect log rotation/truncation: if file size is smaller than last position,
+      // treat it as a new file and reset position to 0
+      if (content.length < this.lastPosition) {
+        logger.info('Log rotation detected, resetting position', {
+          source: this.config.source,
+          previousPosition: this.lastPosition,
+          currentFileSize: content.length,
+        });
+        this.lastPosition = 0;
+      }
+
       // Only process new content since last position
       if (content.length <= this.lastPosition) {
         return;
@@ -266,12 +277,10 @@ export abstract class BaseCollector {
         source: this.config.source,
         contentHash: hashMetadata.contentHash,
       });
+      // Treat duplicates as already-processed (success) to avoid retries
       return {
-        success: false,
-        error: {
-          type: 'STORAGE_ERROR',
-          message: 'Duplicate entry detected',
-        },
+        success: true,
+        value: '', // Empty string as no new memory was created
       };
     }
 
