@@ -32,6 +32,10 @@
     "health-check": "tsx scripts/health-check.ts",
     "validate-config": "tsx scripts/validate-configuration.ts",
     "generate-config": "tsx scripts/generate-mcp-config.ts",
+    "collector:desktop-app": "tsx scripts/start-desktop-app-collector.ts",
+    "collector:ai-ide": "tsx scripts/start-ai-ide-collector.ts",
+    "collector:cli-agent": "tsx scripts/start-cli-agent-collector.ts",
+    "migrate:lite-mode": "tsx scripts/run-lite-mode-migration.ts",
     "security-audit": "npm audit --production --audit-level=high"
   },
   "keywords": [

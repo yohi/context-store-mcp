@@ -24,19 +24,48 @@ docker compose up -d
 
 既存のデータベースに対してマイグレーションを実行する方法は以下の通りです。
 
-### 方法1: psqlコマンドを使用
+### 方法1: マイグレーションランナーを使用（推奨）
+
+最も簡単な方法は、TypeScriptマイグレーションランナーを使用することです：
+
+```bash
+# 環境変数を設定（.envファイルまたは直接指定）
+export POSTGRES_HOST=localhost
+export POSTGRES_PORT=5432
+export POSTGRES_DB=context_store
+export POSTGRES_USER=postgres
+export POSTGRES_PASSWORD=your_password
+
+# マイグレーションを実行
+npm run migrate:lite-mode
+
+# または、確認プロンプトをスキップ
+npm run migrate:lite-mode -- --force
+
+# または、実行内容を確認（実際には変更しない）
+npm run migrate:lite-mode -- --dry-run
+```
+
+マイグレーションランナーは以下の機能を提供します：
+- データベース接続の自動テスト
+- 既存スキーマの確認
+- 実行前の確認プロンプト
+- マイグレーション後の検証
+- 詳細なログ出力
+
+### 方法2: psqlコマンドを使用
 
 ```bash
 psql -U postgres -d context_store -f scripts/migrate-lite-mode-schema.sql
 ```
 
-### 方法2: Docker環境の場合
+### 方法3: Docker環境の場合
 
 ```bash
 docker exec -i context-store-postgres psql -U postgres -d context_store < scripts/migrate-lite-mode-schema.sql
 ```
 
-### 方法3: pgAdminやその他のGUIツールを使用
+### 方法4: pgAdminやその他のGUIツールを使用
 
 1. `scripts/migrate-lite-mode-schema.sql` ファイルを開く
 2. SQLクエリエディタにコピー＆ペースト

@@ -250,6 +250,76 @@ npm run start
 
 既存のPostgreSQLデータはそのまま使用できます。
 
+### 環境変数リファレンス
+
+#### Lite Mode設定
+
+| 変数名 | デフォルト | 説明 |
+|--------|-----------|------|
+| `LITE_MODE` | `false` | Lite Modeを有効化（PostgreSQLのみで動作） |
+| `ENABLE_GRAPH_STORE` | `true` | Neo4jグラフストレージを有効化 |
+| `ENABLE_REDIS_CACHE` | `true` | Redisキャッシュを有効化 |
+
+#### PostgreSQL設定（必須）
+
+| 変数名 | デフォルト | 説明 |
+|--------|-----------|------|
+| `POSTGRES_HOST` | `localhost` | PostgreSQLホスト |
+| `POSTGRES_PORT` | `5432` | PostgreSQLポート |
+| `POSTGRES_DB` | `context_store` | データベース名 |
+| `POSTGRES_USER` | - | データベースユーザー名 |
+| `POSTGRES_PASSWORD` | - | データベースパスワード |
+
+#### 埋め込みプロバイダー設定
+
+| 変数名 | デフォルト | 説明 |
+|--------|-----------|------|
+| `EMBEDDING_PROVIDER` | `openai` | 埋め込みプロバイダー（`openai`, `local-cli`, `custom-api`） |
+| `OPENAI_API_KEY` | - | OpenAI APIキー（`openai`プロバイダー使用時） |
+| `EMBEDDING_CLI_COMMAND` | - | CLIコマンド（`local-cli`プロバイダー使用時）<br>例: `gemini-cli embed`, `claude-code embed` |
+| `EMBEDDING_API_ENDPOINT` | - | カスタムAPIエンドポイント（`custom-api`プロバイダー使用時） |
+
+#### コレクター設定（オプション）
+
+| 変数名 | デフォルト | 説明 |
+|--------|-----------|------|
+| `COLLECTOR_POLL_INTERVAL` | `1000` | ログファイルのポーリング間隔（ミリ秒） |
+| `COLLECTOR_CLAUDE_DESKTOP_LOG_PATH` | - | Claude Desktopのログパス |
+| `COLLECTOR_CHATGPT_DESKTOP_LOG_PATH` | - | ChatGPT Desktopのログパス |
+| `COLLECTOR_CURSOR_LOG_PATH` | - | Cursorのログパス |
+| `COLLECTOR_WINDSURF_LOG_PATH` | - | Windsurfのログパス |
+| `COLLECTOR_COPILOT_LOG_PATH` | - | GitHub Copilotのログパス |
+| `COLLECTOR_CLINE_LOG_PATH` | - | Clineのログパス |
+| `COLLECTOR_CLAUDE_CODE_LOG_PATH` | - | ClaudeCodeのログパス |
+| `COLLECTOR_GEMINI_CLI_LOG_PATH` | - | GeminiCLIのログパス |
+| `COLLECTOR_CODEX_CLI_LOG_PATH` | - | CodexCLIのログパス |
+| `COLLECTOR_CURSOR_CLI_LOG_PATH` | - | CursorCLIのログパス |
+
+#### Web Viewer設定（オプション）
+
+| 変数名 | デフォルト | 説明 |
+|--------|-----------|------|
+| `WEB_VIEWER_ENABLED` | `false` | Web Viewerを有効化 |
+| `WEB_VIEWER_PORT` | `3001` | Web Viewerのポート |
+| `WEB_VIEWER_AUTH_ENABLED` | `true` | 認証を有効化 |
+| `WEB_VIEWER_AUTH_TOKEN` | - | 認証トークン |
+
+#### ロギング設定
+
+| 変数名 | デフォルト | 説明 |
+|--------|-----------|------|
+| `LOG_LEVEL` | `info` | ログレベル（`error`, `warn`, `info`, `debug`） |
+
+#### フルモード専用設定
+
+| 変数名 | デフォルト | 説明 |
+|--------|-----------|------|
+| `NEO4J_URI` | `bolt://localhost:7687` | Neo4j接続URI |
+| `NEO4J_USER` | `neo4j` | Neo4jユーザー名 |
+| `NEO4J_PASSWORD` | - | Neo4jパスワード |
+| `NEO4J_DATABASE` | `neo4j` | Neo4jデータベース名 |
+| `REDIS_URL` | `redis://localhost:6379` | Redis接続URL |
+
 ## 📚 ドキュメント
 
 ### デプロイメント
