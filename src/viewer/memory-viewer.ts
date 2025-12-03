@@ -108,7 +108,7 @@ export class MemoryViewer {
         const limit = parseInt((req.query['limit'] as string) || '50', 10);
         const offset = parseInt((req.query['offset'] as string) || '0', 10);
 
-        if (!Number.isFinite(limit) || limit < 0) {
+        if (!Number.isFinite(limit) || limit < 1) {
           res.status(400).json({ error: 'Invalid limit parameter' });
           return;
         }
@@ -126,10 +126,37 @@ export class MemoryViewer {
     });
 
     // 検索エンドポイント（タスク12.5で実装）
+
     this.app.post('/search', async (req: Request, res: Response) => {
       try {
-        const searchRequest: SearchRequest = req.body;
-        const response = await this.search(searchRequest);
+        const { query, searchType, limit: rawLimit, offset: rawOffset } = req.body;
+
+        if (!query || typeof query !== 'string' || query.trim().length === 0) {
+          res.status(400).json({ error: 'Query cannot be empty' });
+          return;
+        }
+
+        let limit = 20;
+        if (rawLimit !== undefined) {
+          const parsedLimit = parseInt(rawLimit, 10);
+          if (!Number.isFinite(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
+            res.status(400).json({ error: 'Invalid limit parameter' });
+            return;
+          }
+          limit = parsedLimit;
+        }
+
+        let offset = 0;
+        if (rawOffset !== undefined) {
+          const parsedOffset = parseInt(rawOffset, 10);
+          if (!Number.isFinite(parsedOffset) || parsedOffset < 0) {
+            res.status(400).json({ error: 'Invalid offset parameter' });
+            return;
+          }
+          offset = parsedOffset;
+        }
+
+        const response = await this.search({ query, searchType, limit, offset });
         res.json(response);
       } catch (error) {
         console.error('Error searching memories:', error);
@@ -143,7 +170,7 @@ export class MemoryViewer {
    * 要件9.2: WHEN ビューアが記憶を表示する THEN システムはタイムスタンプ付きで時系列順に表示しなければならない
    */
   async fetchMemories(request: MemoriesRequest): Promise<MemoriesResponse> {
-    const limit = Math.min(request.limit || 50, 100);
+    const limit = Math.min(request.limit ?? 50, 100);
     const offset = request.offset || 0;
 
     // 総数を取得
@@ -184,7 +211,9 @@ export class MemoryViewer {
    * 要件9.4: WHEN 検索結果が表示される THEN システムは一致するコンテンツをハイライトし、関連性スコアを表示しなければならない
    */
   async search(request: SearchRequest): Promise<SearchResponse> {
-    const { query, searchType, limit = 20, offset = 0 } = request;
+    const { query, searchType } = request;
+    const limit = Math.min(request.limit ?? 20, 100);
+    const offset = request.offset || 0;
 
     if (!query || query.trim().length === 0) {
       throw new Error('Query cannot be empty');
