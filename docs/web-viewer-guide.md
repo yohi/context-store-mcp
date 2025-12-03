@@ -61,7 +61,7 @@ npm run dev
 
 ### 3. ブラウザでアクセス
 
-```
+```text
 http://localhost:3001
 ```
 
@@ -72,6 +72,8 @@ localStorage.setItem('authToken', 'your-secret-token-here');
 ```
 
 その後、ページをリロードしてください。
+
+> **注意**: 本番環境では、セキュリティ上の理由からトークンはコンソールに表示されません。環境変数 `VIEWER_AUTH_TOKEN` の値を確認してください。また、トークンをログに出力しないように注意してください。
 
 ## 使用方法
 

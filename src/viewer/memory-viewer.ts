@@ -18,6 +18,7 @@ import type {
   MemoriesRequest,
   MemoriesResponse,
 } from './types.js';
+import { timingSafeEqual } from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -68,7 +69,11 @@ export class MemoryViewer {
       }
 
       const token = authHeader.split(' ')[1];
-      if (token !== this.config.authToken) {
+      const expectedToken = this.config.authToken || '';
+
+      if (!token ||
+        token.length !== expectedToken.length ||
+        !timingSafeEqual(Buffer.from(token), Buffer.from(expectedToken))) {
         return res.status(401).json({ error: 'Unauthorized: Invalid token' });
       }
 
@@ -100,8 +105,17 @@ export class MemoryViewer {
     // 記憶一覧エンドポイント（タスク12.3で実装）
     this.app.get('/memories', async (req: Request, res: Response) => {
       try {
-        const limit = parseInt((req.query['limit'] as string) || '50');
-        const offset = parseInt((req.query['offset'] as string) || '0');
+        const limit = parseInt((req.query['limit'] as string) || '50', 10);
+        const offset = parseInt((req.query['offset'] as string) || '0', 10);
+
+        if (!Number.isFinite(limit) || limit < 0) {
+          res.status(400).json({ error: 'Invalid limit parameter' });
+          return;
+        }
+        if (!Number.isFinite(offset) || offset < 0) {
+          res.status(400).json({ error: 'Invalid offset parameter' });
+          return;
+        }
 
         const response = await this.fetchMemories({ limit, offset });
         res.json(response);
@@ -151,7 +165,7 @@ export class MemoryViewer {
     const memories: MemoryDisplay[] = result.rows.map((row) => ({
       id: row.id,
       content: row.content,
-      metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata,
+      metadata: typeof row.metadata === 'string' ? this.safeJsonParse(row.metadata) : row.metadata,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
     }));
@@ -176,19 +190,19 @@ export class MemoryViewer {
       throw new Error('Query cannot be empty');
     }
 
-    let results: MemoryDisplay[];
+    let searchResult: { results: MemoryDisplay[], total: number };
 
     if (searchType === 'vector') {
       // ベクトル検索（簡易実装 - 実際のベクトル検索は別途実装が必要）
-      results = await this.vectorSearch(query, limit, offset);
+      searchResult = await this.vectorSearch(query, limit, offset);
     } else {
       // テキスト検索
-      results = await this.textSearch(query, limit, offset);
+      searchResult = await this.textSearch(query, limit, offset);
     }
 
     return {
-      results,
-      total: results.length,
+      results: searchResult.results,
+      total: searchResult.total,
       query,
       searchType,
     };
@@ -197,7 +211,17 @@ export class MemoryViewer {
   /**
    * テキスト検索
    */
-  private async textSearch(query: string, limit: number, offset: number): Promise<MemoryDisplay[]> {
+  private async textSearch(query: string, limit: number, offset: number): Promise<{ results: MemoryDisplay[], total: number }> {
+    // 総数を取得
+    const countResult = await this.pool.query(
+      `SELECT COUNT(*) 
+       FROM memories 
+       WHERE is_deleted = false 
+         AND to_tsvector('english', content) @@ plainto_tsquery('english', $1)`,
+      [query]
+    );
+    const total = parseInt(countResult.rows[0]?.count || '0', 10);
+
     const result = await this.pool.query(
       `SELECT id, content, metadata, created_at, updated_at,
               ts_rank(to_tsvector('english', content), plainto_tsquery('english', $1)) as rank
@@ -209,20 +233,22 @@ export class MemoryViewer {
       [query, limit, offset]
     );
 
-    return result.rows.map((row) => ({
+    const results = result.rows.map((row) => ({
       id: row.id,
       content: row.content,
-      metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata,
+      metadata: typeof row.metadata === 'string' ? this.safeJsonParse(row.metadata) : row.metadata,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
       similarity: parseFloat(row.rank),
     }));
+
+    return { results, total };
   }
 
   /**
    * ベクトル検索（簡易実装）
    */
-  private async vectorSearch(query: string, limit: number, offset: number): Promise<MemoryDisplay[]> {
+  private async vectorSearch(query: string, limit: number, offset: number): Promise<{ results: MemoryDisplay[], total: number }> {
     // 注: 実際のベクトル検索には埋め込み生成が必要
     // ここでは簡易的にテキスト検索にフォールバック
     console.warn('Vector search not fully implemented, falling back to text search');
@@ -259,5 +285,17 @@ export class MemoryViewer {
         resolve();
       }
     });
+  }
+
+  /**
+   * JSONを安全にパースするヘルパーメソッド
+   */
+  private safeJsonParse(value: string): any {
+    try {
+      return JSON.parse(value);
+    } catch (e) {
+      console.warn('Failed to parse JSON metadata:', e);
+      return null;
+    }
   }
 }

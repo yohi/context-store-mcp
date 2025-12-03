@@ -33,8 +33,13 @@ async function main() {
 
   console.log(`Memory Viewer is running on http://localhost:${config.port}`);
   if (config.authEnabled) {
-    console.log('Authentication is enabled. Use the following token:');
-    console.log(`Authorization: Bearer ${config.authToken}`);
+    console.log('Authentication is enabled.');
+    if (process.env['NODE_ENV'] !== 'production') {
+      console.log('Use the following token:');
+      console.log(`Authorization: Bearer ${config.authToken}`);
+    } else {
+      console.log('Token hidden in production. Check your environment variables or configuration to retrieve the token.');
+    }
   }
 
   // グレースフルシャットダウン
