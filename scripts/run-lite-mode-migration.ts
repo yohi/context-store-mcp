@@ -105,9 +105,30 @@ async function runMigration(options: MigrationOptions): Promise<void> {
   console.log('================================\n');
 
   // Load environment variables
+    const postgresPortEnv = process.env.POSTGRES_PORT;
+    let port = 5432; // Default value
+
+    if (postgresPortEnv !== undefined) {
+      const parsedPort = parseInt(postgresPortEnv, 10);
+
+      if (
+        !Number.isFinite(parsedPort) ||
+        !Number.isInteger(parsedPort) ||
+        parsedPort < 1 ||
+        parsedPort > 65535
+      ) {
+        console.error(
+          `\n❌ Error: Invalid POSTGRES_PORT "${postgresPortEnv}". ` +
+            'Port must be an integer between 1 and 65535.'
+        );
+        process.exit(1);
+      }
+      port = parsedPort;
+    }
+
   const config = {
     host: process.env.POSTGRES_HOST || 'localhost',
-    port: parseInt(process.env.POSTGRES_PORT || '5432'),
+    port: port,
     database: process.env.POSTGRES_DB || 'context_store',
     user: process.env.POSTGRES_USER,
     password: process.env.POSTGRES_PASSWORD,

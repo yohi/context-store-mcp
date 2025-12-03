@@ -368,7 +368,8 @@ launchctl unload ~/Library/LaunchAgents/com.contextstore.collector.desktop.plist
 3. **データベースの重複を確認:**
    ```sql
    SELECT content, COUNT(*) 
-   FROM conversations 
+   FROM memories
+   WHERE lite_mode_metadata->>'source' IS NOT NULL 
    GROUP BY content 
    HAVING COUNT(*) > 1;
    ```
