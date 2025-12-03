@@ -22,6 +22,7 @@ export interface ErrorResponse {
   degraded?: boolean;
   error?: string;
   retryable?: boolean;
+  fatal?: boolean;
 }
 
 /**
@@ -49,6 +50,8 @@ export interface DegradationState {
 export class Neo4jConnectionError extends Error {
   constructor(message: string) {
     super(message);
+    Object.setPrototypeOf(this, Neo4jConnectionError.prototype);
+    Error.captureStackTrace(this, Neo4jConnectionError);
     this.name = 'Neo4jConnectionError';
   }
 }
@@ -59,6 +62,8 @@ export class Neo4jConnectionError extends Error {
 export class RedisConnectionError extends Error {
   constructor(message: string) {
     super(message);
+    Object.setPrototypeOf(this, RedisConnectionError.prototype);
+    Error.captureStackTrace(this, RedisConnectionError);
     this.name = 'RedisConnectionError';
   }
 }
@@ -69,6 +74,8 @@ export class RedisConnectionError extends Error {
 export class EmbeddingServiceError extends Error {
   constructor(message: string) {
     super(message);
+    Object.setPrototypeOf(this, EmbeddingServiceError.prototype);
+    Error.captureStackTrace(this, EmbeddingServiceError);
     this.name = 'EmbeddingServiceError';
   }
 }
@@ -202,8 +209,11 @@ export class ErrorHandler {
       context,
     });
 
-    // プロセスを終了
-    process.exit(1);
+    return {
+      success: false,
+      fatal: true,
+      error: error.message,
+    };
   }
 
   /**

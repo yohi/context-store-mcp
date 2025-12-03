@@ -23,6 +23,8 @@ import neo4j, { Driver } from 'neo4j-driver';
 import { PostgresStorageAdapter } from '../storage/postgres-store-adapter.js';
 import { VectorStoreAdapter } from '../storage/vector-store-adapter.js';
 import { TransactionCoordinator } from '../storage/transaction-coordinator.js';
+import { EmbeddingService } from '../embedding/embedding-service.js';
+import type { EmbeddingProviderConfig } from '../embedding/types.js';
 
 /**
  * MCPサーバーインスタンスを作成して設定する
@@ -67,20 +69,57 @@ export function createContextStoreServer(deps?: { memoryManager?: MemoryManager 
 
     // VectorStoreの初期化 (埋め込みプロバイダーが利用可能な場合)
     let vectorStore: VectorStoreAdapter | undefined;
-    
+
     // Liteモードでは埋め込みプロバイダーの設定に基づいて初期化
-    if (config.embeddingProvider === 'openai' && process.env['OPENAI_API_KEY']) {
-      vectorStore = new VectorStoreAdapter({
-        pool,
-        openaiApiKey: process.env['OPENAI_API_KEY'],
-      });
-    } else if (config.embeddingProvider === 'local-cli' || config.embeddingProvider === 'custom-api') {
-      // ローカルCLIまたはカスタムAPIの場合、VectorStoreは初期化するが埋め込み生成は別途処理
-      // 注: 現在のVectorStoreAdapterはOpenAI専用なので、将来的に拡張が必要
-      console.warn(`Embedding provider '${config.embeddingProvider}' configured. Vector search may have limited functionality.`);
-    } else {
-      const error = new EmbeddingServiceError('No embedding provider configured or API key missing');
-      errorHandler.handleError(error, {
+    try {
+      // EmbeddingServiceの設定を構築
+      const embeddingConfig: EmbeddingProviderConfig = {
+        provider: config.embeddingProvider,
+        dimensions: 1536,
+        ...(process.env['OPENAI_API_KEY'] && { openaiApiKey: process.env['OPENAI_API_KEY'] }),
+        ...(process.env['EMBEDDING_CLI_COMMAND'] && { cliCommand: process.env['EMBEDDING_CLI_COMMAND'] }),
+        ...(process.env['EMBEDDING_API_ENDPOINT'] && { apiEndpoint: process.env['EMBEDDING_API_ENDPOINT'] }),
+      };
+
+      // EmbeddingServiceを作成
+      const embeddingService = new EmbeddingService(embeddingConfig);
+
+      // プロバイダーが設定されているか確認
+      if (!embeddingService.isConfigured()) {
+        const error = new EmbeddingServiceError(
+          `Embedding provider '${config.embeddingProvider}' could not be initialized. ` +
+          `Please check your configuration and environment variables.`
+        );
+        errorHandler.handleError(error, {
+          operation: 'initialize_embedding_service',
+          component: 'server',
+        });
+      } else {
+        // EmbeddingProviderを取得してVectorStoreAdapterを初期化
+        // Note: embeddingService.providerはprivateなので、代わりにラッパーを作成
+        const embeddingProvider = {
+          generateEmbedding: async (text: string) => {
+            const result = await embeddingService.generateEmbedding(text);
+            if (result === null) {
+              throw new Error('Embedding generation returned null');
+            }
+            return result;
+          },
+          isAvailable: () => embeddingService.isAvailable(),
+        };
+
+        vectorStore = new VectorStoreAdapter({
+          pool,
+          embeddingProvider,
+          dimensions: 1536,
+        });
+        console.error(`Vector store initialized with ${config.embeddingProvider} provider`);
+      }
+    } catch (error) {
+      const embeddingError = new EmbeddingServiceError(
+        `Failed to initialize vector store: ${error instanceof Error ? error.message : String(error)}`
+      );
+      errorHandler.handleError(embeddingError, {
         operation: 'initialize_vector_store',
         component: 'server',
       });
