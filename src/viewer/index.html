@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Context Store - Memory Viewer</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: #f5f5f5;
+      color: #333;
+      line-height: 1.6;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    header {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+    }
+    h1 {
+      color: #2c3e50;
+      margin-bottom: 10px;
+    }
+    .search-box {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+    }
+    .search-form {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    input[type="text"] {
+      flex: 1;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    button {
+      padding: 10px 20px;
+      background: #3498db;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:hover {
+      background: #2980b9;
+    }
+    .search-type {
+      display: flex;
+      gap: 10px;
+    }
+    .search-type label {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .memories {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .memory-item {
+      padding: 15px;
+      border-bottom: 1px solid #eee;
+    }
+    .memory-item:last-child {
+      border-bottom: none;
+    }
+    .memory-header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .memory-meta {
+      font-size: 12px;
+      color: #666;
+    }
+    .memory-content {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    .memory-tags {
+      margin-top: 10px;
+      display: flex;
+      gap: 5px;
+      flex-wrap: wrap;
+    }
+    .tag {
+      background: #ecf0f1;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 11px;
+      color: #555;
+    }
+    .similarity-score {
+      background: #2ecc71;
+      color: white;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-weight: bold;
+    }
+    .loading {
+      text-align: center;
+      padding: 20px;
+      color: #666;
+    }
+    .error {
+      background: #e74c3c;
+      color: white;
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 20px;
+    }
+    .pagination {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🧠 Context Store - Memory Viewer</h1>
+      <p>Liteモード用のシンプルな記憶閲覧インターフェース</p>
+    </header>
+
+    <div class="search-box">
+      <div class="search-form">
+        <input type="text" id="searchQuery" placeholder="記憶を検索...">
+        <button onclick="search()">検索</button>
+        <button onclick="loadMemories()">すべて表示</button>
+      </div>
+      <div class="search-type">
+        <label>
+          <input type="radio" name="searchType" value="text" checked>
+          テキスト検索
+        </label>
+        <label>
+          <input type="radio" name="searchType" value="vector">
+          ベクトル検索
+        </label>
+      </div>
+    </div>
+
+    <div id="error" class="error" style="display: none;"></div>
+    <div id="loading" class="loading" style="display: none;">読み込み中...</div>
+
+    <div class="memories">
+      <h2>記憶一覧</h2>
+      <div id="memoriesList"></div>
+      <div class="pagination">
+        <button onclick="previousPage()">前へ</button>
+        <span id="pageInfo"></span>
+        <button onclick="nextPage()">次へ</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/viewer.js"></script>
+</body>
+</html>
