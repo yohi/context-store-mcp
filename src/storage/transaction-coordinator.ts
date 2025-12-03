@@ -422,14 +422,21 @@ export class TransactionCoordinator {
   private async updateIntoPostgreSQLOrThrow(memory: MemoryEntity): Promise<number> {
     const result = await this.config.postgresPool.query(
       `UPDATE memories 
-       SET content = $2, memory_type = $3, metadata = $4, lite_mode_metadata = $5, updated_at = NOW(), sync_status = 'synced'
+       SET content = $2,
+           memory_type = $3,
+           metadata = $4,
+           lite_mode_metadata = COALESCE($5::jsonb, lite_mode_metadata),
+           updated_at = NOW(),
+           sync_status = 'synced'
        WHERE id = $1`,
       [
         memory.id,
         memory.content,
         memory.memoryType,
         JSON.stringify(memory.metadata),
-        memory.lite_mode_metadata ? JSON.stringify(memory.lite_mode_metadata) : '{}',
+        memory.lite_mode_metadata !== undefined
+          ? JSON.stringify(memory.lite_mode_metadata)
+          : null,
       ]
     );
     return result.rowCount ?? 0;
