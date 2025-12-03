@@ -15,12 +15,16 @@ import {
 import { MemoryManager } from '../memory/memory-manager.js';
 import type { MemoryType } from '../memory/types.js';
 import { GarbageCollectionJob } from '../monitoring/garbage-collection-job.js';
+import { ConfigManager } from '../config/config-manager.js';
+import { ErrorHandler, Neo4jConnectionError, EmbeddingServiceError } from './error-handler.js';
 
 import { Pool } from 'pg';
 import neo4j, { Driver } from 'neo4j-driver';
 import { PostgresStorageAdapter } from '../storage/postgres-store-adapter.js';
 import { VectorStoreAdapter } from '../storage/vector-store-adapter.js';
 import { TransactionCoordinator } from '../storage/transaction-coordinator.js';
+import { EmbeddingService } from '../embedding/embedding-service.js';
+import type { EmbeddingProviderConfig } from '../embedding/types.js';
 
 /**
  * MCPサーバーインスタンスを作成して設定する
@@ -30,6 +34,17 @@ export function createContextStoreServer(deps?: { memoryManager?: MemoryManager 
   server: Server;
   cleanup: () => Promise<void>;
 } {
+  // ConfigManagerの初期化
+  const configManager = new ConfigManager();
+  const config = configManager.getConfig();
+  const errorHandler = new ErrorHandler(console);
+
+  console.error('Starting Context Store MCP Server...');
+  console.error(`Mode: ${config.liteMode ? 'Lite' : 'Full'}`);
+  console.error(`Graph Store: ${config.enableGraphStore ? 'Enabled' : 'Disabled'}`);
+  console.error(`Redis Cache: ${config.enableRedisCache ? 'Enabled' : 'Disabled'}`);
+  console.error(`Embedding Provider: ${config.embeddingProvider}`);
+
   // MemoryManagerの初期化
   let memoryManager = deps?.memoryManager;
 
@@ -52,27 +67,83 @@ export function createContextStoreServer(deps?: { memoryManager?: MemoryManager 
 
     const storage = new PostgresStorageAdapter(pool);
 
-    // VectorStoreの初期化 (OpenAI APIキーが必要)
+    // VectorStoreの初期化 (埋め込みプロバイダーが利用可能な場合)
     let vectorStore: VectorStoreAdapter | undefined;
-    if (process.env['OPENAI_API_KEY']) {
-      vectorStore = new VectorStoreAdapter({
-        pool,
-        openaiApiKey: process.env['OPENAI_API_KEY'],
+
+    // Liteモードでは埋め込みプロバイダーの設定に基づいて初期化
+    try {
+      // EmbeddingServiceの設定を構築
+      const embeddingConfig: EmbeddingProviderConfig = {
+        provider: config.embeddingProvider,
+        dimensions: 1536,
+        ...(process.env['OPENAI_API_KEY'] && { openaiApiKey: process.env['OPENAI_API_KEY'] }),
+        ...(process.env['EMBEDDING_CLI_COMMAND'] && { cliCommand: process.env['EMBEDDING_CLI_COMMAND'] }),
+        ...(process.env['EMBEDDING_API_ENDPOINT'] && { apiEndpoint: process.env['EMBEDDING_API_ENDPOINT'] }),
+      };
+
+      // EmbeddingServiceを作成
+      const embeddingService = new EmbeddingService(embeddingConfig);
+
+      // プロバイダーが設定されているか確認
+      if (!embeddingService.isConfigured()) {
+        const error = new EmbeddingServiceError(
+          `Embedding provider '${config.embeddingProvider}' could not be initialized. ` +
+          `Please check your configuration and environment variables.`
+        );
+        errorHandler.handleError(error, {
+          operation: 'initialize_embedding_service',
+          component: 'server',
+        });
+      } else {
+        // EmbeddingProviderを取得してVectorStoreAdapterを初期化
+        // Note: embeddingService.providerはprivateなので、代わりにラッパーを作成
+        const embeddingProvider = {
+          generateEmbedding: async (text: string) => {
+            const result = await embeddingService.generateEmbedding(text);
+            if (result === null) {
+              throw new Error('Embedding generation returned null');
+            }
+            return result;
+          },
+          isAvailable: () => embeddingService.isAvailable(),
+        };
+
+        vectorStore = new VectorStoreAdapter({
+          pool,
+          embeddingProvider,
+          dimensions: 1536,
+        });
+        console.error(`Vector store initialized with ${config.embeddingProvider} provider`);
+      }
+    } catch (error) {
+      const embeddingError = new EmbeddingServiceError(
+        `Failed to initialize vector store: ${error instanceof Error ? error.message : String(error)}`
+      );
+      errorHandler.handleError(embeddingError, {
+        operation: 'initialize_vector_store',
+        component: 'server',
       });
-    } else {
-      console.warn('OPENAI_API_KEY not found. Vector search will be disabled.');
     }
 
-    // Neo4jドライバーの初期化
-    if (process.env['NEO4J_URI'] && process.env['NEO4J_USER'] && process.env['NEO4J_PASSWORD']) {
+    // Neo4jドライバーの初期化（Liteモードまたは無効化されている場合はスキップ）
+    if (config.enableGraphStore && process.env['NEO4J_URI'] && process.env['NEO4J_USER'] && process.env['NEO4J_PASSWORD']) {
       try {
         neo4jDriver = neo4j.driver(
           process.env['NEO4J_URI'],
           neo4j.auth.basic(process.env['NEO4J_USER'], process.env['NEO4J_PASSWORD'])
         );
+        console.error('Neo4j driver initialized successfully');
       } catch (error) {
-        console.warn('Failed to initialize Neo4j driver:', error);
+        const neo4jError = new Neo4jConnectionError(
+          error instanceof Error ? error.message : 'Failed to initialize Neo4j driver'
+        );
+        errorHandler.handleError(neo4jError, {
+          operation: 'initialize_neo4j',
+          component: 'server',
+        });
       }
+    } else {
+      console.error('Neo4j initialization skipped (Lite mode or disabled)');
     }
 
     // TransactionCoordinatorの初期化
@@ -85,15 +156,15 @@ export function createContextStoreServer(deps?: { memoryManager?: MemoryManager 
     }
 
     // MemoryManager設定オブジェクトを構築（undefinedプロパティを除外）
-    const config: {
+    const memoryManagerConfig: {
       storage: PostgresStorageAdapter;
       vectorStore?: VectorStoreAdapter;
       transactionCoordinator?: TransactionCoordinator;
     } = { storage };
-    if (vectorStore) config.vectorStore = vectorStore;
-    if (transactionCoordinator) config.transactionCoordinator = transactionCoordinator;
+    if (vectorStore) memoryManagerConfig.vectorStore = vectorStore;
+    if (transactionCoordinator) memoryManagerConfig.transactionCoordinator = transactionCoordinator;
 
-    memoryManager = new MemoryManager(config);
+    memoryManager = new MemoryManager(memoryManagerConfig);
   }
 
   // ガベージコレクションジョブの初期化と開始 (5分間隔)
