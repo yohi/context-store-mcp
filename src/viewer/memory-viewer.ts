@@ -63,9 +63,12 @@ export class MemoryViewer {
 
     const expectedToken = this.config.authToken;
 
+    // 認証不要な公開ルート（UI関連）
+    const publicRoutes = ['/', '/viewer.js', '/health'];
+
     this.app.use((req: Request, res: Response, next: NextFunction) => {
-      // ヘルスチェックエンドポイントは認証不要
-      if (req.path === '/health') {
+      // 公開ルートは認証不要
+      if (publicRoutes.includes(req.path)) {
         return next();
       }
 
