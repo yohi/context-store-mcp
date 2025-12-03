@@ -226,16 +226,16 @@
   - **プロパティ23: Liteモードデフォルトパラメータ**
   - **検証: 要件 7.5**
 
-- [ ] 9. チェックポイント - すべてのテストが通ることを確認
+- [x] 9. チェックポイント - すべてのテストが通ることを確認
   - すべてのテストが通ることを確認し、問題があればユーザーに質問する
 
-- [ ] 10. Docker Compose設定のLiteモード対応
-- [ ] 10.1 docker-compose.ymlにプロファイル機能を追加
+- [x] 10. Docker Compose設定のLiteモード対応
+- [x] 10.1 docker-compose.ymlにプロファイル機能を追加
   - `lite`プロファイル: PostgreSQLのみ
   - `full`プロファイル: PostgreSQL + Neo4j + Redis
   - _要件: 8.1, 8.2, 8.3_
 
-- [ ] 10.2 .env.lite.exampleファイルの作成
+- [x] 10.2 .env.lite.exampleファイルの作成
   - Liteモード用の環境変数設定例
   - _要件: 2.1, 2.2, 2.3_
 
