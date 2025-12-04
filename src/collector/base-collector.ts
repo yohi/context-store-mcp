@@ -29,8 +29,9 @@ export abstract class BaseCollector {
   protected memoryManager: MemoryManagerService;
   protected dbPool: Pool;
   protected lastPosition: number = 0;
-  protected watcher?: FSWatcher;
+  protected watcher: FSWatcher | undefined;
   protected isRunning: boolean = false;
+  protected isProcessing: boolean = false;
   protected retryConfig: RetryConfig;
 
   constructor(
@@ -67,7 +68,7 @@ export abstract class BaseCollector {
       return {
         success: false,
         error: {
-          type: 'STORAGE_ERROR',
+          type: 'INVALID_STATE',
           message: 'Collector is already running',
         },
       };
@@ -142,7 +143,6 @@ export abstract class BaseCollector {
     // Stop file watcher
     if (this.watcher) {
       this.watcher.close();
-      // @ts-expect-error - Setting to undefined is intentional for cleanup
       this.watcher = undefined;
     }
 
@@ -169,7 +169,13 @@ export abstract class BaseCollector {
   protected async watchLogFile(): Promise<void> {
     this.watcher = watch(this.config.logPath, async (eventType) => {
       if (eventType === 'change') {
-        await this.processNewContent();
+        if (this.isProcessing) return;
+        this.isProcessing = true;
+        try {
+          await this.processNewContent();
+        } finally {
+          this._isProcessing = false;
+        }
       }
     });
 
@@ -187,6 +193,21 @@ export abstract class BaseCollector {
    * 要件: 3.5, 5.2
    */
   protected async processNewContent(): Promise<void> {
+    // 並行実行制御がないため競合状態が発生します。
+    // processNewContent() メソッドに並行実行を防ぐ仕組みがありません。ファイルウォッチャーが複数の 'change' イベントを発火すると、以下の競合が発生します：
+    // - 同じ行が複数回処理される（重複チェックはあるが無駄な処理）
+    // - lastPosition の更新が競合し、処理済み行を再処理したり、未処理行をスキップする可能性
+    // - 状態ファイルの保存が競合する
+    // 処理中フラグやmutexを使用して、同時実行を防いでください。
+    // Prevent concurrent execution
+    if (this.isProcessing) {
+      logger.debug('Skipping processNewContent - already processing', {
+        source: this.config.source,
+      });
+      return;
+    }
+
+    this.isProcessing = true;
     try {
       // Read file content
       const content = await readFile(this.config.logPath, 'utf-8');
@@ -250,6 +271,8 @@ export abstract class BaseCollector {
         source: this.config.source,
         error: err,
       });
+    } finally {
+      this.isProcessing = false;
     }
   }
 

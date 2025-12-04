@@ -88,7 +88,8 @@ export type CollectorError =
   | { type: 'PARSE_ERROR'; message: string; line?: string }
   | { type: 'CONNECTION_ERROR'; message: string }
   | { type: 'STORAGE_ERROR'; message: string }
-  | { type: 'STATE_FILE_ERROR'; message: string };
+  | { type: 'STATE_FILE_ERROR'; message: string }
+  | { type: 'INVALID_STATE'; message: string };
 
 /**
  * Result type for collector operations

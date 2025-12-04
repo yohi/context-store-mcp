@@ -18,11 +18,9 @@ import { parse } from 'shell-quote';
  */
 export class EmbeddingService {
   private provider: EmbeddingProvider | null;
-  private config: EmbeddingProviderConfig;
   private resolvedProviderType: EmbeddingProviderConfig['provider'] | null = null;
 
   constructor(config: EmbeddingProviderConfig) {
-    this.config = config;
     this.provider = this.createProvider(config);
   }
 

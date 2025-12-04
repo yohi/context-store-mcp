@@ -79,7 +79,7 @@ MCPサーバーはAIエージェントからの統一インターフェースと
 *   `NODE_ENV`: `development`, `production`, `test`
 *   `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
 *   `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`, `NEO4J_DATABASE`
-*   `REDIS_URL`
+*   `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`
 *   `OPENAI_API_KEY`
 *   `SIGNATURE_SECRET`: 削除証明書のデジタル署名に使用（本番環境必須）
 

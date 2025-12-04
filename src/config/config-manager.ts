@@ -269,7 +269,7 @@ export class ConfigManager {
     apiEndpoint?: string
   ): void {
     if (provider === 'openai' && !process.env['OPENAI_API_KEY']) {
-      if (process.env.NODE_ENV === 'test') {
+      if (process.env['NODE_ENV'] === 'test') {
         console.warn(
           'EMBEDDING_PROVIDER is set to "openai" but OPENAI_API_KEY is not set. ' +
           'In test environment, this will be logged as a warning, but in production it will throw an error.'
