@@ -100,16 +100,17 @@ export async function cleanupOldHashes(
   olderThanDays: number = 90
 ): Promise<number> {
   try {
+    const days = Math.floor(olderThanDays);
     const query = `
       UPDATE memories
       SET lite_mode_metadata = lite_mode_metadata - 'contentHash'
-      WHERE created_at < NOW() - INTERVAL '${olderThanDays} days'
+      WHERE created_at < NOW() - make_interval(days => $1)
         AND lite_mode_metadata ? 'contentHash'
         AND is_deleted = false
       RETURNING id
     `;
 
-    const result = await pool.query(query);
+    const result = await pool.query(query, [days]);
     const count = result.rowCount ?? 0;
 
     if (count > 0) {

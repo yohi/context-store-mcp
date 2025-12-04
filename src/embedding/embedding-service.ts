@@ -19,6 +19,7 @@ import { parse } from 'shell-quote';
 export class EmbeddingService {
   private provider: EmbeddingProvider | null;
   private config: EmbeddingProviderConfig;
+  private resolvedProviderType: EmbeddingProviderConfig['provider'] | null = null;
 
   constructor(config: EmbeddingProviderConfig) {
     this.config = config;
@@ -37,6 +38,7 @@ export class EmbeddingService {
             console.warn('OpenAI API key not provided. Embedding generation will be disabled.');
             return null;
           }
+          this.resolvedProviderType = 'openai';
           return new OpenAIEmbeddingProvider(
             config.openaiApiKey,
             config.embeddingModel,
@@ -65,6 +67,7 @@ export class EmbeddingService {
             console.error('Failed to parse CLI command: executable is not a string after parsing.');
             return null;
           }
+          this.resolvedProviderType = 'local-cli';
           return new LocalCLIEmbeddingProvider(executable, initialArgs, config.dimensions);
         }
 
@@ -73,11 +76,13 @@ export class EmbeddingService {
             console.warn('API endpoint not provided. Embedding generation will be disabled.');
             return null;
           }
+          this.resolvedProviderType = 'custom-api';
           return new CustomAPIEmbeddingProvider(config.apiEndpoint, config.dimensions);
 
         default:
           if (config.openaiApiKey) {
             console.warn(`Unknown embedding provider: ${config.provider}. Using OpenAI as default.`);
+            this.resolvedProviderType = 'openai';
             return new OpenAIEmbeddingProvider(
               config.openaiApiKey,
               config.embeddingModel,
@@ -142,14 +147,7 @@ export class EmbeddingService {
    * Get the current provider type
    */
   getProviderType(): string | null {
-    if (this.provider) {
-      // If a provider instance exists, return the configured provider type.
-      // This implicitly tells us which provider type was successfully initialized.
-      return this.config.provider;
-    }
-    // If no provider instance was successfully created, return null.
-    // Callers should check isConfigured() or handle this null value.
-    return null;
+    return this.resolvedProviderType;
   }
 
   /**

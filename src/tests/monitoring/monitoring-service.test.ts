@@ -43,6 +43,8 @@ describe('MonitoringService', () => {
   afterEach(() => {
     metricsCollector.stop();
     monitoringService.stop();
+    // Ensure real timers are always restored, even if a test throws
+    vi.useRealTimers();
   });
 
   describe('ヘルスチェック', () => {
@@ -54,7 +56,7 @@ describe('MonitoringService', () => {
         storage: { total: 1000000000, used: 500000000, free: 500000000, usage: 0.5 },
         timestamp: Date.now(),
       });
-      
+
       await metricsCollector.collectSystemMetrics();
 
       const result = monitoringService.performHealthCheck();
@@ -100,7 +102,7 @@ describe('MonitoringService', () => {
         used: 960000000, // 96% 使用
         free: 40000000,
       });
- 
+
       // システムメトリクスのモック
       const mockMetrics = {
         cpu: { usage: 0.1, loadAverage: [0.1, 0.1, 0.1], cores: 4 },
@@ -233,14 +235,14 @@ describe('MonitoringService', () => {
       monitoringService.start(); // モニタリングを開始し、定期チェックをトリガー
 
       // 閾値チェック間隔（checkInterval）が100msなので、少し長く待つ
-      await new Promise((resolve) => setTimeout(resolve, 150)); 
+      await new Promise((resolve) => setTimeout(resolve, 150));
 
       expect(alertHandler).toHaveBeenCalled();
-      
+
       // 複数のアラートが来る可能性があるので、引数から探す
       const alertCalls = alertHandler.mock.calls.map(call => call[0]);
       const storageAlert = alertCalls.find(alert => alert.category === 'storage');
-      
+
       expect(storageAlert).toBeDefined();
       expect(storageAlert?.level).toBe(AlertLevel.CRITICAL);
     });
@@ -362,13 +364,12 @@ describe('MonitoringService', () => {
       await vi.runOnlyPendingTimersAsync(); // 保留中のマイクロタスクとタイマーをフラッシュ
 
       expect(alertHandler).toHaveBeenCalled();
-      
+
       const alertCalls = alertHandler.mock.calls.map(call => call[0]);
       const storageAlert = alertCalls.find(alert => alert.category === 'storage');
-      
+
       expect(storageAlert).toBeDefined();
       expect(storageAlert?.level).toBe(AlertLevel.CRITICAL);
-      vi.useRealTimers();
     });
 
     it('stop()で定期チェックを停止できる', async () => {

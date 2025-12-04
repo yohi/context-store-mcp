@@ -25,7 +25,7 @@ export class ConfigManager {
     const liteMode = this.parseBooleanEnv('LITE_MODE', false);
     const enableGraphStore = this.parseBooleanEnv('ENABLE_GRAPH_STORE', !liteMode);
     const enableRedisCache = this.parseBooleanEnv('ENABLE_REDIS_CACHE', !liteMode);
-    
+
     // Parse embedding provider settings
     const embeddingProvider = this.parseEmbeddingProvider();
     const embeddingCliCommand = process.env['EMBEDDING_CLI_COMMAND'];
@@ -76,27 +76,27 @@ export class ConfigManager {
       postgres,
       logging,
     };
-    
+
     if (embeddingCliCommand) {
       config.embeddingCliCommand = embeddingCliCommand;
     }
-    
+
     if (embeddingApiEndpoint) {
       config.embeddingApiEndpoint = embeddingApiEndpoint;
     }
-    
+
     if (neo4j) {
       config.neo4j = neo4j;
     }
-    
+
     if (redis) {
       config.redis = redis;
     }
-    
+
     if (openai) {
       config.openai = openai;
     }
-    
+
     return config;
   }
 
@@ -140,15 +140,15 @@ export class ConfigManager {
     } = {
       provider: this.config.embeddingProvider,
     };
-    
+
     if (this.config.embeddingCliCommand) {
       result.cliCommand = this.config.embeddingCliCommand;
     }
-    
+
     if (this.config.embeddingApiEndpoint) {
       result.apiEndpoint = this.config.embeddingApiEndpoint;
     }
-    
+
     return result;
   }
 
@@ -171,15 +171,15 @@ export class ConfigManager {
       enableRedisCache: this.config.enableRedisCache,
       embeddingProvider: this.config.embeddingProvider,
     };
-    
+
     if (this.config.embeddingCliCommand) {
       result.embeddingCliCommand = this.config.embeddingCliCommand;
     }
-    
+
     if (this.config.embeddingApiEndpoint) {
       result.embeddingApiEndpoint = this.config.embeddingApiEndpoint;
     }
-    
+
     return result;
   }
 
@@ -191,13 +191,13 @@ export class ConfigManager {
    */
   private parseBooleanEnv(key: string, defaultValue: boolean): boolean {
     const value = process.env[key];
-    
+
     if (value === undefined) {
       return defaultValue;
     }
 
     const normalized = value.toLowerCase().trim();
-    
+
     // Handle invalid values with warning
     if (!['true', 'false', '1', '0', 'yes', 'no'].includes(normalized)) {
       console.warn(
@@ -217,20 +217,20 @@ export class ConfigManager {
    */
   private parseIntEnv(key: string, defaultValue: number): number {
     const value = process.env[key];
-    
+
     if (value === undefined) {
       return defaultValue;
     }
-    
+
     const parsed = parseInt(value, 10);
-    
+
     if (isNaN(parsed)) {
       console.warn(
         `Invalid integer value for ${key}: "${value}". Using default: ${defaultValue}`
       );
       return defaultValue;
     }
-    
+
     return parsed;
   }
 
@@ -246,7 +246,7 @@ export class ConfigManager {
     }
 
     const validProviders: EmbeddingProvider[] = ['openai', 'local-cli', 'custom-api'];
-    
+
     if (!validProviders.includes(provider as EmbeddingProvider)) {
       console.warn(
         `Invalid EMBEDDING_PROVIDER: "${provider}". Valid options: ${validProviders.join(', ')}. Using default: openai`
@@ -268,6 +268,13 @@ export class ConfigManager {
     cliCommand?: string,
     apiEndpoint?: string
   ): void {
+    if (provider === 'openai' && !process.env['OPENAI_API_KEY']) {
+      throw new Error(
+        'EMBEDDING_PROVIDER is set to "openai" but OPENAI_API_KEY is not set. ' +
+        'Please set OPENAI_API_KEY environment variable.'
+      );
+    }
+
     if (provider === 'local-cli' && !cliCommand) {
       console.warn(
         'EMBEDDING_PROVIDER is set to "local-cli" but EMBEDDING_CLI_COMMAND is not set. ' +

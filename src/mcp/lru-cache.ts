@@ -93,6 +93,17 @@ export class LRUCache<T = any> {
   }
 
   /**
+   * キャッシュからエントリーを取得（LRU順序を更新しない）
+   *
+   * @param key キー
+   * @returns 値（存在しない場合はundefined）
+   */
+  peek(key: string): T | undefined {
+    const node = this.cache.get(key);
+    return node ? node.value : undefined;
+  }
+
+  /**
    * キャッシュにエントリーを設定
    *
    * @param key キー

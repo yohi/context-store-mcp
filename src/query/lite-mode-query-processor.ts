@@ -145,8 +145,9 @@ export class LiteModeQueryProcessor extends QueryProcessor {
       // 新しさスコアを計算 (Requirements: 7.1)
       const recencyScore = this.calculateRecencyScore(result.memory);
 
-      // 手続き記憶タイプのブーストを適用 (Requirements: 7.2)
-      const proceduralBoost =
+      // 手続き記憶タイプの重みを適用 (Requirements: 7.2)
+      // 手続き記憶の場合は設定された重み値、それ以外は0
+      const proceduralWeight =
         result.memory.memoryType === 'procedural' ? weights.procedural : 0;
 
       // ファイルパスマッチスコアを計算 (Requirements: 7.3)
@@ -155,11 +156,12 @@ export class LiteModeQueryProcessor extends QueryProcessor {
         : 0;
 
       // 最終スコアを計算
-      // finalScore = w_recency * recency + w_relevance * combined + w_procedural * boost + w_filePath * filePathScore
+      // finalScore = w_recency * recency + w_relevance * combined + proceduralWeight + w_filePath * filePathScore
+      // ※ proceduralWeight は手続き記憶の場合 w_procedural、それ以外は 0
       const finalScore =
         weights.recency * recencyScore +
         weights.relevance * result.scores.combined +
-        proceduralBoost +
+        proceduralWeight +
         weights.filePath * filePathScore;
 
       return {

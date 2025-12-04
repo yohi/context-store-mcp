@@ -12,6 +12,8 @@ describe('ConfigManager', () => {
   beforeEach(() => {
     // Save original environment
     originalEnv = { ...process.env };
+    // Set default API key for tests to avoid validation errors
+    process.env['OPENAI_API_KEY'] = 'test-key';
   });
 
   afterEach(() => {
@@ -23,35 +25,35 @@ describe('ConfigManager', () => {
     it('should enable Lite mode when LITE_MODE=true', () => {
       process.env['LITE_MODE'] = 'true';
       const config = new ConfigManager();
-      
+
       expect(config.isLiteMode()).toBe(true);
     });
 
     it('should disable Lite mode by default', () => {
       delete process.env['LITE_MODE'];
       const config = new ConfigManager();
-      
+
       expect(config.isLiteMode()).toBe(false);
     });
 
     it('should disable graph store when ENABLE_GRAPH_STORE=false', () => {
       process.env['ENABLE_GRAPH_STORE'] = 'false';
       const config = new ConfigManager();
-      
+
       expect(config.isGraphStoreEnabled()).toBe(false);
     });
 
     it('should disable Redis cache when ENABLE_REDIS_CACHE=false', () => {
       process.env['ENABLE_REDIS_CACHE'] = 'false';
       const config = new ConfigManager();
-      
+
       expect(config.isRedisCacheEnabled()).toBe(false);
     });
 
     it('should disable graph store and Redis in Lite mode by default', () => {
       process.env['LITE_MODE'] = 'true';
       const config = new ConfigManager();
-      
+
       expect(config.isGraphStoreEnabled()).toBe(false);
       expect(config.isRedisCacheEnabled()).toBe(false);
     });
@@ -60,7 +62,7 @@ describe('ConfigManager', () => {
       process.env['LITE_MODE'] = 'true';
       process.env['ENABLE_GRAPH_STORE'] = 'true';
       const config = new ConfigManager();
-      
+
       expect(config.isGraphStoreEnabled()).toBe(true);
     });
   });
@@ -142,7 +144,7 @@ describe('ConfigManager', () => {
       delete process.env['EMBEDDING_PROVIDER'];
       const config = new ConfigManager();
       const provider = config.getEmbeddingProvider();
-      
+
       expect(provider.provider).toBe('openai');
     });
 
@@ -151,7 +153,7 @@ describe('ConfigManager', () => {
       process.env['EMBEDDING_CLI_COMMAND'] = 'gemini-cli embed';
       const config = new ConfigManager();
       const provider = config.getEmbeddingProvider();
-      
+
       expect(provider.provider).toBe('local-cli');
       expect(provider.cliCommand).toBe('gemini-cli embed');
     });
@@ -161,7 +163,7 @@ describe('ConfigManager', () => {
       process.env['EMBEDDING_API_ENDPOINT'] = 'http://localhost:8080/embeddings';
       const config = new ConfigManager();
       const provider = config.getEmbeddingProvider();
-      
+
       expect(provider.provider).toBe('custom-api');
       expect(provider.apiEndpoint).toBe('http://localhost:8080/embeddings');
     });
@@ -170,7 +172,7 @@ describe('ConfigManager', () => {
       process.env['EMBEDDING_PROVIDER'] = 'LOCAL-CLI';
       const config = new ConfigManager();
       const provider = config.getEmbeddingProvider();
-      
+
       expect(provider.provider).toBe('local-cli');
     });
 
@@ -178,8 +180,22 @@ describe('ConfigManager', () => {
       process.env['EMBEDDING_PROVIDER'] = 'invalid-provider';
       const config = new ConfigManager();
       const provider = config.getEmbeddingProvider();
-      
+
       expect(provider.provider).toBe('openai');
+    });
+
+    it('should throw error if OPENAI_API_KEY is missing when provider is openai', () => {
+      process.env['EMBEDDING_PROVIDER'] = 'openai';
+      delete process.env['OPENAI_API_KEY'];
+
+      expect(() => new ConfigManager()).toThrow(/OPENAI_API_KEY is not set/);
+    });
+
+    it('should throw error if OPENAI_API_KEY is missing when provider defaults to openai', () => {
+      delete process.env['EMBEDDING_PROVIDER'];
+      delete process.env['OPENAI_API_KEY'];
+
+      expect(() => new ConfigManager()).toThrow(/OPENAI_API_KEY is not set/);
     });
   });
 
@@ -194,7 +210,7 @@ describe('ConfigManager', () => {
 
       const config = new ConfigManager();
       const systemConfig = config.getConfig();
-      
+
       expect(systemConfig.postgres.host).toBe('localhost');
       expect(systemConfig.postgres.port).toBe(5432);
       expect(systemConfig.postgres.database).toBe('context_store');
@@ -207,10 +223,10 @@ describe('ConfigManager', () => {
       process.env['POSTGRES_DB'] = 'custom_db';
       process.env['POSTGRES_USER'] = 'custom_user';
       process.env['POSTGRES_PASSWORD'] = 'secret';
-      
+
       const config = new ConfigManager();
       const systemConfig = config.getConfig();
-      
+
       expect(systemConfig.postgres.host).toBe('db.example.com');
       expect(systemConfig.postgres.port).toBe(5433);
       expect(systemConfig.postgres.database).toBe('custom_db');
@@ -225,10 +241,10 @@ describe('ConfigManager', () => {
       process.env['NEO4J_URI'] = 'bolt://neo4j.example.com:7687';
       process.env['NEO4J_USER'] = 'neo4j_user';
       process.env['NEO4J_PASSWORD'] = 'neo4j_pass';
-      
+
       const config = new ConfigManager();
       const systemConfig = config.getConfig();
-      
+
       expect(systemConfig.neo4j).toBeDefined();
       expect(systemConfig.neo4j?.uri).toBe('bolt://neo4j.example.com:7687');
       expect(systemConfig.neo4j?.user).toBe('neo4j_user');
@@ -237,10 +253,10 @@ describe('ConfigManager', () => {
 
     it('should not include Neo4j config when graph store is disabled', () => {
       process.env['ENABLE_GRAPH_STORE'] = 'false';
-      
+
       const config = new ConfigManager();
       const systemConfig = config.getConfig();
-      
+
       expect(systemConfig.neo4j).toBeUndefined();
     });
   });
@@ -251,10 +267,10 @@ describe('ConfigManager', () => {
       process.env['REDIS_HOST'] = 'redis.example.com';
       process.env['REDIS_PORT'] = '6380';
       process.env['REDIS_PASSWORD'] = 'redis_pass';
-      
+
       const config = new ConfigManager();
       const systemConfig = config.getConfig();
-      
+
       expect(systemConfig.redis).toBeDefined();
       expect(systemConfig.redis?.host).toBe('redis.example.com');
       expect(systemConfig.redis?.port).toBe(6380);
@@ -263,10 +279,10 @@ describe('ConfigManager', () => {
 
     it('should not include Redis config when cache is disabled', () => {
       process.env['ENABLE_REDIS_CACHE'] = 'false';
-      
+
       const config = new ConfigManager();
       const systemConfig = config.getConfig();
-      
+
       expect(systemConfig.redis).toBeUndefined();
     });
   });
@@ -276,10 +292,10 @@ describe('ConfigManager', () => {
       process.env['LITE_MODE'] = 'true';
       process.env['EMBEDDING_PROVIDER'] = 'local-cli';
       process.env['EMBEDDING_CLI_COMMAND'] = 'gemini-cli embed';
-      
+
       const config = new ConfigManager();
       const liteConfig = config.getLiteModeConfig();
-      
+
       expect(liteConfig.liteMode).toBe(true);
       expect(liteConfig.enableGraphStore).toBe(false);
       expect(liteConfig.enableRedisCache).toBe(false);
