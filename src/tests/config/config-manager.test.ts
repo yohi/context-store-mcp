@@ -185,6 +185,7 @@ describe('ConfigManager', () => {
     });
 
     it('should throw error if OPENAI_API_KEY is missing when provider is openai', () => {
+      process.env['NODE_ENV'] = 'production';
       process.env['EMBEDDING_PROVIDER'] = 'openai';
       delete process.env['OPENAI_API_KEY'];
 
@@ -192,6 +193,7 @@ describe('ConfigManager', () => {
     });
 
     it('should throw error if OPENAI_API_KEY is missing when provider defaults to openai', () => {
+      process.env['NODE_ENV'] = 'production';
       delete process.env['EMBEDDING_PROVIDER'];
       delete process.env['OPENAI_API_KEY'];
 
