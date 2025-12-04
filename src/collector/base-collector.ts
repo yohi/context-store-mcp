@@ -169,13 +169,7 @@ export abstract class BaseCollector {
   protected async watchLogFile(): Promise<void> {
     this.watcher = watch(this.config.logPath, async (eventType) => {
       if (eventType === 'change') {
-        if (this.isProcessing) return;
-        this.isProcessing = true;
-        try {
-          await this.processNewContent();
-        } finally {
-          this._isProcessing = false;
-        }
+        await this.processNewContent();
       }
     });
 

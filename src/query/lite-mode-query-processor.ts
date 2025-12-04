@@ -328,18 +328,15 @@ export class LiteModeQueryProcessor extends QueryProcessor {
       return results
         .filter((r) => {
           const memoryFilePath = this.extractFilePath(r.memory);
-          // TODO: includes によるマッチングが緩すぎる可能性があります。
-          // Line 331 の memoryFilePath.includes(filePath) は、意図しない部分一致を引き起こす可能性があります。
-          // 例えば、filePath が "src/foo.ts" で memoryFilePath が "src/foobar.ts" の場合もマッチします。
-          // より厳密なマッチング（完全一致やパスセグメント単位の比較）を検討してください。
-          //
-          // 次のような修正案があります：
-          // return memoryFilePath && (
-          //   memoryFilePath === filePath ||
-          //   memoryFilePath.startsWith(filePath + '/') ||
-          //   filePath.startsWith(memoryFilePath + '/')
-          // );
-          return memoryFilePath && memoryFilePath.includes(filePath);
+          // 厳密なマッチング（完全一致またはパスセグメント単位の比較）
+          // Requirements: 7.3 - ファイルパスコンテキストの正確な解決
+          if (!memoryFilePath) return false;
+
+          return (
+            memoryFilePath === filePath ||
+            memoryFilePath.startsWith(filePath + '/') ||
+            filePath.startsWith(memoryFilePath + '/')
+          );
         })
         .map((r) => r.memory);
     } catch (error) {
