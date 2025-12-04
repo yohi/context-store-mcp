@@ -33,6 +33,7 @@ describe('類似性検索とランキング機能', () => {
   let adapter: VectorStoreAdapter;
   let mockPool: any;
   let mockClient: any;
+  let mockEmbeddingProvider: any;
 
   beforeEach(() => {
     mockClient = {
@@ -43,9 +44,13 @@ describe('類似性検索とランキング機能', () => {
       connect: vi.fn().mockResolvedValue(mockClient),
       query: vi.fn(),
     };
+    mockEmbeddingProvider = {
+      generateEmbedding: vi.fn().mockResolvedValue(Array(1536).fill(0.1)),
+      isAvailable: vi.fn().mockResolvedValue(true),
+    };
     adapter = new VectorStoreAdapter({
       pool: mockPool as Pool,
-      openaiApiKey: 'test-key',
+      embeddingProvider: mockEmbeddingProvider,
     });
   });
 

@@ -42,8 +42,16 @@ describe('MCP Server Core Features', () => {
   let mockVectorStore: VectorStoreAdapter;
   let mockStorage: MockStorageAdapter; // Declared globally
   let mockTransactionCoordinator: MockTransactionCoordinator; // Declared globally
+  let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(async () => {
+    // 環境変数を保存して、テスト用の値を設定
+    originalEnv = { ...process.env };
+
+    // EMBEDDING_PROVIDER が openai の場合、OPENAI_API_KEY が必要
+    if (!process.env['OPENAI_API_KEY']) {
+      process.env['OPENAI_API_KEY'] = 'test-api-key-for-testing-only';
+    }
     mockVectorStore = new MockVectorStoreAdapter() as VectorStoreAdapter;
 
     mockStorage = new MockStorageAdapter(); // Initialized
@@ -51,19 +59,19 @@ describe('MCP Server Core Features', () => {
       storedVersions: new Map<string, any[]>(), // For saveMemoryVersion mock
       storeMemoryWithSaga: vi.fn().mockImplementation(async (entity) => {
         const memory = {
-            id: entity.id,
-            content: entity.content,
-            memoryType: entity.memoryType,
-            metadata: entity.metadata,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-            lastAccessedAt: new Date(),
-            accessCount: 0,
-            importanceScore: 0,
-            isDeleted: false,
-            isProtected: false,
-            version: 1,
-            deletedAt: null
+          id: entity.id,
+          content: entity.content,
+          memoryType: entity.memoryType,
+          metadata: entity.metadata,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          lastAccessedAt: new Date(),
+          accessCount: 0,
+          importanceScore: 0,
+          isDeleted: false,
+          isProtected: false,
+          version: 1,
+          deletedAt: null
         };
         mockStorage.memories.set(entity.id, memory);
         return { status: 'ok', memoryId: entity.id };
@@ -71,43 +79,43 @@ describe('MCP Server Core Features', () => {
       updateMemoryWithSaga: vi.fn().mockImplementation(async (entity) => {
         const existing = mockStorage.memories.get(entity.id);
         if (existing) {
-            mockStorage.memories.set(entity.id, {
-                ...existing,
-                ...entity, // Apply all properties from entity
-                version: (existing.version || 1) + 1,
-                updatedAt: new Date()
-            });
+          mockStorage.memories.set(entity.id, {
+            ...existing,
+            ...entity, // Apply all properties from entity
+            version: (existing.version || 1) + 1,
+            updatedAt: new Date()
+          });
         }
         return { status: 'ok', memoryId: entity.id };
       }),
       deleteMemoryWithSaga: vi.fn().mockImplementation(async (id) => {
-          const existing = mockStorage.memories.get(id);
-          if (existing) {
-              mockStorage.memories.set(id, { ...existing, isDeleted: true, deletedAt: new Date() });
-          }
-          return { status: 'ok', memoryId: id };
+        const existing = mockStorage.memories.get(id);
+        if (existing) {
+          mockStorage.memories.set(id, { ...existing, isDeleted: true, deletedAt: new Date() });
+        }
+        return { status: 'ok', memoryId: id };
       }),
       saveMemoryVersion: vi.fn().mockImplementation(async (memoryData, versionNumber) => {
         const memoryId = memoryData.id;
         const currentVersions = mockTransactionCoordinator.storedVersions.get(memoryId) || [];
         currentVersions.push({
-            memoryId: memoryId,
-            version: versionNumber,
-            content: memoryData.content,
-            metadata: memoryData.metadata,
-            timestamp: new Date(),
-            id: `history-${memoryId}-v${versionNumber}`
+          memoryId: memoryId,
+          version: versionNumber,
+          content: memoryData.content,
+          metadata: memoryData.metadata,
+          timestamp: new Date(),
+          id: `history-${memoryId}-v${versionNumber}`
         });
         mockTransactionCoordinator.storedVersions.set(memoryId, currentVersions);
       }),
       getMemory: vi.fn().mockImplementation(async (id: string) => mockStorage.getMemory(id)),
       getMemoryVersions: vi.fn().mockImplementation(async (memoryId: string) => mockTransactionCoordinator.storedVersions.get(memoryId) || []),
       getMemoryVersion: vi.fn().mockImplementation(async (memoryId: string, version: number) => {
-          const versions = mockTransactionCoordinator.storedVersions.get(memoryId);
-          if (!versions) {
-              return null;
-          }
-          return versions.find((entry: any) => entry.version === version) || null;
+        const versions = mockTransactionCoordinator.storedVersions.get(memoryId);
+        if (!versions) {
+          return null;
+        }
+        return versions.find((entry: any) => entry.version === version) || null;
       }),
       findSoftDeletedMemories: vi.fn().mockResolvedValue([]),
       hardDeleteMemory: vi.fn().mockResolvedValue({ status: 'ok' }),
@@ -124,13 +132,15 @@ describe('MCP Server Core Features', () => {
     const context = createContextStoreServer({ memoryManager });
     server = context.server;
     cleanup = context.cleanup;
-    
+
     transport = new MockTransport();
     await server.connect(transport);
   });
 
   afterEach(async () => {
     await cleanup();
+    // 環境変数を元に戻す
+    process.env = originalEnv;
   });
 
   it('should handle initialization handshake', async () => {
@@ -182,7 +192,7 @@ describe('MCP Server Core Features', () => {
     expect(response).toBeDefined();
     const result = (response as any).result;
     expect(result.tools).toBeDefined();
-    
+
     // Current tools: store, search, delete, update, suggest_memory_merges, merge_memories (6 tools)
     expect(result.tools).toHaveLength(6);
 
@@ -281,7 +291,7 @@ describe('MCP Server Core Features', () => {
 
     // Configure mock to return id2 as high similarity match
     (mockVectorStore.searchSimilar as any).mockResolvedValue([
-        { id: id2, similarity: 0.95, content: 'Minutes from Project Alpha kickoff.', metadata: { tags: ['project-alpha', 'meeting'] } }
+      { id: id2, similarity: 0.95, content: 'Minutes from Project Alpha kickoff.', metadata: { tags: ['project-alpha', 'meeting'] } }
     ]);
 
     // 3. Suggest Merges for A
@@ -300,9 +310,9 @@ describe('MCP Server Core Features', () => {
 
     const res3 = transport.sentMessages.find(m => (m as any).id === 4);
     expect(res3).toBeDefined();
-    
+
     const outputText = (res3 as any).result.content[0].text;
-    
+
     // Deterministic assertion: must contain the suggested ID
     expect(outputText).toContain(id2);
   });
@@ -364,26 +374,26 @@ describe('MCP Server Core Features', () => {
     const res4 = transport.sentMessages.find(m => (m as any).id === 4);
     expect(res4).toBeDefined();
     expect((res4 as any).result.content[0].text).toContain('merged successfully');
-    
+
     // 4. Verify original memories are deleted
     transport.receive({
-        jsonrpc: '2.0',
-        id: 5,
-        method: 'tools/call',
-        params: {
-            name: 'search_memory', // search doesn't return deleted
-            arguments: { query: 'Memory Part 1' }
-        }
+      jsonrpc: '2.0',
+      id: 5,
+      method: 'tools/call',
+      params: {
+        name: 'search_memory', // search doesn't return deleted
+        arguments: { query: 'Memory Part 1' }
+      }
     });
     await new Promise(resolve => setTimeout(resolve, 10));
-    
+
     const res5 = transport.sentMessages.find(m => (m as any).id === 5);
     expect(res5).toBeDefined();
     const searchResult = JSON.parse((res5 as any).result.content[0].text);
-    
+
     // Should find the merged memory
     expect(searchResult.length).toBeGreaterThan(0);
-    
+
     // Should NOT find original IDs
     const foundIds = searchResult.map((m: any) => m.id);
     expect(foundIds).not.toContain(id1);

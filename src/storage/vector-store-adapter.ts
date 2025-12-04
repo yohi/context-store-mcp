@@ -15,7 +15,7 @@
  */
 
 import type { Pool } from 'pg';
-import OpenAI, { APIError, APIConnectionError, RateLimitError } from 'openai';
+import type { EmbeddingProvider } from '../embedding/types.js';
 import { randomUUID } from 'crypto';
 
 /**
@@ -156,10 +156,8 @@ export interface ScoringWeights {
 export interface VectorStoreConfig {
   /** PostgreSQL接続プール */
   pool: Pool;
-  /** OpenAI API Key */
-  openaiApiKey: string;
-  /** 埋め込みモデル (デフォルト: text-embedding-3-small) */
-  embeddingModel?: string;
+  /** Embedding Provider */
+  embeddingProvider: EmbeddingProvider;
   /** ベクトル次元数 (デフォルト: 1536) */
   dimensions?: number;
   /** 類似度閾値 (デフォルト: 0.7) */
@@ -260,16 +258,14 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
   private static readonly MAX_CANDIDATE_POOL_SIZE = 1000;
 
   private pool: Pool;
-  private openaiClient: OpenAI;
-  private embeddingModel: string;
+  private embeddingProvider: EmbeddingProvider;
   private dimensions: number;
   private similarityThreshold: number;
   private scoringWeights: ScoringWeights;
 
   constructor(config: VectorStoreConfig) {
     this.pool = config.pool;
-    this.openaiClient = new OpenAI({ apiKey: config.openaiApiKey });
-    this.embeddingModel = config.embeddingModel || 'text-embedding-3-small';
+    this.embeddingProvider = config.embeddingProvider;
     this.dimensions = config.dimensions || 1536;
     this.similarityThreshold = config.similarityThreshold || 0.7;
     this.scoringWeights = {
@@ -279,11 +275,10 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
   }
 
   /**
-   * OpenAI Embeddings APIを使用してベクトルを生成
-   * レート制限エラー(429)に対してエクスポネンシャルバックオフで自動リトライを実行
+   * EmbeddingProviderを使用してベクトルを生成
    *
    * @param text - 埋め込み対象テキスト
-   * @returns ベクトル配列 (1536次元)
+   * @returns ベクトル配列
    * @throws エラー時は適切な例外をスロー
    */
   private async generateEmbedding(text: string): Promise<number[]> {
@@ -291,81 +286,22 @@ export class VectorStoreAdapter implements IVectorStoreAdapter {
       throw new Error('Text cannot be empty');
     }
 
-    const maxRetries = 5;
-    const baseDelay = 1000; // 1秒
-    let lastError: Error | null = null;
+    try {
+      const embedding = await this.embeddingProvider.generateEmbedding(text);
 
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      try {
-        // OpenAI Embeddings API呼び出し
-        const response = await this.openaiClient.embeddings.create({
-          model: this.embeddingModel,
-          input: text,
-          encoding_format: 'float',
-        });
-
-        if (!response.data || response.data.length === 0) {
-          throw new Error('No embedding data returned from OpenAI API');
-        }
-
-        const firstEmbedding = response.data[0];
-        if (!firstEmbedding) {
-          throw new Error('Invalid embedding data structure from OpenAI API');
-        }
-
-        const embedding = firstEmbedding.embedding;
-
-        // 次元数チェック
-        if (embedding.length !== this.dimensions) {
-          throw new Error(
-            `Unexpected embedding dimensions: expected ${this.dimensions}, got ${embedding.length}`
-          );
-        }
-
-        return embedding;
-      } catch (error) {
-        // リトライ可能なエラーかどうかを判定
-        // OpenAI SDK v6.5.0のデフォルト動作に準拠：
-        // - RateLimitError (429)
-        // - InternalServerError (5xx)
-        // - APIConnectionError (ネットワークエラー)
-        const isRetryableError =
-          error instanceof RateLimitError ||
-          error instanceof APIConnectionError ||
-          (error instanceof APIError &&
-            (error.status === 429 || (error.status !== undefined && error.status >= 500)));
-
-        if (!isRetryableError) {
-          // リトライ不可能なエラーは即座に再スロー
-          if (error instanceof APIError) {
-            throw new Error(
-              `OpenAI API error: ${error.message} (status: ${error.status}, code: ${error.code})`
-            );
-          }
-          throw error;
-        }
-
-        lastError = error as Error;
-
-        // 最後のリトライまで達した場合は抜ける
-        if (attempt === maxRetries - 1) {
-          break;
-        }
-
-        // エクスポネンシャルバックオフ + ジッター計算
-        const exponentialDelay = baseDelay * Math.pow(2, attempt);
-        const jitter = Math.random() * 200 - 100; // -100ms ~ +100ms
-        const delayMs = Math.max(0, exponentialDelay + jitter);
-
-        // リトライ前に待機
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      // 次元数チェック
+      if (embedding.length !== this.dimensions) {
+        throw new Error(
+          `Unexpected embedding dimensions: expected ${this.dimensions}, got ${embedding.length}`
+        );
       }
-    }
 
-    // 全リトライ失敗時
-    throw new Error(
-      `OpenAI API rate limit exceeded after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`
-    );
+      return embedding;
+    } catch (error) {
+      throw new Error(
+        `Embedding generation failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
 
   /**

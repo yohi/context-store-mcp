@@ -43,10 +43,20 @@ describe('MonitoringService', () => {
   afterEach(() => {
     metricsCollector.stop();
     monitoringService.stop();
+    // Ensure real timers are always restored, even if a test throws
+    vi.useRealTimers();
   });
 
   describe('ヘルスチェック', () => {
     it('システムが健全な場合はHEALTHYを返す', async () => {
+      // システムメトリクスをモックして健全な状態を返す
+      vi.spyOn(metricsCollector, 'collectSystemMetrics').mockResolvedValue({
+        cpu: { usage: 0.1, loadAverage: [0.1, 0.1, 0.1], cores: 4 },
+        memory: { total: 1000000000, used: 200000000, free: 800000000, usage: 0.2 },
+        storage: { total: 1000000000, used: 500000000, free: 500000000, usage: 0.5 },
+        timestamp: Date.now(),
+      });
+
       await metricsCollector.collectSystemMetrics();
 
       const result = monitoringService.performHealthCheck();
@@ -64,6 +74,17 @@ describe('MonitoringService', () => {
         free: 150000000,
       });
 
+      // システムメトリクスのモック
+      const mockMetrics = {
+        cpu: { usage: 0.1, loadAverage: [0.1, 0.1, 0.1], cores: 4 },
+        memory: { total: 1000000000, used: 200000000, free: 800000000, usage: 0.2 },
+        storage: { total: 1000000000, used: 850000000, free: 150000000, usage: 0.85 },
+        timestamp: Date.now(),
+      };
+
+      vi.spyOn(metricsCollector, 'collectSystemMetrics').mockResolvedValue(mockMetrics);
+      vi.spyOn(metricsCollector, 'getLatestSystemMetrics').mockReturnValue(mockMetrics);
+
       await metricsCollector.collectSystemMetrics();
 
       const result = monitoringService.performHealthCheck();
@@ -73,12 +94,25 @@ describe('MonitoringService', () => {
       expect(result.checks.storage.usage).toBeCloseTo(0.85, 2);
     });
 
+
+
     it('ストレージ使用率が危険閾値を超えた場合はUNHEALTHYを返す', async () => {
       mockStorageProvider.getStorageStats = vi.fn().mockResolvedValue({
         total: 1000000000,
         used: 960000000, // 96% 使用
         free: 40000000,
       });
+
+      // システムメトリクスのモック
+      const mockMetrics = {
+        cpu: { usage: 0.1, loadAverage: [0.1, 0.1, 0.1], cores: 4 },
+        memory: { total: 1000000000, used: 200000000, free: 800000000, usage: 0.2 },
+        storage: { total: 1000000000, used: 960000000, free: 40000000, usage: 0.96 },
+        timestamp: Date.now(),
+      };
+
+      vi.spyOn(metricsCollector, 'collectSystemMetrics').mockResolvedValue(mockMetrics);
+      vi.spyOn(metricsCollector, 'getLatestSystemMetrics').mockReturnValue(mockMetrics);
 
       await metricsCollector.collectSystemMetrics();
 
@@ -186,13 +220,31 @@ describe('MonitoringService', () => {
         free: 40000000,
       });
 
-      await metricsCollector.collectSystemMetrics();
-      monitoringService.performHealthCheck();
+      // システムメトリクスのモック（他は正常）
+      const mockMetrics = {
+        cpu: { usage: 0.1, loadAverage: [0.1, 0.1, 0.1], cores: 4 },
+        memory: { total: 1000000000, used: 200000000, free: 800000000, usage: 0.2 },
+        storage: { total: 1000000000, used: 960000000, free: 40000000, usage: 0.96 },
+        timestamp: Date.now(),
+      };
+
+      vi.spyOn(metricsCollector, 'collectSystemMetrics').mockResolvedValue(mockMetrics);
+      vi.spyOn(metricsCollector, 'getLatestSystemMetrics').mockReturnValue(mockMetrics);
+
+      metricsCollector.start(); // メトリクス収集を開始
+      monitoringService.start(); // モニタリングを開始し、定期チェックをトリガー
+
+      // 閾値チェック間隔（checkInterval）が100msなので、少し長く待つ
+      await new Promise((resolve) => setTimeout(resolve, 150));
 
       expect(alertHandler).toHaveBeenCalled();
-      const alert = alertHandler.mock.calls[0][0];
-      expect(alert.category).toBe('storage');
-      expect(alert.level).toBe(AlertLevel.CRITICAL);
+
+      // 複数のアラートが来る可能性があるので、引数から探す
+      const alertCalls = alertHandler.mock.calls.map(call => call[0]);
+      const storageAlert = alertCalls.find(alert => alert.category === 'storage');
+
+      expect(storageAlert).toBeDefined();
+      expect(storageAlert?.level).toBe(AlertLevel.CRITICAL);
     });
 
     it('複数のアラートハンドラーを登録できる', async () => {
@@ -292,14 +344,10 @@ describe('MonitoringService', () => {
 
   describe('自動監視', () => {
     it('start()で定期的なヘルスチェックを開始できる', async () => {
+      vi.useFakeTimers();
+
       const alertHandler = vi.fn();
       monitoringService.onAlert(alertHandler);
-
-      metricsCollector.start();
-      monitoringService.start();
-
-      // 初回チェックを待つ
-      await new Promise((resolve) => setTimeout(resolve, 50));
 
       // ストレージを危険レベルに
       mockStorageProvider.getStorageStats = vi.fn().mockResolvedValue({
@@ -308,10 +356,20 @@ describe('MonitoringService', () => {
         free: 40000000,
       });
 
-      // 次のチェックを待つ
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      metricsCollector.start();
+      monitoringService.start();
+
+      // checkInterval (100ms) よりも少し長く時間を進める
+      await vi.advanceTimersByTime(120);
+      await vi.runOnlyPendingTimersAsync(); // 保留中のマイクロタスクとタイマーをフラッシュ
 
       expect(alertHandler).toHaveBeenCalled();
+
+      const alertCalls = alertHandler.mock.calls.map(call => call[0]);
+      const storageAlert = alertCalls.find(alert => alert.category === 'storage');
+
+      expect(storageAlert).toBeDefined();
+      expect(storageAlert?.level).toBe(AlertLevel.CRITICAL);
     });
 
     it('stop()で定期チェックを停止できる', async () => {

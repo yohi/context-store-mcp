@@ -145,6 +145,7 @@ export class MemoryManager implements MemoryManagerService {
         content: memory.content,
         memoryType: memory.memoryType,
         metadata: memory.metadata,
+        ...(params.lite_mode_metadata ? { lite_mode_metadata: params.lite_mode_metadata } : {}),
       };
 
       const result = await this.transactionCoordinator.storeMemoryWithSaga(entity);

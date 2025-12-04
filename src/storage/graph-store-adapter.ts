@@ -519,12 +519,11 @@ export class GraphStoreAdapter implements IGraphStoreAdapter, OptionalStorageAda
           connectionTimeout: config.connectionTimeout || 30000,
         });
       } catch (error) {
-        console.warn('Failed to initialize Neo4j driver:', error);
+        console.error('Failed to initialize Neo4j driver:', error);
         this.enabled = false;
       }
     } else {
       console.info('GraphStoreAdapter: Running in Lite mode or disabled, Neo4j connection skipped');
-      this.enabled = false;
     }
   }
 
@@ -559,7 +558,10 @@ export class GraphStoreAdapter implements IGraphStoreAdapter, OptionalStorageAda
     } catch (error) {
       console.error('GraphStoreAdapter: Failed to initialize:', error);
       this.enabled = false;
-      throw error;
+      // Liteモード以外では致命的エラー
+      if (!this.liteMode) {
+        throw error;
+      }
     }
   }
 

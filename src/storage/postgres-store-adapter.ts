@@ -10,9 +10,18 @@ export class PostgresStorageAdapter implements StorageAdapter {
     }
 
     async storeMemory(memory: Memory): Promise<MemoryId> {
+        // Extract lite_mode_metadata fields from metadata
+        const { contentHash, source, sourceType, project } = memory.metadata as any;
+        const liteModeMetadata = {
+            ...(contentHash ? { contentHash } : {}),
+            ...(source ? { source } : {}),
+            ...(sourceType ? { sourceType } : {}),
+            ...(project ? { project } : {}),
+        };
+
         const query = `
-      INSERT INTO memories (id, content, memory_type, metadata, created_at, updated_at, last_accessed_at, access_count, importance_score, is_deleted, is_protected, deleted_at, version)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      INSERT INTO memories (id, content, memory_type, metadata, lite_mode_metadata, created_at, updated_at, last_accessed_at, access_count, importance_score, is_deleted, is_protected, deleted_at, version)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       RETURNING id
     `;
         const values = [
@@ -20,6 +29,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
             memory.content,
             memory.memoryType,
             JSON.stringify(memory.metadata),
+            JSON.stringify(liteModeMetadata),
             memory.createdAt,
             memory.updatedAt,
             memory.lastAccessedAt,
@@ -51,6 +61,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
             'content',
             'memory_type',
             'metadata',
+            'lite_mode_metadata',
             'updated_at',
             'last_accessed_at',
             'access_count',
@@ -65,9 +76,32 @@ export class PostgresStorageAdapter implements StorageAdapter {
         const values: any[] = [id];
         let paramIndex = 2;
 
+        // If metadata is being updated, also extract and update lite_mode_metadata
+        let liteModeMetadataUpdated = false;
+        if (updates.metadata) {
+            const { contentHash, source, sourceType, project } = updates.metadata as any;
+            const liteModeMetadata = {
+                ...(contentHash ? { contentHash } : {}),
+                ...(source ? { source } : {}),
+                ...(sourceType ? { sourceType } : {}),
+                ...(project ? { project } : {}),
+            };
+
+            // Add lite_mode_metadata to updates
+            setClauses.push(`lite_mode_metadata = $${paramIndex}`);
+            values.push(JSON.stringify(liteModeMetadata));
+            paramIndex++;
+            liteModeMetadataUpdated = true;
+        }
+
         for (const [key, value] of Object.entries(updates)) {
             // Map camelCase to snake_case
             const dbKey = key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+
+            // Skip lite_mode_metadata if already handled
+            if (dbKey === 'lite_mode_metadata' && liteModeMetadataUpdated) {
+                continue;
+            }
 
             if (allowedUpdates.includes(dbKey)) {
                 setClauses.push(`${dbKey} = $${paramIndex}`);

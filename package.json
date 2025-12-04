@@ -31,6 +31,11 @@
     "benchmark": "tsx scripts/benchmark.ts",
     "health-check": "tsx scripts/health-check.ts",
     "validate-config": "tsx scripts/validate-configuration.ts",
+    "generate-config": "tsx scripts/generate-mcp-config.ts",
+    "collector:desktop-app": "tsx scripts/start-desktop-app-collector.ts",
+    "collector:ai-ide": "tsx scripts/start-ai-ide-collector.ts",
+    "collector:cli-agent": "tsx scripts/start-cli-agent-collector.ts",
+    "migrate:lite-mode": "tsx scripts/run-lite-mode-migration.ts",
     "security-audit": "npm audit --production --audit-level=high"
   },
   "keywords": [
@@ -47,6 +52,7 @@
   "devDependencies": {
     "@types/node": "^20.17.10",
     "@types/pg": "^8.15.5",
+    "@types/shell-quote": "^1.7.5",
     "@typescript-eslint/eslint-plugin": "^8.20.0",
     "@typescript-eslint/parser": "^8.20.0",
     "@vitest/coverage-v8": "^2.1.8",
@@ -55,6 +61,7 @@
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-prettier": "^5.2.2",
     "prettier": "^3.4.2",
+    "shell-quote": "^1.8.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.48.0",
@@ -62,10 +69,12 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.6",
+    "@types/express": "^5.0.6",
+    "express": "^5.2.1",
     "neo4j-driver": "^5.27.1",
     "openai": "^6.5.0",
     "pg": "^8.14.0",
-    "pgvector": "^0.2.1",
+
     "redis": "^4.7.0",
     "winston": "^3.18.3",
     "zod": "^3.24.1"

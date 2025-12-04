@@ -29,6 +29,11 @@ export interface MemoryMetadata {
   tags?: string[];
   userId?: string;
   projectId?: string;
+  // Lite mode specific fields
+  sourceType?: string; // 'desktop-app' | 'ide' | 'cli-agent'
+  project?: string;
+  contentHash?: string; // For duplicate detection
+  [key: string]: unknown; // Allow additional metadata fields
 }
 
 // 完全な記憶エンティティ
@@ -63,6 +68,15 @@ export interface StoreMemoryParams {
   content: string;
   memoryType?: MemoryType; // オプション、デフォルトは 'semantic'
   metadata?: MemoryMetadata;
+  // Lite mode metadata for duplicate detection and filtering
+  // This is stored in a separate DB column (lite_mode_metadata) for efficient querying
+  lite_mode_metadata?: {
+    contentHash?: string;
+    source?: string;
+    sourceType?: string;
+    project?: string;
+    [key: string]: unknown;
+  };
 }
 
 // 既存の記憶を更新するためのパラメータ

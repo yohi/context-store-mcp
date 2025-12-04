@@ -21,7 +21,34 @@ Context Store MCPは、AIエージェントに永続的な記憶能力を付与�
 
 ## 🚀 クイックスタート
 
-### 開発環境
+### Lite Mode（軽量モード）🌟
+
+個人用PCで最小限のリソースで実行したい場合は、Lite Modeをお勧めします。PostgreSQLのみで動作し、Neo4jとRedisは不要です。
+
+```bash
+# 1. 依存パッケージのインストール
+npm install
+
+# 2. Lite Mode用の環境変数を設定
+cp .env.lite.example .env
+# .envファイルを編集（PostgreSQLの設定のみ必要）
+
+# 3. PostgreSQLのみを起動
+docker-compose --profile lite up -d
+
+# 4. ビルド
+npm run build
+
+# 5. MCP設定ファイルを生成
+npm run generate-config -- --lite-mode --client claude-desktop
+
+# 6. 開発モード
+npm run dev
+```
+
+詳細は [Lite Mode セクション](#lite-mode) を参照してください。
+
+### 開発環境（フルモード）
 
 ```bash
 # 依存パッケージのインストール
@@ -73,6 +100,226 @@ cp .env.production.example .env.production
 
 詳細は [QUICK_START.md](./QUICK_START.md) を参照してください。
 
+## 💡 Lite Mode
+
+Lite Modeは、個人用PCで効率的に実行できる軽量動作モードです。PostgreSQLのみを使用し、Neo4jとRedisへの依存を排除します。
+
+### 特徴
+
+- **最小限のリソース**: アイドル時のメモリ使用量 < 500MB
+- **簡単なセットアップ**: PostgreSQLのみで動作
+- **自動データ収集**: AI Desktop App、AI IDE、CLIエージェントからの会話を自動収集
+- **柔軟な埋め込み生成**: OpenAI API、ローカルCLI、カスタムAPIをサポート
+- **優雅な劣化**: オプション依存関係が欠落していても動作継続
+
+### セットアップ
+
+#### 1. 環境変数の設定
+
+```bash
+cp .env.lite.example .env
+```
+
+`.env`ファイルを編集して、PostgreSQLの接続情報を設定します：
+
+```bash
+# Lite Mode設定
+LITE_MODE=true
+ENABLE_GRAPH_STORE=false
+ENABLE_REDIS_CACHE=false
+
+# PostgreSQL設定（必須）
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_USER=context_store
+POSTGRES_PASSWORD=your_password_here
+POSTGRES_DB=context_store
+
+# 埋め込みプロバイダー（オプション）
+EMBEDDING_PROVIDER=openai  # または local-cli, custom-api
+# EMBEDDING_CLI_COMMAND=gemini-cli embed  # local-cliの場合
+# EMBEDDING_API_ENDPOINT=http://localhost:8080/embed  # custom-apiの場合
+```
+
+#### 2. PostgreSQLの起動
+
+```bash
+# Lite Modeプロファイルでサービスを起動
+docker-compose --profile lite up -d
+
+# または、既存のPostgreSQLを使用する場合はスキップ
+```
+
+#### 3. MCP設定ファイルの生成
+
+```bash
+# Claude Desktop用の設定を生成
+npm run generate-config -- --lite-mode --client claude-desktop
+
+# Cursor用の設定を生成
+npm run generate-config -- --lite-mode --client cursor
+
+# カスタムパスに出力
+npm run generate-config -- --lite-mode --output ./my-config.json
+```
+
+生成された設定ファイルを編集して、データベース認証情報を設定してください。
+
+#### 4. サーバーの起動
+
+```bash
+npm run build
+npm start
+```
+
+### 埋め込みプロバイダーの選択
+
+Lite Modeでは、複数の埋め込み生成方法をサポートしています：
+
+#### OpenAI API（デフォルト）
+
+```bash
+EMBEDDING_PROVIDER=openai
+OPENAI_API_KEY=your_api_key_here
+```
+
+#### ローカルCLI
+
+```bash
+EMBEDDING_PROVIDER=local-cli
+EMBEDDING_CLI_COMMAND="gemini-cli embed"
+# または
+EMBEDDING_CLI_COMMAND="claude-code embed"
+```
+
+#### カスタムAPI
+
+```bash
+EMBEDDING_PROVIDER=custom-api
+EMBEDDING_API_ENDPOINT=http://localhost:8080/embed
+```
+
+### 自動データ収集（コレクター）
+
+Lite Modeでは、各種AIツールから会話データを自動収集できます：
+
+- **AI Desktop App**: Claude Desktop、ChatGPT Desktop
+- **AI IDE**: Cursor、Windsurf、Copilot、Cline
+- **CLIエージェント**: ClaudeCode、GeminiCLI、CodexCLI、CursorCLI
+
+コレクターの設定と起動方法については、`scripts/LITE_MODE_MIGRATION.md`を参照してください。
+
+### トラブルシューティング
+
+一般的な問題と解決策については、[Lite Modeトラブルシューティングガイド](docs/lite-mode-troubleshooting.md)を参照してください。
+
+#### クイックチェック
+
+```bash
+# PostgreSQL接続を確認
+psql -h localhost -U context_store -d context_store
+
+# Dockerコンテナのログを確認
+docker-compose logs postgres
+
+# MCP設定ファイルを検証
+cat ~/Library/Application\ Support/Claude/claude_desktop_config.json | jq .
+
+# 環境変数を確認
+env | grep -E '(LITE_MODE|POSTGRES|EMBEDDING)'
+```
+
+詳細なトラブルシューティング手順は[こちら](docs/lite-mode-troubleshooting.md)。
+
+### フルモードへの移行
+
+Lite Modeからフルモードへの移行は簡単です：
+
+```bash
+# 1. 環境変数を更新
+LITE_MODE=false
+ENABLE_GRAPH_STORE=true
+ENABLE_REDIS_CACHE=true
+
+# 2. Neo4jとRedisを起動
+docker-compose --profile full up -d
+
+# 3. サーバーを再起動
+npm run start
+```
+
+既存のPostgreSQLデータはそのまま使用できます。
+
+### 環境変数リファレンス
+
+#### Lite Mode設定
+
+| 変数名 | デフォルト | 説明 |
+|--------|-----------|------|
+| `LITE_MODE` | `false` | Lite Modeを有効化（PostgreSQLのみで動作） |
+| `ENABLE_GRAPH_STORE` | `true` | Neo4jグラフストレージを有効化 |
+| `ENABLE_REDIS_CACHE` | `true` | Redisキャッシュを有効化 |
+
+#### PostgreSQL設定（必須）
+
+| 変数名 | デフォルト | 説明 |
+|--------|-----------|------|
+| `POSTGRES_HOST` | `localhost` | PostgreSQLホスト |
+| `POSTGRES_PORT` | `5432` | PostgreSQLポート |
+| `POSTGRES_DB` | `context_store` | データベース名 |
+| `POSTGRES_USER` | - | データベースユーザー名 |
+| `POSTGRES_PASSWORD` | - | データベースパスワード |
+
+#### 埋め込みプロバイダー設定
+
+| 変数名 | デフォルト | 説明 |
+|--------|-----------|------|
+| `EMBEDDING_PROVIDER` | `openai` | 埋め込みプロバイダー（`openai`, `local-cli`, `custom-api`） |
+| `OPENAI_API_KEY` | - | OpenAI APIキー（`openai`プロバイダー使用時） |
+| `EMBEDDING_CLI_COMMAND` | - | CLIコマンド（`local-cli`プロバイダー使用時）<br>例: `gemini-cli embed`, `claude-code embed` |
+| `EMBEDDING_API_ENDPOINT` | - | カスタムAPIエンドポイント（`custom-api`プロバイダー使用時） |
+
+#### コレクター設定（オプション）
+
+| 変数名 | デフォルト | 説明 |
+|--------|-----------|------|
+| `COLLECTOR_POLL_INTERVAL` | `1000` | ログファイルのポーリング間隔（ミリ秒） |
+| `COLLECTOR_CLAUDE_DESKTOP_LOG_PATH` | - | Claude Desktopのログパス |
+| `COLLECTOR_CHATGPT_DESKTOP_LOG_PATH` | - | ChatGPT Desktopのログパス |
+| `COLLECTOR_CURSOR_LOG_PATH` | - | Cursorのログパス |
+| `COLLECTOR_WINDSURF_LOG_PATH` | - | Windsurfのログパス |
+| `COLLECTOR_COPILOT_LOG_PATH` | - | GitHub Copilotのログパス |
+| `COLLECTOR_CLINE_LOG_PATH` | - | Clineのログパス |
+| `COLLECTOR_CLAUDE_CODE_LOG_PATH` | - | ClaudeCodeのログパス |
+| `COLLECTOR_GEMINI_CLI_LOG_PATH` | - | GeminiCLIのログパス |
+| `COLLECTOR_CODEX_CLI_LOG_PATH` | - | CodexCLIのログパス |
+| `COLLECTOR_CURSOR_CLI_LOG_PATH` | - | CursorCLIのログパス |
+
+#### Web Viewer設定（オプション）
+
+| 変数名 | デフォルト | 説明 |
+|--------|-----------|------|
+| `WEB_VIEWER_ENABLED` | `false` | Web Viewerを有効化 |
+| `WEB_VIEWER_PORT` | `3001` | Web Viewerのポート |
+| `WEB_VIEWER_AUTH_ENABLED` | `true` | 認証を有効化 |
+| `WEB_VIEWER_AUTH_TOKEN` | - | 認証トークン |
+
+#### ロギング設定
+
+| 変数名 | デフォルト | 説明 |
+|--------|-----------|------|
+| `LOG_LEVEL` | `info` | ログレベル（`error`, `warn`, `info`, `debug`） |
+
+#### フルモード専用設定
+
+| 変数名 | デフォルト | 説明 |
+|--------|-----------|------|
+| `NEO4J_URI` | `bolt://localhost:7687` | Neo4j接続URI |
+| `NEO4J_USER` | `neo4j` | Neo4jユーザー名 |
+| `NEO4J_PASSWORD` | - | Neo4jパスワード |
+| `NEO4J_DATABASE` | `neo4j` | Neo4jデータベース名 |
+| `REDIS_URL` | `redis://localhost:6379` | Redis接続URL |
+
 ## 📚 ドキュメント
 
 ### デプロイメント
@@ -92,6 +339,12 @@ cp .env.production.example .env.production
 - **[要件定義](.kiro/specs/context-store-mcp/requirements.md)** - システム要件
 - **[設計書](.kiro/specs/context-store-mcp/design.md)** - 技術設計
 - **[実装計画](.kiro/specs/context-store-mcp/tasks.md)** - タスクリスト
+
+### Lite Mode
+- **[Lite Mode要件](.kiro/specs/lite-mode/requirements.md)** - Lite Mode要件定義
+- **[Lite Mode設計](.kiro/specs/lite-mode/design.md)** - Lite Mode技術設計
+- **[マイグレーションガイド](scripts/LITE_MODE_MIGRATION.md)** - Lite Modeへの移行手順
+- **[トラブルシューティング](docs/lite-mode-troubleshooting.md)** - 問題解決ガイド
 
 ## 必要な環境
 

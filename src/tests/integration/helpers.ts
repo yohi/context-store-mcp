@@ -75,9 +75,18 @@ export async function createTestMemoryManager(
     // VectorStoreAdapterの作成（オプション）
     let vectorStore: VectorStoreAdapter | undefined;
     if (includeVectorStore && process.env['OPENAI_API_KEY']) {
+        // モックEmbeddingProviderを作成
+        const mockEmbeddingProvider = {
+            generateEmbedding: async (_text: string): Promise<number[]> => {
+                // テスト用のダミー埋め込みベクトルを返す（1536次元）
+                return new Array(1536).fill(0).map(() => Math.random());
+            },
+            isAvailable: async (): Promise<boolean> => true,
+        };
+
         vectorStore = new VectorStoreAdapter({
             pool,
-            openaiApiKey: process.env['OPENAI_API_KEY'],
+            embeddingProvider: mockEmbeddingProvider,
         });
     }
 

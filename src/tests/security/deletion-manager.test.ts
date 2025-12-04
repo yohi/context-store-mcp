@@ -754,15 +754,25 @@ describe('DeletionManager', () => {
 
       // memoryId1: ソフト削除のみ（孤立） - 2時間前
       await testDeletionManager.initiateDeletion(memoryId1, userId, 'user_request');
+      const logsAfterInitiate1 = await testDeletionManager.getAuditLogsForTest(memoryId1);
+      console.log(`[DEBUG] Logs for ${memoryId1} after initiateDeletion:`, logsAfterInitiate1.map(l => ({eventType: l.eventType, timestamp: l.timestamp.toISOString()})));
 
       // 時刻を2時間進める
-      mockTimeProvider.advance(2 * 60 * 60 * 1000);
+      mockTimeProvider.advance(2 * 60 * 60 * 1000); // 2 hours
 
       // memoryId2: 完全削除（孤立でない） - 現在時刻
       await testDeletionManager.initiateDeletion(memoryId2, userId, 'user_request');
       await testDeletionManager.executePurge(memoryId2, userId, 'user_request');
+      const logsAfterPurge2 = await testDeletionManager.getAuditLogsForTest(memoryId2);
+      console.log(`[DEBUG] Logs for ${memoryId2} after purge:`, logsAfterPurge2.map(l => ({eventType: l.eventType, timestamp: l.timestamp.toISOString()})));
 
-      const orphans = await testDeletionManager.detectOrphanedDeletions(1);
+      const ageThresholdHours = 1;
+      const orphans = await testDeletionManager.detectOrphanedDeletions(ageThresholdHours); // 閾値: 1時間
+      
+      const thresholdTime = new Date(mockTimeProvider.now().getTime() - ageThresholdHours * 60 * 60 * 1000);
+      console.log(`[DEBUG] Current mock time: ${mockTimeProvider.now().toISOString()}`);
+      console.log(`[DEBUG] Orphan detection threshold (1 hour ago): ${thresholdTime.toISOString()}`);
+      console.log('[DEBUG] Detected orphans:', orphans);
 
       expect(orphans).toContain(memoryId1);
       expect(orphans).not.toContain(memoryId2);

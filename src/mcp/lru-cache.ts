@@ -77,7 +77,7 @@ export class LRUCache<T = any> {
     }
 
     // 有効期限チェック
-    if (this.maxAge !== undefined && Date.now() - node.timestamp > this.maxAge) {
+    if (this.maxAge !== undefined && Date.now() - node.timestamp >= this.maxAge) {
       this.delete(key);
       return undefined;
     }
@@ -90,6 +90,17 @@ export class LRUCache<T = any> {
     node.timestamp = Date.now();
 
     return node.value;
+  }
+
+  /**
+   * キャッシュからエントリーを取得（LRU順序を更新しない）
+   *
+   * @param key キー
+   * @returns 値（存在しない場合はundefined）
+   */
+  peek(key: string): T | undefined {
+    const node = this.cache.get(key);
+    return node ? node.value : undefined;
   }
 
   /**
@@ -166,7 +177,7 @@ export class LRUCache<T = any> {
     }
 
     // 有効期限チェック
-    if (this.maxAge !== undefined && Date.now() - entry.timestamp > this.maxAge) {
+    if (this.maxAge !== undefined && Date.now() - entry.timestamp >= this.maxAge) {
       this.delete(key);
       return false;
     }
@@ -255,7 +266,7 @@ export class LRUCache<T = any> {
 
     // 削除対象のキーを収集
     for (const [key, node] of this.cache.entries()) {
-      if (now - node.timestamp > this.maxAge) {
+      if (now - node.timestamp >= this.maxAge) {
         keysToDelete.push(key);
       }
     }
