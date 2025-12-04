@@ -262,8 +262,7 @@ export abstract class BaseCollector {
     // 要件: 5.5 - 重複防止
     const hashMetadata = createMetadataWithHash(
       entry.userMessage,
-      entry.aiResponse,
-      entry.timestamp
+      entry.aiResponse
     );
 
     const duplicate = await isDuplicate(

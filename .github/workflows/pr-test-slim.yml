@@ -23,4 +23,5 @@ jobs:
       - name: Run unit tests
         env:
           NODE_OPTIONS: '--max-old-space-size=2048'
+          OPENAI_API_KEY: 'test-api-key-for-ci-testing'
         run: npx vitest --run --test-timeout=30000 --exclude "src/tests/integration/**" --exclude "src/tests/storage/**" --exclude "src/tests/database/**" --exclude "src/tests/security/deletion-manager.test.ts"

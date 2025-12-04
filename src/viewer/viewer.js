@@ -46,7 +46,15 @@ async function search() {
     currentOffset = 0;
   }
 
-  const searchType = document.querySelector('input[name="searchType"]:checked').value;
+  let searchTypeElement = document.querySelector('input[name="searchType"]:checked');
+  if (!searchTypeElement) {
+    const defaultRadio = document.querySelector('input[name="searchType"][value="text"]');
+    if (defaultRadio) {
+      defaultRadio.checked = true;
+      searchTypeElement = defaultRadio;
+    }
+  }
+  const searchType = searchTypeElement ? searchTypeElement.value : 'text';
 
   showLoading();
   hideError();
@@ -128,7 +136,7 @@ function displayMemories(memories, highlightQuery = null) {
     meta.appendChild(idLabel);
     meta.appendChild(document.createTextNode(' '));
 
-    const idValue = document.createTextNode(memory.id.substring(0, 8) + '...');
+    const idValue = document.createTextNode(memory.id ? (memory.id.length >= 8 ? memory.id.substring(0, 8) + '...' : memory.id) : '[IDなし]');
     meta.appendChild(idValue);
     meta.appendChild(document.createTextNode(' '));
 

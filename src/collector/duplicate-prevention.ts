@@ -13,8 +13,8 @@ const logger = getLogger();
  * Generate a content hash for duplicate detection
  * Uses SHA-256 to create a unique fingerprint of the conversation
  */
-export function generateContentHash(userMessage: string, aiResponse: string, timestamp: Date): string {
-  const content = `${userMessage}|${aiResponse}|${timestamp.toISOString()}`;
+export function generateContentHash(userMessage: string, aiResponse: string): string {
+  const content = `${userMessage}|${aiResponse}`;
   return createHash('sha256').update(content, 'utf-8').digest('hex');
 }
 
@@ -73,16 +73,14 @@ export async function isDuplicate(
  * 
  * @param userMessage - User's message
  * @param aiResponse - AI's response
- * @param timestamp - Conversation timestamp
  * @returns Metadata object with content hash
  */
 export function createMetadataWithHash(
   userMessage: string,
-  aiResponse: string,
-  timestamp: Date
+  aiResponse: string
 ): { contentHash: string } {
   return {
-    contentHash: generateContentHash(userMessage, aiResponse, timestamp),
+    contentHash: generateContentHash(userMessage, aiResponse),
   };
 }
 
